@@ -109,9 +109,10 @@ fn program_text_past_the_nesting_ceiling_is_refused_not_aborted() {
     // exit 134) where jq reports `memory exhausted` and exits 3. The input side already guarded its recursion; the
     // program side did not, at any of the layers that recurse.
     //
-    // Every shape here nests one of the parser's recursive descents, and each is deeper than the 10,000-level program
-    // ceiling.
-    const OVER: usize = 50_000;
+    // Every shape here nests one of the parser's recursive descents, and each is one past the 10,000-level program
+    // ceiling. One past is enough: 50_000 was the original abort repro and spends a minute on debug CI just building
+    // and dropping trees the guard already refused.
+    const OVER: usize = 10_001;
     for (shape, program) in [
         ("brackets", format!("{}{}", "[".repeat(OVER), "]".repeat(OVER))),
         ("parens", format!("{}1{}", "(".repeat(OVER), ")".repeat(OVER))),
@@ -154,7 +155,7 @@ fn flat_operator_chains_past_the_ceiling_are_refused_not_aborted() {
     // ITERATIVELY (the operator helpers use an explicit pending vector), so the parser never recurses — but the tree
     // they build is one level deep per operator, and both the lowering walk and the AST's own recursive `Drop` then run
     // at that depth. 200,000 links aborted the process before the chain guard counted them.
-    const OVER: usize = 200_000;
+    const OVER: usize = 10_001;
     for (shape, program) in [
         ("pipe", format!("1{}", "|1".repeat(OVER))),
         ("comma", format!("1{}", ",1".repeat(OVER))),
