@@ -1,0 +1,26 @@
+[package]
+name = "jqf-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Lexer, parser, and source-preserving syntax trees for jqf"
+readme = "README.md"
+keywords = ["jqf", "parser", "lexer", "syntax"]
+categories = ["parser-implementations", "no-std"]
+autotests = false
+
+[dependencies]
+jqf-source = { workspace = true }
+
+[lib]
+name = "jqf_syntax"
+path = "src/lib.rs"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[lints]
+workspace = true

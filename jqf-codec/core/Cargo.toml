@@ -1,0 +1,21 @@
+[package]
+name = "jqf-codec-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Format-neutral codec contracts for jqf"
+readme = "README.md"
+
+[dependencies]
+jqf-source = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-data = { workspace = true }
+
+[lib]
+name = "jqf_codec_core"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

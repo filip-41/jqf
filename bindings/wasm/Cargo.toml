@@ -1,0 +1,42 @@
+[package]
+name = "jqf-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "WebAssembly binding for jqf: run programs in a browser over the SDK."
+readme = "README.md"
+publish = false
+
+[lib]
+name = "jqf_wasm"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+# uuid sits unconditionally in the builtins' graph; on wasm32-unknown-unknown
+# it needs a declared source of randomness, and the `js` one is the only
+# option that does not touch a product crate. wasm-bindgen's generated glue
+# resolves its imports.
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen = "=0.2.126"
+jqf-codec-cbor = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-html = { workspace = true }
+jqf-codec-ini = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-messagepack = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-codec-toml = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-runtime = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-source = { workspace = true }
+
+[lints]
+workspace = true

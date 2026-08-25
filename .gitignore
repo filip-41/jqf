@@ -1,0 +1,99 @@
+# Temporary files
+/target/
+**/target/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Generated dump of --help / --list-*; the man page and `jqf --help` are the public surfaces
+/REFERENCE.md
+
+# --- release scope: development scaffolding ships in the internal tree only ---
+# Fuzz targets (standalone Cargo workspaces)
+tools/jqf-codec-fuzz/
+tools/jqf-syntax-fuzz/
+tools/jqf-program-fuzz/
+
+# Gate battery / CI plumbing (internal workflow)
+tools/jqf-gates.py
+tools/gates.toml
+tools/jqfgate/
+tools/jqf-gates-teeth.py
+tools/jqf-makefile-recipe-lint.py
+tools/jqf-capability-gate.py
+tools/jqf-colour-gate.py
+tools/jqf-rss-gate.py
+tools/jqf-rss-parse.py
+tools/jqf-stack-depth-gate.py
+tools/jqf-serve-soak.py
+tools/jqf-output-durability-check.py
+tools/jqf-codec-contracts-check.py
+tools/jqf-licence-audit.py
+tools/jqf-ffi-header-lint.py
+tools/jqf-diag-codes-gen.py
+
+# Internal acceptance differentials
+tools/jqf-edit-differential.py
+tools/jqf-mismatch-differential.py
+tools/jqf-parallel-differential.py
+tools/jqf-render-differential.py
+tools/jqf-lazy-differential.py
+tools/jqf-toml-lazy-differential.py
+tools/jqf-follow-e2e.py
+tools/jqf-engine-oracle.py
+tools/jqf-facade-framing-matrix.py
+
+# Compat corpus monolith (regenerate from source-of-truth before shipping)
+tools/jqf-cli-jq-compat.sh
+
+# Broad cross-tool campaign instrument (needs absent lineage binaries)
+tools/jqf-broad-bench.py
+tools/jqf-broad-bench-delta.py
+tools/jqf-broad-bench-summarize.py
+tools/broad-bench-cases.json
+tools/broad-bench-causes.jsonl
+tools/broad-bench-corpus-cases.json
+tools/broad-bench-eligible.json
+tools/broad-bench-modules/
+
+# Worktree-local PGO bench drivers
+tools/pgo-bench.sh
+tools/pgo-bench-builtins.sh
+tools/pgo-bench-factidx.sh
+
+# Internal workspace tool crates (smoke, receipts, benches, compat)
+tools/jqf-bench-core/
+tools/jqf-source-bench/
+tools/jqf-resource-bench/
+tools/jqf-data-bench/
+tools/jqf-codec-core-bench/
+tools/jqf-codec-json-bench/
+tools/jqf-codec-toml-bench/
+tools/jqf-codec-csv-bench/
+tools/jqf-codec-receipts/
+tools/jqf-xpath-conformance/
+tools/jqf-sdk-smoke/
+tools/jqf-syntax-compat/
+tools/jqf-syntax-bench/
+tools/jqf-engine-bench/
+tools/jqf-bench-build.rs
+tools/jqf-bench-build-manifest.rs
+
+# Internal ladders / measure / PGO / e2e
+tools/jqf-cross-format-ladder.sh
+tools/jqf-csv-ladder.sh
+tools/jqf-e2e-fixtures.py
+tools/jqf-e2e-ladder.sh
+tools/jqf-jq-test-suite.py
+tools/jqf-jsonpath-cts.py
+tools/jqf-measure.py
+tools/jqf-pgo-build.sh
+tools/jqf-pgo-freshness.sh
+tools/jqf-reference-gen.py
+tools/jqf-timeout-run.pl
+tools/jqf-ttfb-runner.py
+
+# Vendored conformance corpora (runners + trees)
+tools/jq-test-suite/
+tools/jsonpath-compliance-test-suite/
+corpora/

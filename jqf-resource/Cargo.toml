@@ -1,0 +1,38 @@
+[package]
+name = "jqf-resource"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Portable resource accounting and cooperative execution primitives for jqf"
+readme = "README.md"
+keywords = ["accounting", "allocator", "limits", "resources"]
+categories = ["development-tools", "memory-management"]
+autotests = false
+
+[lib]
+name = "jqf_resource"
+path = "src/lib.rs"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "counting_alloc"
+path = "tests/counting_alloc.rs"
+
+[[test]]
+name = "slab_exhaustion"
+path = "tests/slab_exhaustion.rs"
+
+[[test]]
+name = "worker_ambient"
+path = "tests/worker_ambient.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+jqf-source = { workspace = true }

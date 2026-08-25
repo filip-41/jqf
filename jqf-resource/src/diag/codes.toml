@@ -1,0 +1,343 @@
+# Diagnostic codes: the binding contract's spine.
+#
+# Every retained row has a stable `id` and `revision`; a changed meaning is a
+# NEW code, never a repurposed id. tools/jqf-diag-codes-gen.py generates
+# jqf-resource/src/diag/codes.rs, and a freshness check is a gate.
+#
+# class: Semantic | Machine | ProgramRaised | Informational
+#   Semantic/ProgramRaised/Machine are the raise channels (the two-channel law
+#   plus the raised-value channel); Informational records have no channel
+#   (route, cost, precision).
+# severity: Error | Warning | Info | Trace
+# reserved: the code is reserved for a documented v2 producer; never emitted.
+
+[[code]]
+name = "ROUTE_SELECTED"
+id = 1
+revision = 1
+class = "Informational"
+severity = "Info"
+description = "The decode route that served the request."
+
+[[code]]
+name = "COST_SNAPSHOT"
+id = 2
+revision = 1
+class = "Informational"
+severity = "Info"
+description = "Ledger totals read at run end."
+
+[[code]]
+name = "PRECISION_BOUNDARY"
+id = 3
+revision = 1
+class = "Informational"
+severity = "Info"
+description = "One exact-to-binary64 contagion crossing (the exact-number law's fuzzy edge)."
+
+[[code]]
+name = "RAISE_ITERATE"
+id = 4
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Cannot iterate over a non-iterable value."
+
+[[code]]
+name = "RAISE_INDEX"
+id = 5
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Cannot index a non-indexable value."
+
+[[code]]
+name = "RAISE_OBJECT_KEY"
+id = 6
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Object-key mismatch (dynamic key of the wrong kind)."
+
+[[code]]
+name = "RAISE_NO_LENGTH"
+id = 7
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Length requested over a non-length-able value."
+
+[[code]]
+name = "RAISE_NO_KEYS"
+id = 8
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Keys requested over a non-keys-able value."
+
+[[code]]
+name = "RAISE_SLICE_INDICES"
+id = 9
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Slice bounds are not integers."
+
+[[code]]
+name = "RAISE_ARITHMETIC"
+id = 10
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Arithmetic operator over mismatched value kinds."
+
+[[code]]
+name = "RAISE_DIVIDE_BY_ZERO"
+id = 11
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Division by zero."
+
+[[code]]
+name = "RAISE_REMAINDER_BY_ZERO"
+id = 12
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Remainder by a divisor that truncates to zero."
+
+# Retired producer; retained so bindings can decode older records.
+[[code]]
+name = "RAISE_NONTERMINATING"
+id = 13
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Retired exact-division diagnostic retained for decoding older records."
+
+[[code]]
+name = "RAISE_NUMERIC_RANGE"
+id = 14
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "Binary64-path overflow (the reserved numeric-range class)."
+
+[[code]]
+name = "RAISE_HALT"
+id = 15
+revision = 1
+class = "Machine"
+severity = "Warning"
+description = "`halt` or `halt_error` terminated the run."
+
+[[code]]
+name = "RAISE_PROGRAM"
+id = 16
+revision = 1
+class = "ProgramRaised"
+severity = "Error"
+description = "error/0 or error/1 raised a value; payload carries the catchable text."
+
+[[code]]
+name = "MACHINE_INPUT"
+id = 17
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Input violates the selected format or dialect."
+
+[[code]]
+name = "MACHINE_REPRESENTATION"
+id = 18
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "A semantic value cannot be represented by the target."
+
+[[code]]
+name = "MACHINE_REQUIREMENT"
+id = 19
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "No physical route satisfies an exact requirement."
+
+[[code]]
+name = "MACHINE_ROUTE_MISMATCH"
+id = 20
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "A provider or route identity does not belong to this carrier."
+
+[[code]]
+name = "MACHINE_INVALID_TAG"
+id = 21
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "A tag identity is invalid for the target codec."
+
+[[code]]
+name = "MACHINE_COLLIDING_TAGS"
+id = 22
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Distinct stored tag identities collide in the target codec."
+
+[[code]]
+name = "MACHINE_RESOURCE"
+id = 23
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Request accounting rejected an operation."
+
+[[code]]
+name = "MACHINE_CANCELLED"
+id = 24
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Host cancellation stopped the operation."
+
+[[code]]
+name = "MACHINE_DEADLINE"
+id = 25
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "The request deadline expired."
+
+[[code]]
+name = "MACHINE_OVERFLOW"
+id = 26
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Checked non-resource arithmetic overflowed."
+
+[[code]]
+name = "MACHINE_ALLOCATION"
+id = 27
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "Allocation outside a foundation tracked owner failed."
+
+[[code]]
+name = "MACHINE_INTERNAL_CONTRACT"
+id = 29
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "An internal codec or engine contract was violated."
+
+[[code]]
+name = "MACHINE_SINK"
+id = 30
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "The host output sink failed."
+
+[[code]]
+name = "MACHINE_SETUP"
+id = 31
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "The run could not start: an invalid program, codec, format, dialect, or requirement, before any input was read."
+
+[[code]]
+name = "MACHINE_RAW_NUL"
+id = 32
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "A root string dumped raw contains a literal NUL byte, which this process's raw NUL-terminator framing (--raw-output0) cannot represent."
+
+[[code]]
+name = "MACHINE_CREDITS"
+id = 37
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "The cooperative work quantum could not be created: an invalid --cooperative-credits value (a setup failure, pre-input)."
+
+[[code]]
+name = "MACHINE_MEMORY"
+id = 36
+revision = 1
+class = "Machine"
+severity = "Error"
+description = "The allocator-level physical memory ceiling was exceeded (the RSS governor). Distinct from `MACHINE_RESOURCE`: the accounted rejection is the request ledger's own ceiling, this one is the process's real resident set."
+
+# The cross-format encode-projection policy's event codes: one record per
+# projected VALUE, mirroring the counter the host totals into one warning line
+# per kind. Informational because the bytes are correct and canonical; the
+# warning exists because the projection is lossy.
+[[code]]
+name = "PROJECTION_TEMPORAL"
+id = 33
+revision = 1
+class = "Informational"
+severity = "Warning"
+description = "A date, time, or date-time was rendered as canonical RFC 3339 text because the target has no native temporal spelling."
+
+[[code]]
+name = "PROJECTION_TAG"
+id = 34
+revision = 1
+class = "Informational"
+severity = "Warning"
+description = "A tagged value was published as its bare payload because the target has no native tag spelling."
+
+[[code]]
+name = "PROJECTION_BYTES"
+id = 35
+revision = 1
+class = "Informational"
+severity = "Warning"
+description = "A byte string was rendered as base64url text (RFC 8949 section 6.5) because the target has no native byte-string spelling."
+
+# The mismatch dial's event surface: two codes for all eleven cells
+# — one informational per-run warn report, one semantic strict raise, each
+# carrying the CELL NAME in its payload, so a new cell never grows the registry.
+[[code]]
+name = "MISMATCH_WARN"
+id = 38
+revision = 1
+class = "Informational"
+severity = "Warning"
+description = "The mismatch dial's capped, aggregated warn report: one record per run, named after the run, carrying the per-cell counts."
+
+[[code]]
+name = "MISMATCH_STRICT"
+id = 39
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "A mismatch cell raised under the strict dial; the payload names the cell."
+
+[[code]]
+name = "RAISE_ENGINE_CARDINALITY"
+id = 40
+revision = 1
+class = "Semantic"
+severity = "Error"
+description = "A ~generator init/update/extract emitted two or more values on one pull: one state, one emission, per pull."
+
+
+# Reserved v2 producer.
+[[code]]
+name = "FRONTIER_VALIDATION"
+id = 100
+revision = 1
+class = "Informational"
+severity = "Info"
+reserved = true
+description = "Reserved: a projected route validated a corrupt byte the program never read."

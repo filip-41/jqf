@@ -1,0 +1,31 @@
+[package]
+name = "jqf-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Native host capabilities for jqf"
+readme = "README.md"
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-source = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-html = { workspace = true }
+memchr = { workspace = true }
+
+[lib]
+name = "jqf_runtime"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

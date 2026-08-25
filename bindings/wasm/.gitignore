@@ -1,0 +1,5 @@
+# wasm-bindgen output
+jqf_wasm.js
+jqf_wasm.d.ts
+jqf_wasm_bg.wasm
+jqf_wasm_bg.wasm.d.ts

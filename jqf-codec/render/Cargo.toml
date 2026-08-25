@@ -1,0 +1,25 @@
+[package]
+name = "jqf-codec-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Output-only presentation render codec for jqf"
+readme = "README.md"
+keywords = ["jqf", "render", "codec"]
+categories = ["encoding", "no-std"]
+
+[dependencies]
+hashbrown = { version = "0.16.1", default-features = false, features = ["alloc", "default-hasher"] }
+jqf-codec-core = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+
+[lib]
+name = "jqf_codec_render"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

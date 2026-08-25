@@ -1,0 +1,20 @@
+[package]
+name = "jqf-codec-toml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "TOML codec for jqf"
+readme = "README.md"
+keywords = ["jqf", "toml", "codec"]
+categories = ["encoding", "no-std"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+
+[lints]
+workspace = true
