@@ -1,0 +1,28 @@
+[package]
+name = "jqf-engine-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+description = "Repository-owned jqf engine builtin performance harness"
+
+[features]
+allocation-stats = ["jqf-bench-core/allocation-stats"]
+
+[dependencies]
+jqf-bench-core = { workspace = true }
+jqf-codec-core = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-source = { workspace = true }
+
+[[bin]]
+name = "jqf-engine-bench"
+path = "src/main.rs"
+
+[lints]
+workspace = true

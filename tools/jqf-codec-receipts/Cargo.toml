@@ -1,0 +1,56 @@
+[package]
+name = "jqf-codec-receipts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# The dependency union of the migrated per-codec battery crates (plan 124).
+# Pre-declared in full at Y1-T1 so a later codec migration never edits this
+# manifest: `smoke/<codec>.rs` needs only the deps its old crate had, all of
+# which are already here. Tools-only crate — the "no new runtime deps" law
+# governs product crates and is untouched.
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-cbor = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-html = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-jqft = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-codec-toml = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-codec-ini = { workspace = true }
+jqf-codec-messagepack = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-builtins = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-source = { workspace = true }
+# The pinned oracle dependencies of the migrated differential crates (plan
+# 124 Y2), preserved exactly: serde_json's stricter pin also satisfies the
+# html smoke's plain "1" requirement.
+ciborium = { version = "=0.2.2" }
+csv = { version = "=1.4.0" }
+quick-xml = { version = "=0.41.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order"] }
+serde_yaml = "=0.9.34"
+toml = { version = "=1.1.2" }
+
+# The html5lib conformance runners (migrated from jqf-codec-html-smoke's
+# [[bin]] entries, verbatim): the codec-html-smoke recipe runs them beside
+# the smoke battery.
+[[bin]]
+name = "jqf-tokenizer-conformance"
+path = "src/bin/tokenizer_conformance.rs"
+
+[[bin]]
+name = "jqf-tree-conformance"
+path = "src/bin/tree_conformance.rs"
+
+[lints]
+workspace = true

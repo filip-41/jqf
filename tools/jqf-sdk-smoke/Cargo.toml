@@ -1,0 +1,30 @@
+[package]
+name = "jqf-sdk-smoke"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-toml = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-codec-jqft = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-html = { workspace = true }
+jqf-codec-cbor = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-codec-ini = { workspace = true }
+jqf-codec-messagepack = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-runtime = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-sdk-ffi = { workspace = true }
+jqf-source = { workspace = true }
+
+[lints]
+workspace = true

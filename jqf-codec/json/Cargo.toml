@@ -1,0 +1,34 @@
+[package]
+name = "jqf-codec-json"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "JSON, JSONC, JSON5, NDJSON, and json-seq codecs for jqf"
+readme = "README.md"
+keywords = ["jqf", "json", "codec"]
+categories = ["encoding", "no-std"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+
+[dev-dependencies]
+# src/lib.rs reopen-reuse receipt asserts Document::benchmark_shares_schema_storage_with.
+jqf-data = { workspace = true, features = ["benchmark-internals"] }
+# The record vertical's integration tests (ndjson_records.rs, seq_output.rs) drive the framers through the real
+# SDK record drive; lazy.rs lowers through the engine's requirement choke point.
+jqf-engine = { workspace = true }
+jqf-sdk = { workspace = true }
+# Receipt that jqft's escape-table copy matches this crate's owner table.
+jqf-codec-jqft = { workspace = true }
+
+[lib]
+name = "jqf_codec_json"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

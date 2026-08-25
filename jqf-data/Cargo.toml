@@ -1,0 +1,33 @@
+[package]
+name = "jqf-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Canonical semantic values and source-aware documents for jqf"
+readme = "README.md"
+keywords = ["data", "document", "jqf", "value"]
+categories = ["data-structures", "no-std"]
+autotests = false
+
+[features]
+benchmark-internals = []
+
+[dependencies]
+jqf-source = { workspace = true }
+jqf-resource = { workspace = true }
+
+[target.'cfg(all(target_has_atomic = "64", target_has_atomic = "ptr"))'.dependencies]
+triomphe = { version = "0.1.16", default-features = false }
+
+[lib]
+name = "jqf_data"
+path = "src/lib.rs"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[lints]
+workspace = true

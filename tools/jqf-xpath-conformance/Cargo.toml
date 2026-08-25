@@ -1,0 +1,23 @@
+[package]
+name = "jqf-xpath-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+description = "The xml.xpath@1 conformance runner over the vendored libxml2 XPath suite"
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-builtins = { workspace = true }
+jqf-source = { workspace = true }
+
+[[bin]]
+name = "jqf-xpath-conformance"
+path = "src/bin/smoke.rs"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

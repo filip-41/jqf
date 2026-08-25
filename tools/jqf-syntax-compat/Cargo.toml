@@ -1,0 +1,19 @@
+[package]
+name = "jqf-syntax-compat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+description = "Repository-owned jq 1.8.2 syntax compatibility harness"
+
+[dependencies]
+jqf-source = { workspace = true }
+jqf-syntax = { workspace = true }
+
+[[bin]]
+name = "jqf-syntax-compat"
+path = "src/main.rs"
+
+[lints]
+workspace = true

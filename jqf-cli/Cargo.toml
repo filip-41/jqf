@@ -1,0 +1,50 @@
+[package]
+name = "jqf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "jq's language, for every format"
+readme = "README.md"
+keywords = ["jq", "json", "cli", "data-processing"]
+categories = ["command-line-utilities"]
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+
+[dependencies]
+mimalloc = { version = "0.1.52", optional = true, default-features = false, features = ["extended"] }
+libmimalloc-sys = { version = "0.1.49", optional = true, default-features = false, features = ["extended"] }
+jqf-codec-core = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-toml = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-cbor = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-codec-jqft = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-html = { workspace = true }
+jqf-codec-ini = { workspace = true }
+jqf-codec-messagepack = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-runtime = { workspace = true }
+jqf-sdk = { workspace = true }
+jqf-source = { workspace = true }
+jqf-syntax = { workspace = true }
+memchr = { workspace = true }
+toml = { version = "=1.1.2", default-features = false, features = ["parse", "serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "jqf"
+path = "src/main.rs"
+
+[lints]
+workspace = true

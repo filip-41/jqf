@@ -1,0 +1,21 @@
+[package]
+name = "jqf-codec-jqft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Internal typed-fact codecs for jqf (jqft, jqfjson, jqfb)"
+readme = "README.md"
+keywords = ["jqf", "codec"]
+categories = ["encoding", "no-std"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+blake3 = { version = "1.8.2", default-features = false }
+
+[lints]
+workspace = true

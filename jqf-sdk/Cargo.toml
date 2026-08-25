@@ -1,0 +1,51 @@
+[package]
+name = "jqf-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Portable jqf codec and engine orchestration"
+readme = "README.md"
+
+[features]
+# The extension-family tiers: forwarded from jqf-engine, default
+# on. The embedder profile: jqf-sdk is the surface an embedder compiles
+# against, so `--no-default-features` on jqf-sdk drops every extension family
+# (and the binary/dep diet follows). jqf-cli consumes the SDK with default
+# features — the CLI feature set never shrinks.
+default = [
+    "ext-hash",
+    "ext-schema",
+    "ext-jsonpath",
+    "ext-net",
+    "ext-fuzzy",
+    "ext-redact",
+]
+ext-hash = ["jqf-engine/ext-hash"]
+ext-schema = ["jqf-engine/ext-schema"]
+ext-jsonpath = ["jqf-engine/ext-jsonpath"]
+ext-net = ["jqf-engine/ext-net"]
+ext-fuzzy = ["jqf-engine/ext-fuzzy"]
+ext-redact = ["jqf-engine/ext-redact"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-data = { workspace = true }
+jqf-engine = { path = "../jqf-engine", version = "0.1.0-alpha.1", default-features = false }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+memchr = { version = "2.8", default-features = false }
+
+[dev-dependencies]
+jqf-codec-toml = { workspace = true }
+jqf-codec-xml = { workspace = true }
+
+[lib]
+name = "jqf_sdk"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

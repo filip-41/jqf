@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jqf"
+dynamic = ["version"]
+description = "jqf Python bindings: ctypes over libjqf_sdk_ffi (the C ABI)"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["jqf"]

@@ -1,0 +1,27 @@
+[package]
+name = "jqf-codec-csv-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[features]
+allocation-stats = ["jqf-bench-core/allocation-stats"]
+
+[dependencies]
+jqf-bench-core = { workspace = true }
+jqf-codec-core = { workspace = true }
+jqf-codec-delimited = { workspace = true }
+jqf-codec-html = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-codec-render = { workspace = true }
+jqf-codec-xml = { workspace = true }
+jqf-codec-yaml = { workspace = true }
+jqf-engine = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-runtime = { workspace = true }
+jqf-sdk = { workspace = true }
+
+[lints]
+workspace = true

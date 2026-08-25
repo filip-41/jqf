@@ -1,0 +1,52 @@
+[package]
+name = "jqf-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Format-neutral jq execution planning and result contracts for jqf"
+readme = "README.md"
+
+[features]
+# The extension-family tiers: forwarded from jqf-builtins, default
+# on. jqf-cli and jqf-runtime consume the engine with default features — the
+# CLI feature set never shrinks; an embedder drops a family through jqf-sdk.
+default = [
+    "ext-hash",
+    "ext-schema",
+    "ext-jsonpath",
+    "ext-net",
+    "ext-fuzzy",
+    "ext-redact",
+]
+ext-hash = ["jqf-builtins/ext-hash"]
+ext-schema = ["jqf-builtins/ext-schema"]
+ext-jsonpath = ["jqf-builtins/ext-jsonpath"]
+ext-net = ["jqf-builtins/ext-net"]
+ext-fuzzy = ["jqf-builtins/ext-fuzzy"]
+ext-redact = ["jqf-builtins/ext-redact"]
+
+[dependencies]
+# Direct (non-workspace-inherited) dep so `default-features = false` is honored:
+# cargo 1.96 forbids overriding default-features on a workspace-inherited dep
+# (the workspace entry stays clean for the CLI-side consumers).
+jqf-builtins = { path = "../jqf-builtins", version = "0.1.0-alpha.1", default-features = false }
+jqf-codec-core = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+jqf-syntax = { workspace = true }
+
+[dev-dependencies]
+# Integration tests drive execution through the SDK surface (the same shape
+# jqf-sdk/tests uses); the JSON codec provides the input/output registration.
+jqf-sdk = { workspace = true }
+jqf-codec-json = { workspace = true }
+
+[lib]
+name = "jqf_engine"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

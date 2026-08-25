@@ -1,0 +1,23 @@
+[package]
+name = "jqf-resource-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+description = "Repository-owned jqf resource performance harness"
+readme = "README.md"
+
+[features]
+allocation-stats = ["jqf-bench-core/allocation-stats"]
+
+[dependencies]
+jqf-bench-core = { workspace = true }
+jqf-resource = { workspace = true }
+
+[[bin]]
+name = "jqf-resource-bench"
+path = "src/main.rs"
+
+[lints]
+workspace = true

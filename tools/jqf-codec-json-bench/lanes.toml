@@ -1,0 +1,1662 @@
+schema = 2
+fixture_hash = "fnv1a64"
+receipt_schema = 4
+
+[[fixture]]
+id = "nested-catalog-v1"
+status = "Executable"
+bytes = 29420
+hash = "8cf98f28763ca366"
+
+[[fixture]]
+id = "escape-array-v1"
+status = "Executable"
+bytes = 40961
+hash = "c4a551ec7bce827d"
+
+[[fixture]]
+id = "wide-duplicate-object-v1"
+status = "Executable"
+bytes = 64427
+hash = "074f256c7835ad53"
+
+[[fixture]]
+id = "owned-encode-nested-v1"
+status = "Executable"
+bytes = 29551
+hash = "bc2618ba06ef7cb8"
+
+[[fixture]]
+id = "owned-encode-deep-64-v1"
+status = "Executable"
+bytes = 132
+hash = "f7c6e441458bcc64"
+
+[[fixture]]
+id = "owned-encode-deep-256-v1"
+status = "Executable"
+bytes = 516
+hash = "54e69b7cc0a614e4"
+
+[[fixture]]
+id = "owned-encode-escape-dense-v1"
+status = "Executable"
+bytes = 35764
+hash = "00fe7f139a49b97c"
+
+[[fixture]]
+id = "owned-encode-escape-sparse-v1"
+status = "Executable"
+bytes = 33472
+hash = "c77cf59c1e34261a"
+
+[[fixture]]
+id = "owned-encode-escape-heavy-v1"
+status = "NotYetImplemented"
+generator_law = "owned array of 1024 identical strings containing newline, quote, reverse-solidus, and U+1D11E"
+
+[[fixture]]
+id = "owned-encode-wide-4096-v1"
+status = "NotYetImplemented"
+generator_law = "owned ordered object with exactly 4096 distinct key-NNNN integer members"
+
+[[fixture]]
+id = "owned-encode-numeric-mixed-v1"
+status = "NotYetImplemented"
+generator_law = "owned array repeating exact signed integer, unsigned integer, finite float, decimal, exponent, and negative-zero corpus for 4096 values"
+
+[[fixture]]
+id = "owned-encode-tagged-mixed-v1"
+status = "NotYetImplemented"
+generator_law = "owned object with 1024 tagged scalar, array, and object payloads; JSON competitors encode the frozen semantic annotated projection"
+
+[[fixture]]
+id = "located-encode-source-backed-v1"
+status = "NotYetImplemented"
+generator_law = "complete located 4096-member document with exact source ranges and unchanged semantic values; competitors encode its frozen materialized semantic projection"
+
+# Current jqf decode builds complete topology/fact/provenance authority even
+# when demand is narrow. These are rich-overhead orientation lanes, not the
+# construction-comparable minimal-semantic gate.
+[[lane]]
+id = "json/full-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "legacy-rich-complete-authority-orientation"
+expected_receipt = "route=full-document;physical_route=0x6a736f6e00000101;sealed_slot=0;executed_receipt=true"
+
+[[lane]]
+id = "json/select-forward-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "scan-dominant"
+fairness = "scoped-exact-path-subtree-materialization"
+expected_receipt = "route=scoped-exact-path;physical_route=0x6a736f6e00000201;sealed_slot=1;executed_receipt=true"
+
+[[lane]]
+id = "json/full-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "legacy-rich-complete-authority-orientation"
+expected_receipt = "route=full-document;physical_route=0x6a736f6e00000101;sealed_slot=0;executed_receipt=true"
+
+[[lane]]
+id = "json/full-wide-4096-duplicates"
+fixture = "wide-duplicate-object-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "legacy-rich-complete-authority-orientation"
+expected_receipt = "route=full-document;physical_route=0x6a736f6e00000101;sealed_slot=0;executed_receipt=true"
+
+[[lane]]
+id = "json/encode-owned-nested"
+fixture = "owned-encode-nested-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode"
+expected_receipt = "route=encode-owned;physical_encoder=0x6a736f6e00000301;executed_receipt=true"
+
+[[lane]]
+id = "json/encode-owned-deep-64"
+fixture = "owned-encode-deep-64-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep"
+expected_receipt = "route=encode-owned;physical_encoder=0x6a736f6e00000301;executed_receipt=true"
+
+[[lane]]
+id = "json/encode-owned-deep-256"
+fixture = "owned-encode-deep-256-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep"
+expected_receipt = "route=encode-owned;physical_encoder=0x6a736f6e00000301;executed_receipt=true"
+
+[[lane]]
+id = "json/encode-owned-escape-dense-short"
+fixture = "owned-encode-escape-dense-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-escape"
+expected_receipt = "route=encode-owned;physical_encoder=0x6a736f6e00000301;executed_receipt=true"
+
+[[lane]]
+id = "json/encode-owned-escape-sparse-long"
+fixture = "owned-encode-escape-sparse-v1"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-escape"
+expected_receipt = "route=encode-owned;physical_encoder=0x6a736f6e00000301;executed_receipt=true"
+
+[[lane]]
+id = "compare/serde-json/full-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=serde-json-value;operation=full-dom;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/simd-json/full-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=simd-json-borrowed-immutable-copy;operation=full-dom;exact_fixture=true;strict_eof=true;simd_input_copy_timed=true"
+
+[[lane]]
+id = "compare/sonic-rs/full-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=sonic-rs-value;operation=full-dom;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/serde-json/select-forward-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "use-case-comparable-competitor-full-dom-field-access"
+expected_receipt = "competitor=serde-json-value;operation=full-dom-field-access;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/simd-json/select-forward-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "use-case-comparable-competitor-full-dom-field-access"
+expected_receipt = "competitor=simd-json-borrowed-immutable-copy;operation=full-dom-field-access;exact_fixture=true;strict_eof=true;simd_input_copy_timed=true"
+
+[[lane]]
+id = "compare/sonic-rs/select-forward-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "use-case-comparable-competitor-full-dom-field-access"
+expected_receipt = "competitor=sonic-rs-value;operation=full-dom-field-access;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/serde-json/full-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=serde-json-value;operation=full-dom;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/simd-json/full-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=simd-json-borrowed-immutable-copy;operation=full-dom;exact_fixture=true;strict_eof=true;simd_input_copy_timed=true"
+
+[[lane]]
+id = "compare/sonic-rs/full-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=sonic-rs-value;operation=full-dom;exact_fixture=true;strict_eof=true"
+
+[[lane]]
+id = "compare/serde-json/full-wide-4096-duplicates"
+fixture = "wide-duplicate-object-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=serde-json-value;operation=full-dom;exact_fixture=true;strict_eof=true;semantic_projection=last-value-wins"
+
+[[lane]]
+id = "compare/simd-json/full-wide-4096-duplicates"
+fixture = "wide-duplicate-object-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=simd-json-serde-value-immutable-copy;operation=full-dom;exact_fixture=true;strict_eof=true;semantic_projection=last-value-wins"
+
+[[lane]]
+id = "compare/sonic-rs/full-wide-4096-duplicates"
+fixture = "wide-duplicate-object-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "construction-comparable-competitor-semantic-dom"
+expected_receipt = "competitor=sonic-rs-value;operation=full-dom;exact_fixture=true;strict_eof=true;semantic_projection=last-value-wins"
+
+[[lane]]
+id = "compare/serde-json/to-document-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "same-product-competitor-frontend-minimal-semantic-document"
+expected_receipt = "competitor=serde-json-value;operation=parse-plus-accounted-document-build;exact_fixture=true;strict_eof=true;text=stored-copies;source_binding=none"
+
+[[lane]]
+id = "compare/sonic-rs/to-document-nested"
+fixture = "nested-catalog-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "same-product-competitor-frontend-minimal-semantic-document"
+expected_receipt = "competitor=sonic-rs-value;operation=parse-plus-accounted-document-build;exact_fixture=true;strict_eof=true;text=stored-copies;source_binding=none"
+
+[[lane]]
+id = "compare/serde-json/to-document-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "same-product-competitor-frontend-minimal-semantic-document"
+expected_receipt = "competitor=serde-json-value;operation=parse-plus-accounted-document-build;exact_fixture=true;strict_eof=true;text=stored-copies;source_binding=none"
+
+[[lane]]
+id = "compare/sonic-rs/to-document-escape-heavy"
+fixture = "escape-array-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "same-product-competitor-frontend-minimal-semantic-document"
+expected_receipt = "competitor=sonic-rs-value;operation=parse-plus-accounted-document-build;exact_fixture=true;strict_eof=true;text=stored-copies;source_binding=none"
+
+[[lane]]
+id = "compare/serde-json/encode-owned-nested"
+fixture = "owned-encode-nested-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/simd-json/encode-owned-nested"
+fixture = "owned-encode-nested-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/sonic-rs/encode-owned-nested"
+fixture = "owned-encode-nested-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/serde-json/encode-owned-deep-64"
+fixture = "owned-encode-deep-64-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/simd-json/encode-owned-deep-64"
+fixture = "owned-encode-deep-64-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/sonic-rs/encode-owned-deep-64"
+fixture = "owned-encode-deep-64-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/serde-json/encode-owned-deep-256"
+fixture = "owned-encode-deep-256-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/simd-json/encode-owned-deep-256"
+fixture = "owned-encode-deep-256-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+[[lane]]
+id = "compare/sonic-rs/encode-owned-deep-256"
+fixture = "owned-encode-deep-256-v1"
+status = "Executable"
+role = "secondary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fairness = "owned-semantic-value-encode-deep-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;exact_bytes=true"
+
+# True construction-comparable jqf semantic routes.
+[[lane]]
+id = "json/minimal-semantic/full-nested"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fixture = "nested-catalog-v1"
+fairness = "construction-comparable-minimal-semantic-dom"
+expected_receipt = "demand=minimal-semantic;omitted=topology,facts,provenance;validated_bytes;materialized_bytes;physical_route"
+
+[[lane]]
+id = "json/minimal-semantic/full-escape-heavy"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fixture = "escape-array-v1"
+fairness = "construction-comparable-minimal-semantic-dom"
+expected_receipt = "demand=minimal-semantic;omitted=topology,facts,provenance;validated_bytes;materialized_bytes;physical_route"
+
+[[lane]]
+id = "json/minimal-semantic/full-wide-4096-duplicates"
+status = "Executable"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,9"
+workload_class = "materialization-dominant"
+fixture = "wide-duplicate-object-v1"
+fairness = "construction-comparable-minimal-semantic-dom"
+expected_receipt = "demand=minimal-semantic;omitted=topology,facts,provenance;validated_bytes;materialized_bytes;physical_route"
+
+# Independently timed capability ladder; no current whole-document lane stands
+# in for one of these stages.
+# Frozen density/query laws. N=ceil(density*512/100); every lane receipts the
+# exact selected semantic byte count computed by the frozen nested fixture.
+[[lane]]
+id = "json/scoped-exact-area-1-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "1"
+selected_item_law = "catalog_count=512;N=ceil(1*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-5-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "5"
+selected_item_law = "catalog_count=512;N=ceil(5*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-10-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "10"
+selected_item_law = "catalog_count=512;N=ceil(10*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-25-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "25"
+selected_item_law = "catalog_count=512;N=ceil(25*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-50-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "50"
+selected_item_law = "catalog_count=512;N=ceil(50*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-75-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "75"
+selected_item_law = "catalog_count=512;N=ceil(75*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-90-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "90"
+selected_item_law = "catalog_count=512;N=ceil(90*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/scoped-exact-area-100-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "one contiguous catalog prefix subtree"
+density_percent = "100"
+selected_item_law = "catalog_count=512;N=ceil(100*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-1-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "1"
+selected_item_law = "catalog_count=512;N=ceil(1*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-5-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "5"
+selected_item_law = "catalog_count=512;N=ceil(5*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-10-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "10"
+selected_item_law = "catalog_count=512;N=ceil(10*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-25-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "25"
+selected_item_law = "catalog_count=512;N=ceil(25*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-50-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "50"
+selected_item_law = "catalog_count=512;N=ceil(50*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-75-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "75"
+selected_item_law = "catalog_count=512;N=ceil(75*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-90-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "90"
+selected_item_law = "catalog_count=512;N=ceil(90*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/path-set-100-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "ascending explicit paths .catalog[0] through .catalog[N-1]"
+density_percent = "100"
+selected_item_law = "catalog_count=512;N=ceil(100*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-1-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "1"
+selected_item_law = "catalog_count=512;N=ceil(1*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-5-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "5"
+selected_item_law = "catalog_count=512;N=ceil(5*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-10-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "10"
+selected_item_law = "catalog_count=512;N=ceil(10*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-25-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "25"
+selected_item_law = "catalog_count=512;N=ceil(25*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-50-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "50"
+selected_item_law = "catalog_count=512;N=ceil(50*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-75-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "75"
+selected_item_law = "catalog_count=512;N=ceil(75*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-90-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "90"
+selected_item_law = "catalog_count=512;N=ceil(90*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/repeat-horizontal-stripe-100-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "materialization-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "field .price from catalog objects 0 through N-1"
+density_percent = "100"
+selected_item_law = "catalog_count=512;N=ceil(100*512/100);expected_selected_fields=N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-1-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "1"
+selected_item_law = "catalog_count=512;N=ceil(1*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-5-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "5"
+selected_item_law = "catalog_count=512;N=ceil(5*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-10-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "10"
+selected_item_law = "catalog_count=512;N=ceil(10*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-25-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "25"
+selected_item_law = "catalog_count=512;N=ceil(25*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-50-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "50"
+selected_item_law = "catalog_count=512;N=ceil(50*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-75-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "75"
+selected_item_law = "catalog_count=512;N=ceil(75*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-90-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "90"
+selected_item_law = "catalog_count=512;N=ceil(90*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[lane]]
+id = "json/recursive-union-100-percent"
+fixture = "nested-catalog-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 6
+affected_batches = "5,6,7,8"
+workload_class = "scan-dominant"
+fairness = "strict-validation-scoped-result"
+query_law = "recursive union of .id,.name,.price,.active for catalog objects 0 through N-1"
+density_percent = "100"
+selected_item_law = "catalog_count=512;N=ceil(100*512/100);expected_selected_fields=4*N"
+expected_receipt = "direct-scoped;selected_density;selected_items;selected_fields;selected_semantic_bytes;validated_bytes;materialized_bytes;source_strategy;final_floor"
+
+[[prospective_family]]
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,5,6,9"
+workload_class = "mixed-scan-materialization"
+fixture = "nested-catalog-v1"
+fairness = "rich-authority-capability-tax"
+expected_receipt = "absolute_time;delta_from_previous;retained_authorities;allocated_bytes;retained_bytes"
+members = [
+  "json/capability/scan-validate-nested",
+  "json/capability/semantic-nodes-nested",
+  "json/capability/semantic-edges-containers-nested",
+  "json/capability/physical-source-backing-nested",
+  "json/capability/topology-nested",
+  "json/capability/tags-facts-attributes-nested",
+  "json/capability/provenance-source-ranges-nested",
+  "json/capability/successful-diagnostics-nested",
+  "json/capability/complete-rich-product-nested",
+]
+
+[[prospective_family]]
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,5,6,9"
+workload_class = "mixed-scan-materialization"
+fixture = "nested-catalog-v1"
+fairness = "physical-strategy"
+expected_receipt = "strategy;source_manifest;validated_bytes;materialized_bytes;retained_bytes;pinned_bytes"
+members = [
+  "json/generic-full-decode-then-select",
+  "json/adaptive-widening",
+  "json/index-cold-build",
+  "json/index-warm-reuse",
+  "json/index-skip",
+  "json/cache-miss",
+  "json/cache-hit",
+  "json/cache-invalidation",
+  "json/source-request-full-retain",
+  "json/source-request-selected-text-copy",
+  "json/source-request-selected-chunk-copy",
+  "json/source-persistent-full-retain",
+  "json/source-persistent-selected-text-copy",
+  "json/source-persistent-selected-chunk-copy",
+]
+
+[[prospective_family]]
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,5,6,9"
+workload_class = "mixed-scan-materialization"
+fixture = "nested-catalog-v1"
+fairness = "located-or-phase-use-case"
+expected_receipt = "phase_time;input_authority;physical_route;preservation_report"
+members = [
+  "json/encode-located-complete",
+  "json/encode-located-scoped",
+  "e2e/decode-phase-nested",
+  "e2e/engine-phase-nested",
+  "e2e/encode-phase-nested",
+  "compare/selective-api/exact-area-nested",
+]
+
+[[prospective_family]]
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,5,6,9"
+workload_class = "mixed-scan-materialization"
+fixture = "nested-catalog-v1"
+fairness = "allocation-authority-dimension"
+expected_receipt = "allocation_calls;reallocation_calls;requested_bytes;live_retained_bytes;externally_pinned_bytes;peak_working_bytes"
+members = [
+  "instrument/live-returned-product-retained-capacity",
+  "instrument/external-source-pinned-bytes",
+  "instrument/resource-retained-bytes",
+  "instrument/peak-working-bytes",
+]
+
+[[prospective_family]]
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 0
+affected_batches = "0,4,5,6,9"
+workload_class = "mixed-scan-materialization"
+fixture = "nested-catalog-v1"
+fairness = "data-layer-future-microbenchmark"
+expected_receipt = "owning_batch;phase_time;retained_bytes;peak_working_bytes;capacity_release"
+members = [
+  "data/future/semantic-edge-sidecar-layout",
+  "data/future/scoped-publication",
+  "data/future/diagnostic-attachment",
+  "data/future/capacity-retention-after-publication",
+]
+
+# Frozen Batch-9 encode-shape campaign. These lanes are explicit future
+# contracts; no current nested/deep lane stands in for them.
+[[lane]]
+id = "json/encode-escape-heavy"
+fixture = "owned-encode-escape-heavy-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape"
+expected_receipt = "operation=jqf-encode;exact_fixture=true;semantic_projection;physical_encoder;preservation_report"
+
+[[lane]]
+id = "compare/serde-json/encode-escape-heavy"
+fixture = "owned-encode-escape-heavy-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/simd-json/encode-escape-heavy"
+fixture = "owned-encode-escape-heavy-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/sonic-rs/encode-escape-heavy"
+fixture = "owned-encode-escape-heavy-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "json/encode-wide-4096"
+fixture = "owned-encode-wide-4096-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape"
+expected_receipt = "operation=jqf-encode;exact_fixture=true;semantic_projection;physical_encoder;preservation_report"
+
+[[lane]]
+id = "compare/serde-json/encode-wide-4096"
+fixture = "owned-encode-wide-4096-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/simd-json/encode-wide-4096"
+fixture = "owned-encode-wide-4096-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/sonic-rs/encode-wide-4096"
+fixture = "owned-encode-wide-4096-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "json/encode-numeric-mixed"
+fixture = "owned-encode-numeric-mixed-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "scan-dominant"
+fairness = "same-fixture-encode-shape"
+expected_receipt = "operation=jqf-encode;exact_fixture=true;semantic_projection;physical_encoder;preservation_report"
+
+[[lane]]
+id = "compare/serde-json/encode-numeric-mixed"
+fixture = "owned-encode-numeric-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "scan-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/simd-json/encode-numeric-mixed"
+fixture = "owned-encode-numeric-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "scan-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/sonic-rs/encode-numeric-mixed"
+fixture = "owned-encode-numeric-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "scan-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "json/encode-tagged-mixed"
+fixture = "owned-encode-tagged-mixed-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape"
+expected_receipt = "operation=jqf-encode;exact_fixture=true;semantic_projection;physical_encoder;preservation_report"
+
+[[lane]]
+id = "compare/serde-json/encode-tagged-mixed"
+fixture = "owned-encode-tagged-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/simd-json/encode-tagged-mixed"
+fixture = "owned-encode-tagged-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/sonic-rs/encode-tagged-mixed"
+fixture = "owned-encode-tagged-mixed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "json/encode-source-backed"
+fixture = "located-encode-source-backed-v1"
+status = "NotYetImplemented"
+role = "primary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape"
+expected_receipt = "operation=jqf-encode;exact_fixture=true;semantic_projection;physical_encoder;preservation_report"
+
+[[lane]]
+id = "compare/serde-json/encode-source-backed"
+fixture = "located-encode-source-backed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=serde-json;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/simd-json/encode-source-backed"
+fixture = "located-encode-source-backed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=simd-json-serde;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+[[lane]]
+id = "compare/sonic-rs/encode-source-backed"
+fixture = "located-encode-source-backed-v1"
+status = "NotYetImplemented"
+role = "secondary"
+owning_batch = 9
+affected_batches = "9"
+workload_class = "materialization-dominant"
+fairness = "same-fixture-encode-shape-competitor"
+expected_receipt = "competitor=sonic-rs-native;operation=semantic-value-encode;exact_fixture=true;semantic_projection"
+
+# Existing jqf-data worker inventory. Its deterministic case-owned fixture laws
+# and exact checksums remain in each retained raw preflight receipt.
+[[data_lane]]
+id = "integer/parse-mixed-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "decimal/parse-mixed-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/build-small-8"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/build-wide-4096-duplicates"
+status = "Executable"
+owning_batch = 3
+role = "primary"
+affected_batches = "3,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/lookup-small-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/lookup-medium-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/lookup-wide-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/lookup-wide-4096-btree-reference"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object/cow-insert-wide-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "array/build-65536"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "array/cow-detach-65536"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "value/deep-clone-balanced-87381"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "value/shared-clone-object-10"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "value/shared-clone-balanced-87381"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-semantic-65536"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-source-rich-32768"
+status = "Executable"
+owning_batch = 3
+role = "primary"
+affected_batches = "3,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-accounted-semantic-8192"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/accounted-checked-clone-drop-8192"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "object-view/lookup-wide-4096"
+status = "Executable"
+owning_batch = 0
+role = "primary"
+affected_batches = "0,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "reader/topology-source-rich-32768"
+status = "Executable"
+owning_batch = 3
+role = "primary"
+affected_batches = "3,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "reader/facts-source-rich-32768"
+status = "Executable"
+owning_batch = 3
+role = "primary"
+affected_batches = "3,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "materialize/one-shot-root-65536"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "materialize/reusable-root-65536"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "materialize/reusable-subtree-1024"
+status = "Executable"
+owning_batch = 6
+role = "primary"
+affected_batches = "6,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "materialize/source-rich-tagged-root-32768"
+status = "Executable"
+owning_batch = 3
+role = "primary"
+affected_batches = "3,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-nested-balanced-json-v1"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-escape-heavy-json-v1"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-wide-object-duplicates-50-json-v1"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-wide-object-duplicates-90-json-v1"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/build-deep-chain-256-json-v1"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "document/compare-minimal-rich-same-semantics-2048"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "json/decode/full/nested"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/full/escape-heavy"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/full/wide-duplicate"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/full/deep"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/rich/nested"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/rich/escape-heavy"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/rich/wide-duplicate"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "json/decode/rich/deep"
+status = "Executable"
+owning_batch = 2
+role = "secondary"
+affected_batches = "2,9"
+workload_class = "materialization-dominant"
+
+# Frozen schema-4 relationship inventory collected before the atomic compact4
+# E+F cutover. These are executable primary lanes, not schema-5 route claims.
+[[data_lane]]
+id = "legacy/topology/target-only-4097"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "scan-dominant"
+
+[[data_lane]]
+id = "legacy/topology/unkeyed-full-8192"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "scan-dominant"
+
+[[data_lane]]
+id = "legacy/topology/keyed-full-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "scan-dominant"
+
+[[data_lane]]
+id = "legacy/array/direct-traversal-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/array/owner-reuse-traversal-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/array/irregular-indexed-traversal-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/object/unique-lookup-iteration-2048"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/object/duplicate-50-lookup-iteration-2048"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/object/duplicate-90-lookup-iteration-2048"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "data-structure-operation"
+
+[[data_lane]]
+id = "legacy/materialize/root-array-direct-4096"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "materialization-dominant"
+
+[[data_lane]]
+id = "legacy/materialize/subtree-object-duplicate-50"
+status = "Executable"
+owning_batch = 2
+role = "primary"
+affected_batches = "2"
+workload_class = "materialization-dominant"

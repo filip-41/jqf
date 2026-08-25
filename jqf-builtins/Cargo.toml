@@ -1,0 +1,72 @@
+[package]
+name = "jqf-builtins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The jq builtin vocabulary and the value/registry core of jqf: program arena, semantic value laws, and the closed builtin registry"
+readme = "README.md"
+
+# The extension-family feature tiers:
+# every family is DEFAULT-ON (the CLI never shrinks); an embedder drops any
+# `ext-*` feature through jqf-sdk/jqf-engine and the binary/dep diet follows.
+# `ext-redact`/`ext-fuzzy` ride the extension drive, so they depend on
+# `ext-hash`; the feature-gated deps are only the crates the tiered families
+# alone use (base64/regex stay unconditional — core families use them;
+# uuid stays unconditional too — the `~rng` ENGINE BINDING draws its v4
+# entropy through the always-on PRNG in semantics/rand).
+[features]
+default = [
+    "ext-hash",
+    "ext-schema",
+    "ext-jsonpath",
+    "ext-net",
+    "ext-fuzzy",
+    "ext-redact",
+]
+# The perf A/B harness's window into the spill key encoder.
+benchmark-internals = []
+ext-hash = [
+    "dep:blake3",
+    "dep:md-5",
+    "dep:miniz_oxide",
+    "dep:sha1",
+    "dep:sha2",
+    "dep:xxhash-rust",
+]
+ext-schema = []
+ext-jsonpath = []
+ext-net = []
+ext-fuzzy = ["dep:caseless", "dep:unicode-normalization", "ext-hash"]
+ext-redact = ["ext-hash"]
+
+[dependencies]
+jqf-codec-core = { workspace = true }
+jqf-codec-json = { workspace = true }
+jqf-data = { workspace = true }
+jqf-resource = { workspace = true }
+jqf-source = { workspace = true }
+jqf-syntax = { workspace = true }
+memchr = { version = "2.8", default-features = false }
+libm = "0.2"
+regex = "1.13"
+regex-automata = "0.4"
+fancy-regex = "0.19"
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+md-5 = { version = "0.11", default-features = false, optional = true }
+sha1 = { version = "0.11", default-features = false, optional = true }
+sha2 = { version = "0.11", default-features = false, optional = true }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"], optional = true }
+uuid = { version = "1.12", default-features = false, features = ["v4", "v7"] }
+blake3 = { version = "1.8.2", default-features = false, optional = true }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"], optional = true }
+unicode-normalization = { version = "0.1", default-features = false, optional = true }
+caseless = { version = "0.2", optional = true }
+
+[[example]]
+name = "perf_ab"
+required-features = ["benchmark-internals"]
+
+[lints]
+workspace = true
