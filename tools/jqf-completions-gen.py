@@ -31,13 +31,14 @@ Usage:
 import argparse
 import os
 import re
+import subprocess
 import sys
 
-from jqfgate import proc
-
-COMPLETIONS_DIR = os.path.join(proc.ROOT, "tools", "completions")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+COMPLETIONS_DIR = os.path.join(ROOT, "tools", "completions")
 BASH = os.path.join(COMPLETIONS_DIR, "jqf.bash")
 ZSH = os.path.join(COMPLETIONS_DIR, "jqf.zsh")
+DEFAULT_RELEASE_JQF = os.path.join(ROOT, "target", "release", "jqf")
 
 # The marker every regenerate stamps; --check verifies it is present, so a
 # hand-rewrite of a script cannot masquerade as generated.
@@ -73,9 +74,11 @@ FILE_WORDS = frozenset({"FILE", "DIR", "PATH"})
 
 def run(jqf, args):
     """Runs one surface command; the surfaces are commands, so they never read stdin."""
-    completed = proc.run_gate(
-        jqf, args,
+    completed = subprocess.run(
+        [jqf, *args],
         input=b"",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         timeout=120,
     )
     if completed.returncode != 0:
@@ -252,7 +255,7 @@ def generate(jqf):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--jqf", default=proc.DEFAULT_RELEASE_JQF)
+    parser.add_argument("--jqf", default=DEFAULT_RELEASE_JQF)
     parser.add_argument(
         "--check",
         action="store_true",
@@ -268,7 +271,7 @@ def main():
         missing = [path for path in expected if not os.path.isfile(path)]
         if missing:
             for path in missing:
-                print(f"completions-gen: MISSING {os.path.relpath(path, proc.ROOT)}", file=sys.stderr)
+                print(f"completions-gen: MISSING {os.path.relpath(path, ROOT)}", file=sys.stderr)
             return 1
         drifted = [
             path
@@ -278,7 +281,7 @@ def main():
         if drifted:
             for path in drifted:
                 print(
-                    f"completions-gen: DRIFTED {os.path.relpath(path, proc.ROOT)} "
+                    f"completions-gen: DRIFTED {os.path.relpath(path, ROOT)} "
                     f"(regenerate with tools/jqf-completions-gen.py)",
                     file=sys.stderr,
                 )
@@ -289,7 +292,7 @@ def main():
     for path, content in expected.items():
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(content)
-        print(f"completions-gen: wrote {os.path.relpath(path, proc.ROOT)}")
+        print(f"completions-gen: wrote {os.path.relpath(path, ROOT)}")
     return 0
 
 
