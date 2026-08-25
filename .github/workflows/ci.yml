@@ -24,5 +24,11 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Pin jq 1.8.2
+        run: |
+          curl -fsSL -o /tmp/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+          chmod +x /tmp/jq
+          sudo mv /tmp/jq /usr/local/bin/jq
+          test "$(jq --version)" = "jq-1.8.2"
       - name: test
         run: cargo test --workspace --locked < /dev/null
