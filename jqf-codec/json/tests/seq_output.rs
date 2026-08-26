@@ -19,8 +19,10 @@ use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, Valid
 use jqf_codec_json::JsonEncodeOptions;
 use jqf_codec_json::seq::{JsonSeqDecodeOptions, JsonSeqEncodeOptions, JsonSeqProfile, JsonSeqSuffix};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
-use jqf_sdk::{CodecCatalog, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy, RecordSequenceReport};
+use jqf_sdk::{
+    CodecCatalog, CodecRequirementPolicy, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
+    RecordSequenceReport, try_compile_program,
+};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
 const COOPERATIVE_CREDITS: u32 = 64;

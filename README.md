@@ -135,7 +135,6 @@ A jq program should answer the same here, except the places below. Everything el
 ```console
 $ cargo install jqf
 $ brew tap filip-41/jqf && brew install jqf
-$ curl -fsSL https://raw.githubusercontent.com/filip-41/jqf/main/install.sh | sh
 ```
 
 From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for any number you will quote. `jqf --diagnostics` prints build provenance.

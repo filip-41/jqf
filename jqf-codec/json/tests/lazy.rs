@@ -1,15 +1,13 @@
 //! The whole-document route's LAZY default.
 //!
-//! The engine lowers a whole-document consumption to a container-span frontier
-//! of 1 by default: the codec's validating scan still visits every byte (the
-//! corrupt-late law is untouched — only container NODE construction defers),
-//! and a subtree nothing touches costs its span record and nothing else.
+//! A whole-document consumption carrying the shipped lazy frontier (1) keeps
+//! the codec's validating scan visiting every byte (the corrupt-late law is
+//! untouched — only container NODE construction defers), while a subtree
+//! nothing touches costs its span record and nothing else.
 //!
-//! These tests drive the REAL choke point — `CompiledProgram::try_requirement`
-//! under the default policy — through the JSON provider, so they fail before
-//! the flip (whole-document consumers got frontier 0, eager) and pass after.
-//! `decode_eager` forces frontier 0 through the policy override, which is the
-//! same override the force-lazy differential's env var flows through and must
+//! These tests drive the JSON provider through both frontiers — the shipped
+//! lazy default and the explicit eager override (0), which is the same
+//! override the force-lazy differential's env var flows through and must
 //! keep winning.
 //!
 //! Two assertions are re-based from the plan's sketch onto the mechanism that
@@ -20,10 +18,11 @@
 
 mod common;
 
-use jqf_codec_core::{CodecRunContext, DecodeRequest, DiagnosticPolicy, ValidationMode};
-use jqf_data::DialectId;
-use jqf_data::{Document, NodeId, Value};
-use jqf_engine::{CodecInputOutcome, CodecInputResult, CodecRequirementPolicy, EngineResult, try_compile_program};
+use jqf_codec_core::{
+    AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext, DecodeRequest, DiagnosticPolicy,
+    ValidationMode,
+};
+use jqf_data::{DialectId, Document, NodeId, Value};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
 const CREDITS: u32 = 4_096;
@@ -58,18 +57,18 @@ fn source(bytes: &[u8]) -> ResolvedSource<'_> {
     )
 }
 
-/// Decodes `bytes` as one whole document under `identity`, with the frontier
-/// override given (or the engine default when `None`), through the JSON
-/// provider's whole-document route. Returns the published document.
-fn decode(bytes: &[u8], frontier_override: Option<u32>) -> Document<'_> {
+/// Decodes `bytes` as one whole document at the given lazy frontier, through
+/// the JSON provider's whole-document route. Returns the published document.
+fn decode(bytes: &[u8], frontier: u32) -> Document<'_> {
     let mut resources = common::resources();
-    let policy = match frontier_override {
-        Some(depth) => {
-            CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly).with_lazy_frontier(depth)
-        }
-        None => CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
-    };
-    let program = try_compile_program("keys", policy, &resources).expect("keys compiles");
+    let demand = CodecDemand::try_new(&resources);
+    let requirement = AccessRequirement::try_whole(
+        demand,
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement")
+    .with_lazy_frontier(frontier);
     let mut provider = jqf_codec_json::registration()
         .expect("registration")
         .decoder()
@@ -87,29 +86,28 @@ fn decode(bytes: &[u8], frontier_override: Option<u32>) -> Document<'_> {
             &mut resources,
         )
         .expect("provider");
-    // The requirement travels WITH the program: `try_requirement` is the
-    // engine's choke point under test, not a hand-built frontier.
-    let requirement = program.try_requirement(&resources).expect("requirement");
+    // The frontier travels in the requirement itself: the provider defers
+    // exactly as far as the bound requirement asks.
     let handle = provider.bind(&requirement).expect("bind");
     let mut session = provider.open(&handle, &mut resources).expect("open");
     let mut run = CodecRunContext::new(&mut resources);
     run.set_cooperative_credits(CREDITS);
     let result = session.decode(&mut run).expect("decode");
-    let (outcome, _report) = CodecInputResult::try_from_access(result).expect("handoff").into_parts();
-    let CodecInputOutcome::Result(EngineResult::Located(located)) = outcome else {
-        panic!("expected a located whole-document outcome");
+    let AccessOutcome::FullDocument(product) = result.outcome() else {
+        panic!("expected a whole-document outcome");
     };
-    located.product().document().try_clone().expect("document clone")
+    product.document().try_clone().expect("document clone")
 }
 
-/// Decodes with the engine's DEFAULT frontier decision (lazy by default).
+/// Decodes with the shipped LAZY frontier (1) — what a non-whole-document
+/// consumer's requirement lowers to.
 fn decode_lazy(bytes: &[u8]) -> Document<'_> {
-    decode(bytes, None)
+    decode(bytes, 1)
 }
 
 /// Decodes with the explicit eager override (frontier 0).
 fn decode_eager(bytes: &[u8]) -> Document<'_> {
-    decode(bytes, Some(0))
+    decode(bytes, 0)
 }
 
 /// The node id of one member of an OBJECT node by key.
@@ -141,12 +139,12 @@ fn values_semantically_equal(left: &Value, right: &Value) -> bool {
 #[test]
 fn a_deep_document_builds_only_the_nodes_that_are_touched() {
     // IDENTITY (`.`) is a whole-document consumer, so it
-    // decodes EAGER (the skeleton-drop law — the lazy skeleton would only be
-    // re-parsed on materialization and retained beside the materialized
-    // tree). The LAZY default belongs to the programs that provably do not
-    // materialize the whole document — `keys` (the decode function's
-    // program) reads only the root's member identities, so it stays on the
-    // lazy frontier and defers the deep containers.
+    // decodes EAGER at frontier 0 (the skeleton-drop law — the lazy skeleton
+    // would only be re-parsed on materialization and retained beside the
+    // materialized tree). The lazy frontier belongs to requirements that
+    // provably do not materialize the whole document — `keys`-shaped
+    // programs read only the root's member identities, so they ride frontier
+    // 1 and defer the deep containers.
     let document = decode_lazy(DEEP);
     let eager = decode_eager(DEEP);
 

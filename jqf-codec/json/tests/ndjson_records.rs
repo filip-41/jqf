@@ -17,10 +17,9 @@ use jqf_codec_core::{
 };
 use jqf_codec_json::ndjson::{NdjsonDecodeOptions, NdjsonEncodeOptions, NdjsonProfile, NdjsonTerminator};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
 use jqf_sdk::{
-    CodecCatalog, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy, RecordIssueReport, RecordSequenceReport,
-    SequenceValueError,
+    CodecCatalog, CodecRequirementPolicy, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
+    RecordIssueReport, RecordSequenceReport, SequenceValueError, try_compile_program,
 };
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 

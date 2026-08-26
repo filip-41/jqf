@@ -20,8 +20,8 @@ jqf-source = { workspace = true }
 # src/lib.rs reopen-reuse receipt asserts Document::benchmark_shares_schema_storage_with.
 jqf-data = { workspace = true, features = ["benchmark-internals"] }
 # The record vertical's integration tests (ndjson_records.rs, seq_output.rs) drive the framers through the real
-# SDK record drive; lazy.rs lowers through the engine's requirement choke point.
-jqf-engine = { workspace = true }
+# SDK record drive; their compiled programs and policies come from jqf_sdk's re-exports, so this crate never
+# depends on the engine.
 jqf-sdk = { workspace = true }
 # Receipt that jqft's escape-table copy matches this crate's owner table.
 jqf-codec-jqft = { workspace = true }

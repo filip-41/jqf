@@ -314,7 +314,6 @@ dependencies = [
  "jqf-codec-core",
  "jqf-codec-jqft",
  "jqf-data",
- "jqf-engine",
  "jqf-resource",
  "jqf-sdk",
  "jqf-source",
