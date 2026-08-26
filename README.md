@@ -133,9 +133,12 @@ A jq program should answer the same here, except the places below. Everything el
 ## Install
 
 ```console
-$ cargo install jqf
+$ cargo install jqf@0.1.0-alpha.2
 $ brew tap filip-41/jqf && brew install jqf
 ```
+
+Docs and an in-browser playground run on GitHub Pages:
+<https://filip-41.github.io/jqf/> — [playground](https://filip-41.github.io/jqf/assets/playground/).
 
 From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for any number you will quote. `jqf --diagnostics` prints build provenance.
 

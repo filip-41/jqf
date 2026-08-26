@@ -1,12 +1,12 @@
 #!/bin/sh
-# Install jqf. Prefers crates.io (`cargo install jqf` → ~/.cargo/bin, usually on PATH).
+# Install jqf. Prefers crates.io (`cargo install jqf@0.1.0-alpha.2` → ~/.cargo/bin, usually on PATH).
 # Without cargo, fetches the latest GitHub release binary into $PREFIX (default: ~/.local/bin).
 set -eu
 REPO="${JQF_REPO:-filip-41/jqf}"
 
 if command -v cargo >/dev/null 2>&1; then
-  echo "install.sh: cargo install jqf" >&2
-  cargo install jqf
+  echo "install.sh: cargo install jqf@0.1.0-alpha.2" >&2
+  cargo install jqf@0.1.0-alpha.2
   if command -v jqf >/dev/null 2>&1; then
     jqf --version
   else
