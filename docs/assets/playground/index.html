@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playground · jqf</title>
+<link rel="stylesheet" href="../site.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <button class="menu-toggle" type="button" aria-label="Open menu" aria-controls="site-nav" aria-expanded="false">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <a class="wordmark" href="../../"><svg width="118" height="28" viewBox="0 0 200 48" role="img" aria-label="jqf"><text x="0" y="35" style="font:700 26px 'JetBrains Mono',ui-monospace,monospace" fill="#C2410C">{</text><text x="14" y="35" style="font:700 26px 'JetBrains Mono',ui-monospace,monospace" fill="#B45309">&lt;</text><text x="44" y="35" style="font:700 30px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:-1.2px" fill="#16130F">jq</text><circle cx="86" cy="32" r="4" fill="#C2410C"></circle><text x="93" y="35" style="font:700 30px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:-1.2px" fill="#16130F">f</text></svg></a>
+  <span class="spacer"></span>
+  <nav class="header-links">
+    <a href="https://github.com/filip-41/jqf" aria-label="GitHub"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg><span>GitHub</span></a>
+  </nav>
+</header>
+
+<div class="nav-backdrop"></div>
+
+<div class="frame">
+  <aside class="rail" id="site-nav">
+    <div class="nav-section">
+      <div class="eyebrow">Docs</div>
+      <ul class="nav-tree">
+        <li><a href="../../#overview">Overview</a></li>
+        <li><a href="../../#architecture">Architecture</a></li>
+        <li><a href="../../#usage">Usage</a></li>
+        <li><a href="../../#from-jq">Coming from jq</a></li>
+      </ul>
+    </div>
+    <div class="nav-section">
+      <div class="eyebrow">Try it</div>
+      <ul class="nav-tree">
+        <li><a href="#" class="active" aria-current="page">Playground — run jq programs in your browser</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="playground">
+
+    <header class="playground-intro">
+      <p class="page-kicker">Playground <span class="chip" id="version">loading engine…</span></p>
+      <h1>Run jqf in your browser</h1>
+      <p>Try jq programs against JSON, YAML, CSV, TOML, and more. The WebAssembly engine runs entirely on this page.</p>
+    </header>
+
+    <ol class="how-it-works" aria-label="How it works">
+      <li><span class="step">1 · Input</span><strong>Choose your data</strong><span>Paste text, upload a file, or start from an example.</span></li>
+      <li><span class="step">2 · Program</span><strong>Write jq</strong><span>Results update as you type. Press Ctrl/⌘ + Enter to run immediately.</span></li>
+      <li><span class="step">3 · Output</span><strong>Pick the result format</strong><span>Inspect text here or download binary output. Nothing leaves your browser.</span></li>
+    </ol>
+
+    <div class="example-picker">
+      <span class="label" id="examples-label">Try an example</span>
+      <nav class="examples" id="examples" aria-labelledby="examples-label"></nav>
+    </div>
+
+    <div class="grid">
+
+      <section class="terminal program-pane">
+        <div class="bar"><label class="name" for="program">Program</label><span class="spacer"></span><button class="ghost" id="clear-program" title="Clear program">clear</button></div>
+        <textarea id="program" class="field" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder=".users[] | select(.active) | .name"></textarea>
+      </section>
+
+      <section class="pane-drag input-pane" id="input-pane">
+        <div class="terminal">
+          <div class="bar">
+            <label class="name" for="input-text">Input</label>
+            <label class="sr-only" for="in-format">Input format</label>
+            <select id="in-format"></select>
+            <span class="spacer"></span>
+            <button class="ghost" id="upload-btn">upload file</button>
+            <input type="file" id="file" hidden>
+          </div>
+          <textarea id="input-text" class="field" spellcheck="false" autocapitalize="off" autocomplete="off"
+            placeholder='paste JSON, CSV, YAML, TOML, … — or drop a file here'></textarea>
+        </div>
+        <div class="drop-overlay">drop to load</div>
+      </section>
+
+      <section class="terminal output-pane" aria-labelledby="output-label">
+        <div class="bar">
+          <span class="name" id="output-label">Output</span>
+          <label class="sr-only" for="out-format">Output format</label>
+          <select id="out-format"></select>
+          <label class="sr-only" for="indent">Output indentation</label>
+          <select id="indent">
+            <option value="2" selected>pretty</option>
+            <option value="0">compact</option>
+            <option value="-1">tabs</option>
+          </select>
+          <label class="toggle" title="raw strings (-r)"><input type="checkbox" id="raw"> -r</label>
+          <label class="toggle" title="slurp (-s): run once over all inputs as an array"><input type="checkbox" id="slurp"> -s</label>
+          <span class="spacer"></span>
+          <a id="download-binary" hidden class="ghost" download>download</a>
+        </div>
+        <pre class="out" id="output" tabindex="0"></pre>
+        <div class="status" id="status" role="status" aria-live="polite"><span class="dot"></span><span class="msg" id="status-msg">waiting…</span></div>
+      </section>
+
+    </div>
+
+    <footer class="page-hint">
+      <span><kbd>⌘/Ctrl</kbd> + <kbd>↵</kbd> run now</span>
+      <span>Your work is saved locally in this browser.</span>
+    </footer>
+
+  </main>
+</div>
+
+<footer class="site-footer">
+  <a class="mark" href="https://github.com/filip-41/jqf"><svg width="28" height="22" viewBox="0 0 40 48" role="img" aria-label="jqf"><text x="0" y="35" style="font:700 26px 'JetBrains Mono',ui-monospace,monospace" fill="#C2410C">{</text><text x="14" y="35" style="font:700 26px 'JetBrains Mono',ui-monospace,monospace" fill="#B45309">&lt;</text></svg></a>
+  <nav class="footer-links">
+    <a href="https://github.com/filip-41/jqf#install">Install</a>
+    <a href="https://github.com/filip-41/jqf/tree/main/docs">Docs</a>
+    <a href="https://github.com/filip-41/jqf">GitHub</a>
+  </nav>
+</footer>
+
+<script src="../site.js"></script>
+<script type="application/json" id="playground-examples">
+[
+  {
+    "name": "reshape JSON",
+    "program": ".users[]\n| select(.active)\n| {name, roles: (.roles | join(\", \"))}",
+    "input": "{\n  \"users\": [\n    {\"name\": \"Ada Lovelace\", \"active\": true,  \"roles\": [\"admin\", \"on-call\"]},\n    {\"name\": \"Ben Okafor\",   \"active\": false, \"roles\": [\"viewer\"]},\n    {\"name\": \"Mia Castellanos\", \"active\": true, \"roles\": [\"editor\"]}\n  ]\n}\n",
+    "inputFormat": "json", "outputFormat": "json", "indent": "2", "slurp": false
+  },
+  {
+    "name": "CSV revenue by region",
+    "program": "group_by(.region)\n| map({region: .[0].region, orders: length,\n       revenue: (map(.amount | tonumber) | add)})\n| sort_by(-.revenue)",
+    "input": "id,date,region,amount\n1001,2026-08-01,emea,120.50\n1002,2026-08-01,apac,80.00\n1003,2026-08-02,emea,45.25\n1004,2026-08-02,amer,200.00\n1005,2026-08-03,apac,60.75\n1006,2026-08-03,amer,95.10\n",
+    "inputFormat": "csv-header", "outputFormat": "json", "indent": "2", "slurp": true
+  },
+  {
+    "name": "k8s YAML → JSON",
+    "program": "{kind, name: .metadata.name,\n replicas: .spec.replicas,\n images: [.spec.template.spec.containers[].image]}",
+    "input": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-frontend\n  labels:\n    tier: prod\nspec:\n  replicas: 3\n  template:\n    spec:\n      containers:\n        - name: nginx\n          image: nginx:1.27\n        - name: sidecar\n          image: envoyproxy/envoy:v1.31\n",
+    "inputFormat": "yaml", "outputFormat": "json", "indent": "2", "slurp": false
+  },
+  {
+    "name": "Cargo.toml summary",
+    "program": "\"\\(.package.name) v\\(.package.version)\n\\([.dependencies | keys[]] | length) dependencies, \\(.[\"dev-dependencies\"] | keys[] | length) dev-dependencies\"",
+    "input": "[package]\nname = \"tower-router\"\nversion = \"0.5.2\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"full\"] }\nserde = { version = \"1\", features = [\"derive\"] }\n\n[dev-dependencies]\ncriterion = \"0.5\"\nproptest = \"1\"\n",
+    "inputFormat": "toml", "outputFormat": "json", "indent": "0", "raw": true, "slurp": false
+  },
+  {
+    "name": "write TOML comments",
+    "program": ".port.@comment = [\"owned by platform\", \"do not change without a ticket\"]\n| .port.@comment_inline = [\"matches the Service spec\"]",
+    "input": "name = \"checkout\"\nport = 8080\n",
+    "inputFormat": "toml", "outputFormat": "toml", "indent": "0", "slurp": false
+  },
+  {
+    "name": "filter error logs",
+    "program": "select(.level == \"error\")\n| \"\\(.ts) [\\(.service)] \\(.msg)\"",
+    "input": "{\"ts\":\"12:01:04\",\"level\":\"info\",\"service\":\"auth\",\"msg\":\"login ok\"}\n{\"ts\":\"12:01:19\",\"level\":\"error\",\"service\":\"billing\",\"msg\":\"db connection timeout\"}\n{\"ts\":\"12:02:41\",\"level\":\"warn\",\"service\":\"gateway\",\"msg\":\"slow upstream 1.8s\"}\n{\"ts\":\"12:03:02\",\"level\":\"error\",\"service\":\"gateway\",\"msg\":\"429 from payments-api\"}\n{\"ts\":\"12:03:44\",\"level\":\"info\",\"service\":\"auth\",\"msg\":\"token refresh ok\"}\n",
+    "inputFormat": "ndjson", "outputFormat": "json", "indent": "0", "raw": true, "slurp": false
+  },
+  {
+    "name": "count 5xx by path",
+    "program": "[.[] | select(.status >= 500)]\n| group_by(.path)\n| map({path: .[0].path, failures: length})",
+    "input": "{\"path\":\"/api/cart\",\"status\":200}\n{\"path\":\"/api/cart\",\"status\":503}\n{\"path\":\"/api/user\",\"status\":500}\n{\"path\":\"/api/cart\",\"status\":502}\n{\"path\":\"/api/user\",\"status\":201}\n{\"path\":\"/api/cart\",\"status\":504}\n",
+    "inputFormat": "ndjson", "outputFormat": "json", "indent": "2", "slurp": true
+  },
+  {
+    "name": "scrape HTML links",
+    "program": "# every external link target on a saved page\n[ ..\n  | .&href? // empty\n  | select(startswith(\"https://\")) ]\n| unique | .[]",
+    "input": "<!doctype html>\n<html><body>\n<h1>Team handbook</h1>\n<nav><a href=\"/start\">Get started</a> <a href=\"/faq\">FAQ</a></nav>\n<article>\n  Read the <a class=\"ext\" href=\"https://example.io/guide\">full guide</a>\n  or the <a class=\"ext\" href=\"https://example.io/api\">API reference</a>.\n  Mirrors: <a href=\"https://mirror.example.net/guide\">guide (EU)</a>,\n  <a href=\"https://web.archive.org/web/2026/handbook\">archived</a>.\n</article>\n<footer><a href=\"/contact\">Contact</a></footer>\n</body></html>\n",
+    "inputFormat": "html", "outputFormat": "json", "indent": "0", "raw": true, "slurp": false
+  },
+  {
+    "name": "speed test · 100k rows",
+    "program": "map(select(.status == \"active\" and .amount > 500))\n| group_by(.region)\n| map({region: .[0].region, orders: length,\n       revenue: (map(.amount) | add | floor)})\n| sort_by(-.revenue)",
+    "generated": { "rows": 100000 },
+    "input": "",
+    "inputFormat": "json", "outputFormat": "json", "indent": "2", "slurp": false
+  }
+]
+</script>
+
+<script type="module">
+import { loadJqf } from './vendor/jqf.js';
+import { bigOrderBook } from './dataset.js';
+
+window.__jqfBooted = true;
+
+const $ = (id) => document.getElementById(id);
+const programEl = $('program'), inputEl = $('input-text'), outEl = $('output');
+const inFmtEl = $('in-format'), outFmtEl = $('out-format'), indentEl = $('indent');
+const rawEl = $('raw'), slurpEl = $('slurp');
+const statusEl = $('status'), statusMsg = $('status-msg');
+const storeKey = 'jqf-playground-v1';
+const BINARY_FORMATS = new Set(['cbor', 'messagepack']);
+
+const EXAMPLES = JSON.parse($('playground-examples').textContent);
+
+// Friendly select labels: the headered delimited dialects are the ones whose
+// records arrive as OBJECTS — the distinction the first csv error always
+// teaches the hard way.
+const FMT_LABELS = {
+  'csv-header': 'csv-header · rows as objects',
+  'tsv-header': 'tsv-header · rows as objects',
+  csv: 'csv · rows as arrays',
+  tsv: 'tsv · rows as arrays',
+};
+
+// ---- engine ---------------------------------------------------------------
+let jqf;
+try {
+  jqf = await loadJqf();
+} catch (error) {
+  statusMsg.textContent = `engine failed to load: ${error.message}`;
+  throw error;
+}
+$('version').textContent = 'v' + jqf.version().replace(/^jqf-wasm\s*/, '');
+
+for (const f of jqf.formats()) {
+  inFmtEl.add(new Option(FMT_LABELS[f.name] ?? f.name, f.name));
+  outFmtEl.add(new Option(FMT_LABELS[f.name] ?? f.name, f.name));
+}
+
+// ---- state ----------------------------------------------------------------
+function save() {
+  localStorage.setItem(storeKey, JSON.stringify({
+    program: programEl.value, input: inputEl.value,
+    inFmt: inFmtEl.value, outFmt: outFmtEl.value,
+    indent: indentEl.value, raw: rawEl.checked, slurp: slurpEl.checked,
+  }));
+}
+
+function restore() {
+  try {
+    const s = JSON.parse(localStorage.getItem(storeKey));
+    if (!s) return false;
+    programEl.value = s.program ?? '';
+    inputEl.value = s.input ?? '';
+    if ([...inFmtEl.options].some(o => o.value === s.inFmt)) inFmtEl.value = s.inFmt;
+    if ([...outFmtEl.options].some(o => o.value === s.outFmt)) outFmtEl.value = s.outFmt;
+    indentEl.value = s.indent ?? '2';
+    rawEl.checked = !!s.raw; slurpEl.checked = !!s.slurp;
+    return true;
+  } catch { return false; }
+}
+
+// ---- run ------------------------------------------------------------------
+function setInputEnabled() {
+  const bin = BINARY_FORMATS.has(inFmtEl.value);
+  if (bin && !inputEl.dataset.binaryLoaded) {
+    inputEl.value = '';
+    inputEl.disabled = true;
+    inputEl.placeholder = `(binary ${inFmtEl.value} — upload a file below)`;
+  } else {
+    inputEl.disabled = false;
+    if (!inputEl.dataset.binaryLoaded) {
+      inputEl.placeholder = RECORD_HINTS[inFmtEl.value]
+        ?? 'paste JSON, CSV, YAML, TOML, … — or drop a file here';
+    }
+  }
+}
+
+// Plain CSV/TSV rows are ARRAYS of strings (no header row → no field names),
+// and binary formats arrive only through upload — say so before the first
+// error does.
+const RECORD_HINTS = {
+  csv: 'plain csv records are arrays of strings — use .[0], .[1] … (pick csv-header for named fields)',
+  tsv: 'plain tsv records are arrays of strings — use .[0], .[1] … (pick tsv-header for named fields)',
+};
+
+function run() {
+  const t0 = performance.now();
+  let res;
+  try {
+    const isBinary = BINARY_FORMATS.has(inFmtEl.value) && inputEl.dataset.binaryLoaded;
+    res = jqf.run(programEl.value,
+      isBinary ? window.__jqfBinaryInput : inputEl.value,
+      {
+        input: inFmtEl.value, output: outFmtEl.value,
+        indent: Number(indentEl.value),
+        flags: rawEl.checked ? 1 : 0,
+        slurp: slurpEl.checked,
+      });
+  } catch (e) {
+    res = { ok: false, error: String(e?.message ?? e), output: '' };
+  }
+  const ms = performance.now() - t0;
+
+  // Binary outputs (cbor, messagepack) arrive base64 under output_base64:
+  // show a download link and the encoded text instead of a blank pane.
+  const dl = document.getElementById('download-binary');
+  if (res.binary && res.output_base64) {
+    const raw = Uint8Array.from(atob(res.output_base64), (ch) => ch.charCodeAt(0));
+    outEl.textContent = res.output_base64;
+    outEl.classList.remove('partial');
+    dl.hidden = false;
+    dl.href = URL.createObjectURL(new Blob([raw], { type: 'application/octet-stream' }));
+    dl.download = `output.${inFmtEl.value === 'json' ? 'bin' : inFmtEl.value}`;
+    statusEl.classList.remove('ok', 'err', 'warn');
+    statusEl.classList.add('ok', 'warn');
+    statusMsg.textContent = `${ms.toFixed(1)} ms · ${raw.length} bytes binary — download above`;
+    save();
+    return;
+  }
+  dl.hidden = true;
+
+  outEl.textContent = res.output || '';
+  outEl.classList.toggle('partial', !res.ok);
+  statusEl.classList.remove('ok', 'err', 'warn');
+  const bytes = new Blob([res.output ?? '']).size;
+  const ve = (res.value_errors ?? []).length;
+  if (!res.ok) {
+    statusEl.classList.add('err');
+    statusMsg.textContent = res.error || 'error';
+  } else {
+    statusEl.classList.add('ok');
+    statusMsg.textContent = `${ms.toFixed(1)} ms · ${bytes} bytes`;
+    if (ve > 0) {
+      statusEl.classList.add('warn');
+      statusMsg.textContent += ` · ${ve} value warning${ve > 1 ? 's' : ''}`;
+    }
+  }
+}
+
+// ---- events ---------------------------------------------------------------
+let timer;
+function schedule() { clearTimeout(timer); timer = setTimeout(() => { run(); save(); }, 250); }
+
+for (const el of [programEl, inputEl]) {
+  el.addEventListener('input', schedule);
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+});
+for (const el of [inFmtEl, outFmtEl, indentEl, rawEl, slurpEl]) {
+  el.addEventListener('change', () => { setInputEnabled(); schedule(); });
+}
+$('clear-program').addEventListener('click', () => { programEl.value = ''; schedule(); });
+
+// ---- file upload & drag-drop ----------------------------------------------
+const EXT_TO_FORMAT = {
+  json: 'json', jsonc: 'jsonc', json5: 'json5',
+  ndjson: 'ndjson', jsonl: 'ndjson', seq: 'json-seq',
+  csv: 'csv-header', tsv: 'tsv-header',
+  yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  xml: 'xml', html: 'html', htm: 'html',
+  properties: 'properties', ini: 'ini', env: 'dotenv',
+  cbor: 'cbor', msgpack: 'messagepack', mpk: 'messagepack',
+};
+
+async function loadFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const fmt = EXT_TO_FORMAT[ext];
+  if (fmt && [...inFmtEl.options].some(o => o.value === fmt)) inFmtEl.value = fmt;
+  const binary = BINARY_FORMATS.has(inFmtEl.value);
+  if (binary) {
+    window.__jqfBinaryInput = new Uint8Array(await file.arrayBuffer());
+    inputEl.dataset.binaryLoaded = '1';
+    inputEl.value = `${file.name} — ${file.size} bytes (binary)`;
+  } else {
+    delete inputEl.dataset.binaryLoaded;
+    inputEl.value = await file.text();
+  }
+  setInputEnabled();
+  run(); save();
+}
+
+$('upload-btn').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', () => { if ($('file').files[0]) loadFile($('file').files[0]); });
+
+const inputPane = $('input-pane');
+['dragenter', 'dragover'].forEach(ev =>
+  inputPane.addEventListener(ev, (e) => { e.preventDefault(); inputPane.classList.add('dragging'); }));
+['dragleave', 'drop'].forEach(ev =>
+  inputPane.addEventListener(ev, (e) => { e.preventDefault(); inputPane.classList.remove('dragging'); }));
+inputPane.addEventListener('drop', (e) => {
+  const file = e.dataTransfer?.files?.[0];
+  if (file) loadFile(file);
+});
+
+// ---- examples -------------------------------------------------------------
+const examplesNav = $('examples');
+for (const ex of EXAMPLES) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = ex.name;
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => {
+    for (const button of examplesNav.querySelectorAll('button')) {
+      button.setAttribute('aria-pressed', String(button === b));
+    }
+    programEl.value = ex.program;
+    inputEl.value = ex.generated ? bigOrderBook(ex.generated.rows) : ex.input;
+    delete inputEl.dataset.binaryLoaded;
+    inFmtEl.value = ex.inputFormat;
+    outFmtEl.value = ex.outputFormat ?? 'json';
+    indentEl.value = ex.indent ?? '2';
+    rawEl.checked = !!ex.raw;
+    slurpEl.checked = !!ex.slurp;
+    setInputEnabled();
+    run(); save();
+  });
+  examplesNav.append(b);
+}
+
+// ---- boot -----------------------------------------------------------------
+if (!restore()) EXAMPLES[0] ? examplesNav.querySelector('button').click() : run();
+else run();
+setInputEnabled();
+</script>
+<script>
+// ES modules and wasm fetch are blocked on file:// — if the engine module
+// never booted, say so instead of leaving a spinner.
+setTimeout(function () {
+  if (!window.__jqfBooted) {
+    var el = document.getElementById('version');
+    if (el) el.textContent = 'engine did not load — open this page over HTTP (python3 -m http.server), not file://';
+  }
+}, 2000);
+</script>
+</body>
+</html>

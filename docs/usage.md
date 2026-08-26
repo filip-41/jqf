@@ -6,7 +6,14 @@ surfaces.
 
 ## Build
 
-Not packaged yet.
+Packaged on crates.io and Homebrew:
+
+```console
+$ cargo install jqf@0.1.0-alpha.2
+$ brew tap filip-41/jqf && brew install jqf
+```
+
+From a clone:
 
 ```console
 $ cargo build --release -p jqf
@@ -14,9 +21,10 @@ $ echo '{"name":"app","port":8080}' | target/release/jqf '.port'
 8080
 ```
 
-Stable Rust, edition 2024, MSRV 1.96. `jqf --diagnostics` prints build
-provenance (including whether the binary was profile-guided).
-`--build-configuration` prints the same facts and exits.
+`make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for
+any number you will quote. Stable Rust, edition 2024, MSRV 1.96.
+`jqf --diagnostics` prints build provenance (including whether the binary was
+profile-guided). `--build-configuration` prints the same facts and exits.
 
 ## Formats
 

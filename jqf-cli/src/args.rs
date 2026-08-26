@@ -5,6 +5,7 @@
 //! never re-parses or re-derives them.
 
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use jqf_codec_json::JsonIndent;
@@ -3936,6 +3937,18 @@ pub(crate) fn parse_arguments(catalog: Option<CodecCatalog<'_, '_>>) -> Result<C
     // accessors (`.@name`, `.&attr`) address the same document either way — the dial is a rendering choice, not a model
     // change.
     let markup_input = matches!(input.format, CliFormat::Xml | CliFormat::Html);
+
+    // jq's law: a run whose input would come from an interactive terminal shows the help instead of silently reading
+    // nothing (`jq` with no arguments does exactly this). A program, `-f FILE`, `-n`, or named input files all make the
+    // run well-defined without stdin, so only the genuinely stdin-bound shape falls here.
+    if program.is_none()
+        && program_file.is_none()
+        && input_files.is_empty()
+        && !null_input
+        && std::io::stdin().is_terminal()
+    {
+        return Ok(CliCommand::Help);
+    }
     let json_facts = json_facts
         || (markup_input
             && !json_facts_off
