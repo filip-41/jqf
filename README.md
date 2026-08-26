@@ -132,16 +132,13 @@ A jq program should answer the same here, except the places below. Everything el
 
 ## Install
 
-Stable Rust, edition 2024, MSRV 1.96.
-
 ```console
-$ cargo install --git https://github.com/filip-41/jqf jqf
-$ echo '{"name":"app","port":8080}' | jqf '.port'
-8080
+$ cargo install jqf
+$ brew tap filip-41/jqf && brew install jqf
 ```
 
-From a clone: `cargo build --release -p jqf`. `make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for any number you will quote. `jqf --diagnostics` prints build provenance.
+From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for any number you will quote. `jqf --diagnostics` prints build provenance.
 
-Shell completions (bash / zsh) live in [`tools/completions/`](tools/completions/). The man page is [`docs/jqf.1`](docs/jqf.1) (`man docs/jqf.1` from a clone).
+Stable Rust, edition 2024, MSRV 1.96. Shell completions (bash / zsh) live in `tools/completions/`. The man page is `docs/jqf.1`.
 
 Dual-licensed MIT OR Apache-2.0.
