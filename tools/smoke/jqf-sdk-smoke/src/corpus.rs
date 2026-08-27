@@ -11,6 +11,8 @@ use jqf_data::{DialectId, FormatId};
 use jqf_engine::{CompiledProgram, ProjectionClass};
 use jqf_sdk::CodecCatalog;
 
+const FORCE_ROUTE_CORPUS_ROWS: usize = 5696;
+
 /// Whether a compiled corpus program takes a route the floor cannot, and so belongs
 /// in the differential.
 ///
@@ -49,7 +51,6 @@ pub(crate) fn assert_force_route_corpus(
     dialect: &DialectId,
 ) -> Result<(), String> {
     let rows = corpus_rows()?;
-    const FORCE_ROUTE_CORPUS_ROWS: usize = 5696;
     if rows.len() != FORCE_ROUTE_CORPUS_ROWS {
         return Err(format!(
             "force-route corpus dump returned {} rows, expected {FORCE_ROUTE_CORPUS_ROWS}",
