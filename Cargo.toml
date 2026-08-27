@@ -24,6 +24,8 @@ members = [
     "jqf-sdk-ffi",
     "jqf-cli",
     "bindings/wasm",
+    "tools/smoke/jqf-sdk-smoke",
+    "tools/smoke/jqf-codec-smoke",
 ]
 
 # The workspace lint floor.

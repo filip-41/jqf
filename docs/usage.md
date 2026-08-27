@@ -21,8 +21,7 @@ $ echo '{"name":"app","port":8080}' | target/release/jqf '.port'
 8080
 ```
 
-`make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for
-any number you will quote. Stable Rust, edition 2024, MSRV 1.96.
+Stable Rust, edition 2024, MSRV 1.96.
 `jqf --diagnostics` prints build provenance (including whether the binary was
 profile-guided). `--build-configuration` prints the same facts and exits.
 

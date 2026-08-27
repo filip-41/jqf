@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""jqf.1 man page generator (plan 079 §6).
+"""jqf.1 man page generator.
 
 The man page is generated from `jqf --help`, which is itself built from the
-same acceptance tables the parser reads (plan 053 / 049 item 4) — so the
-roff text cannot drift from the flags the binary accepts. Regenerate with
-`make manpage` (reads $(JQF)) whenever the help surface changes.
+same acceptance tables the parser reads — so the roff text cannot drift from
+the flags the binary accepts. Regenerate with `make manpage` (reads $(JQF))
+whenever the help surface changes.
 
-Run: python3 tools/jqf-manpage-gen.py --jqf target/release/jqf
+Run: python3 tools/gates/jqf-manpage-gen.py --jqf target/release/jqf
 Output: docs/jqf.1 (committed; the release tree ships it)
 """
 import argparse

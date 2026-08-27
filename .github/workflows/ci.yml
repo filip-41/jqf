@@ -10,7 +10,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
+      - run: make fmt-check
+
+  cargo:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -18,17 +29,60 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.0
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: fmt
-        run: cargo fmt --all --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: make lint CARGO_FLAGS=--locked
+
+  test:
+    needs: [fmt, cargo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
       - name: Pin jq 1.8.2
         run: |
           curl -fsSL -o /tmp/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
           chmod +x /tmp/jq
           sudo mv /tmp/jq /usr/local/bin/jq
           test "$(jq --version)" = "jq-1.8.2"
-      - name: test
-        run: cargo test --workspace --locked < /dev/null
+      - run: make test CARGO_FLAGS=--locked
+
+  gates:
+    needs: [fmt, cargo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - run: make ci-gates CARGO_FLAGS=--locked
+
+  sdk-smoke:
+    needs: [fmt, cargo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - run: make sdk-smoke CARGO_FLAGS=--locked
+
+  codec-smoke:
+    needs: [fmt, cargo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - run: make codec-smokes CARGO_FLAGS=--locked

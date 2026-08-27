@@ -13,7 +13,7 @@
 //!   [`crate:args`] (`INPUT_FORMATS`/`OUTPUT_FORMATS`/`ALL` dialect tables) plus the dialect→format grouping each dialect
 //!   owns.
 //! - `--explain-code <id>` reads the generated diagnostic-code registry
-//!   (codes.toml is the manifest; `tools/jqf-diag-codes-gen.py` is the only writer of the table this command reads).
+//!   (codes.toml is the manifest; `tools/gates/jqf-diag-codes-gen.py` is the only writer of the table this command reads).
 
 use std::fmt::Write as _;
 

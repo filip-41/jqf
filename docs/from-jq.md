@@ -37,8 +37,6 @@ with no output, 5 for runtime, `halt(N)` / `halt_error(N)`'s own status.
 
 ## How compatibility is held
 
-`make jq-suite` runs jq's own test suite as an oracle. `make compat` runs a
-CLI corpus against system jq, byte for byte. Those receipts are the authority.
 If a behaviour is not on this page and jqf disagrees with jq, that is a bug.
 
 ## Declined flags

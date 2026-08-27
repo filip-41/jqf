@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate the jqf shell completions from the binary's OWN surfaces.
 
-Plan 058 W5 (item 6): jq ships bash and zsh completions; jqf's are generated
-from the same acceptance tables the help is generated from — one law, two
-consumers (053's generated-enumeration law applied to the completion surface).
+jqf's bash and zsh completions are generated from the same acceptance tables
+the help is generated from — one law, two consumers.
 
 The sources are the binary's own generated surfaces, never a hand-written
 copy of the flag surface:
@@ -20,9 +19,8 @@ copy of the flag surface:
 The discipline is the diag-code generator's: this script is the ONLY writer of
 `tools/completions/jqf.bash` and `tools/completions/jqf.zsh`, and `--check`
 exits nonzero when a shipped file drifted from what the binary says today.
-The gate (`make completions`) runs the plain release binary — a freshness
-answer does not depend on the optimizer — and is wired into the standing
-battery at the `commit` tier (three surface commands, well under a second).
+`--check` is the freshness gate (`cargo test -p jqf-cli completions` runs it
+against the test binary).
 
 Usage:
     tools/jqf-completions-gen.py [--jqf PATH]            # regenerate both scripts
@@ -120,8 +118,13 @@ def parse_flags(help_text):
         takes_value = tail.startswith(" ") and not tail.startswith("  ")
         tail = tail.strip()
         if "|" in tail:
-            words = [token for token in tail.split("|") if not PLACEHOLDER_RE.match(token)]
-            kind = "words"
+            tokens = tail.split("|")
+            if any(PLACEHOLDER_RE.match(token) for token in tokens):
+                words = []
+                kind = "none"
+            else:
+                words = tokens
+                kind = "words"
         elif (short or long_) in FILE_FLAGS:
             words = []
             kind = "file"
@@ -174,7 +177,7 @@ def render_bash(flags, builtins):
     lines = []
     lines.append("# jqf bash completion.")
     lines.append(MARKER)
-    lines.append("# Regenerate with `make completions` (or `python3 tools/jqf-completions-gen.py`).")
+    lines.append("# Regenerate with `python3 tools/jqf-completions-gen.py`.")
     lines.append("")
     lines.append("_jqf() {")
     lines.append("    local cur prev")
@@ -226,10 +229,9 @@ def render_zsh(flags):
     opts.append("        '*:program or file:_files'")
 
     lines = []
-    lines.append("#compdef jqf")
     lines.append("# jqf zsh completion.")
     lines.append(MARKER)
-    lines.append("# Regenerate with `make completions` (or `python3 tools/jqf-completions-gen.py`).")
+    lines.append("# Regenerate with `python3 tools/jqf-completions-gen.py`.")
     lines.append("")
     lines.append("_jqf() {")
     lines.append("    local -a opts")

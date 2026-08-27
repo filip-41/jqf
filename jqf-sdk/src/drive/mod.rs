@@ -1149,7 +1149,7 @@ pub enum OrderedResultPoll<'source> {
 /// Engine execution owns result generation; the SDK owns only ordered item
 /// publication over this boundary. NO production drive publishes through
 /// this trait today — the in-tree implementor and caller are both the
-/// sdk-smoke receipt tool (`tools/jqf-sdk-smoke`), which pins ordered
+/// sdk-smoke receipt tool (`tools/smoke/jqf-sdk-smoke`), which pins ordered
 /// publication's cooperative-credit, cancellation, and partial-sink laws.
 /// Production publication loops drive `Publication` + `encode_one`
 /// directly.

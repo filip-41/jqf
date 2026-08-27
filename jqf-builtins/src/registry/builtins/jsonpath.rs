@@ -10,7 +10,7 @@
 //! The v1 profile IS the full RFC 9535 surface (this module follows the RFC exactly, not a dialect zoo); the sentence
 //! in the architecture doc that bounded the original design predates this implementation, and its bounded list (no
 //! scripts, no arithmetic, no mixed unions) is superseded for the surface shipped here. The RFC 9535 Compliance Test
-//! Suite (`tools/jsonpath-compliance-test-suite/`, gate `make jsonpath-conformance`) is the standing oracle and pins
+//! Suite is the standing oracle and pins
 //! every behavior in this module.
 //!
 //! Both arities are READ laws, the same product shape as `json_pointer`:

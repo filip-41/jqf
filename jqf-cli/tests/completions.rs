@@ -1,11 +1,10 @@
-//! The 058 W5 shell-completion gate: `tools/completions/jqf.bash` and `jqf.zsh` are GENERATED from the binary's own
+//! Shell-completion gate: `tools/completions/jqf.bash` and `jqf.zsh` are GENERATED from the binary's own
 //! surfaces (`--help`'s flag table and its pipe-enumerated values, `--list-builtins`' names) by
 //! `tools/jqf-completions-gen.py` — one law, two consumers with the help, so a flag/format/dialect/builtin change
 //! regenerates the scripts in the same commit.
 //!
 //! This test runs the generator's own `--check` against the binary under test: it regenerates both scripts in memory
-//! and exits nonzero on drift. The standing gate (`make completions`, a commit-tier lane in `tools/jqf-gates.py`) runs
-//! the same check against the plain release build; this test is the per-`cargo test` belt.
+//! and exits nonzero on drift. This test is the per-`cargo test` belt.
 
 use std::process::{Command, Stdio};
 
@@ -53,7 +52,7 @@ fn shipped_scripts_are_generated_and_wired() {
         "jqf.bash is the generated bash completion"
     );
     assert!(
-        zsh.starts_with("#compdef jqf") && zsh.contains("compdef _jqf jqf"),
+        zsh.starts_with("# jqf zsh completion.") && zsh.contains("compdef _jqf jqf"),
         "jqf.zsh is the generated zsh completion"
     );
     for (name, text) in [("bash", &bash), ("zsh", &zsh)] {

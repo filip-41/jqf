@@ -198,10 +198,11 @@ fn mixed_canonical_and_non_canonical_stream_matches_render() {
 }
 
 fn record_stream_corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tools/jqf-codec-fuzz/corpus/record_stream")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tools/fuzz/jqf-codec-fuzz/corpus/record_stream")
 }
 
 #[test]
+#[ignore = "local tools/fuzz corpus"]
 fn fuzz_record_corpus_echo_equals_render() {
     let dir = record_stream_corpus_dir();
     let Ok(entries) = fs::read_dir(&dir) else {

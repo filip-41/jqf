@@ -1,6 +1,6 @@
 /* jqf-sdk-ffi: the C ABI for jqf's SDK.
  *
- * CHECKED IN AND GATED: `make ffi-header-lint` (tools/jqf-ffi-header-lint.py)
+ * CHECKED IN AND GATED: `make ffi-header-lint` (tools/gates/jqf-ffi-header-lint.py)
  * fails when this file drifts from the Rust signatures in
  * jqf-sdk-ffi/src/lib.rs — every entry point here must exist there with the
  * same arity, and vice versa. A C embedder declares nothing by hand, which

@@ -4,6 +4,8 @@ jq's language, for every format, that edits files in place without destroying th
 
 Same jq programs, faster, with memory controls, without touching the bytes that don't need to be touched.
 
+![jqf editing and querying TOML, YAML, JSON, and HTML](docs/assets/jqf-in-action.gif)
+
 ## Examples
 
 ### JSON — edit the file in place
@@ -140,7 +142,7 @@ $ brew tap filip-41/jqf && brew install jqf
 Docs and an in-browser playground run on GitHub Pages:
 <https://filip-41.github.io/jqf/> — [playground](https://filip-41.github.io/jqf/assets/playground/).
 
-From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `make pgo` builds the profile-guided binary at `target/pgo/jqf` — use that for any number you will quote. `jqf --diagnostics` prints build provenance.
+From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `jqf --diagnostics` prints build provenance (including whether the binary was profile-guided).
 
 Stable Rust, edition 2024, MSRV 1.96. Shell completions (bash / zsh) live in `tools/completions/`. The man page is `docs/jqf.1`.
 

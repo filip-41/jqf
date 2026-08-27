@@ -2,7 +2,7 @@
 //! through the public SDK surface with the real JSON codec.
 //!
 //! `tools/jqf-cli-jq-compat.sh` owns the byte oracle against jq and
-//! `tools/jqf-sdk-smoke`'s `force_route_corpus` receipt owns the route-vs-floor
+//! `tools/smoke/jqf-sdk-smoke`'s `force_route_corpus` receipt owns the route-vs-floor
 //! comparison over the shape space. These tests pin the laws neither of those
 //! can observe from outside: the ledger stays proportional to the RANGE rather
 //! than to the container (the whole point of the rung), the cooperative credit

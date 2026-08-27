@@ -1,7 +1,7 @@
 # Diagnostic codes: the binding contract's spine.
 #
 # Every retained row has a stable `id` and `revision`; a changed meaning is a
-# NEW code, never a repurposed id. tools/jqf-diag-codes-gen.py generates
+# NEW code, never a repurposed id. tools/gates/jqf-diag-codes-gen.py generates
 # jqf-resource/src/diag/codes.rs, and a freshness check is a gate.
 #
 # class: Semantic | Machine | ProgramRaised | Informational
