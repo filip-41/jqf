@@ -5,6 +5,7 @@ SHELL := /bin/bash
 # first failure
 .SHELLFLAGS := -e -o pipefail -c
 CARGO ?= cargo
+RUSTC ?= rustc
 CARGO_FLAGS ?=
 JQF ?= target/release/jqf
 
@@ -18,7 +19,7 @@ SMOKE_CRATES := jqf-sdk-smoke jqf-codec-smoke
 	codec-messagepack-smoke codec-xml-smoke codec-json-seq-smoke codec-jsonc-smoke \
 	codec-json5-smoke codec-html-smoke codec-yaml-smoke codec-jqft-smoke codec-render-smoke \
 	stack-depth capability-gate colour-gate \
-	codec-contracts-check manpage ci ci-gates
+	codec-contracts-check manpage ci ci-gates bench pgo pgo-fresh pgo-test
 
 check: ## cargo check --workspace --all-targets
 	$(CARGO) check --workspace --all-targets $(CARGO_FLAGS)
@@ -157,6 +158,18 @@ codec-contracts-check: ## backtick identifiers in jqf-codec/CONTRACTS.md resolve
 
 manpage: $(JQF) ## regenerate docs/jqf.1
 	python3 tools/gates/jqf-manpage-gen.py --jqf $(JQF)
+
+pgo: ## profile-guided jqf → target/pgo/jqf
+	CARGO="$(CARGO)" RUSTC="$(RUSTC)" tools/pgo/jqf-pgo-build.sh
+
+pgo-fresh: ## verify target/pgo/jqf matches code and training workload
+	tools/pgo/jqf-pgo-freshness.sh
+
+pgo-test: ## PGO trainer and freshness regressions
+	python3 tools/pgo/test_pgo.py
+
+bench: pgo ## CLI comparison vs pinned competitors (always PGO jqf)
+	$(MAKE) -C benchmark
 
 help: ## list targets
 	@awk 'BEGIN {FS = ":.*## "; printf "jqf targets (default: check):\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)

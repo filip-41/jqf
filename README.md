@@ -98,16 +98,9 @@ jqf is a complete jq. It also edits files without rewriting them, follows live l
 
 ## Performance
 
-jqf is fast, and it uses much less RSS. On an internal panel of about 680 comparable cases (defaults against defaults, geometric mean of wall time), it is typically around 2× jq, 2× gojq, 1.5× jaq, and 3× yq. On large documents the RSS gap is often larger than the time gap — a 90 MB file that costs jq ~900 MB resident is ~110 MB here when the program only needs a count or a path. jaq is close on many cells; jqf does not win everywhere.
+On small files, wall time is process startup — performance alone is not a reason to switch. From a few megabytes of input (thousands of records; the panel’s 5k-wide JSON is ~5 MB) jqf is faster than [jq](https://github.com/jqlang/jq), [jaq](https://github.com/01mf02/jaq), [gojq](https://github.com/itchyny/gojq), [yq](https://github.com/mikefarah/yq), [dasel](https://github.com/TomWright/dasel), and [miller](https://github.com/johnkerl/miller) on most workloads. jaq is the closest; jqf does not win every cell. On large documents the RSS gap is often larger than the time gap.
 
-Those numbers come from an internal harness that is not in this tree. They are a snapshot, not a guarantee, and they vary with program and input. A few rows from that panel (median of 3, wall / peak RSS, rounded):
-
-| Query | Data | jqf | jq | jaq |
-| --- | --- | --- | --- | --- |
-| `.users[0].id` | ~46 MB JSON, 50k users | 130 ms / 50 MB | 490 ms / 460 MB | 290 ms / 570 MB |
-| `.users[25000:35000] \| length` | same | 110 ms / 60 MB | 470 ms / 460 MB | 280 ms / 570 MB |
-| `.users \| length` | ~92 MB JSON, 100k users | 210 ms / 110 MB | 920 ms / 910 MB | 540 ms / 1130 MB |
-| `reduce .users[] as $u (0; . + $u.score)` | same | 240 ms / 130 MB | 1340 ms / 920 MB | 620 ms / 1130 MB |
+The public harness is [`benchmark/`](benchmark/README.md). `make bench` builds the PGO binary. A snapshot of one run is [`benchmark/results.md`](benchmark/results.md). The snapshot is not in any way evidence, it should be treated as performance signal only.
 
 ## Where jqf differs from jq
 
@@ -142,7 +135,7 @@ $ brew tap filip-41/jqf && brew install jqf
 Docs and an in-browser playground run on GitHub Pages:
 <https://filip-41.github.io/jqf/> — [playground](https://filip-41.github.io/jqf/assets/playground/).
 
-From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `cargo build --release -p jqf`. `jqf --diagnostics` prints build provenance (including whether the binary was profile-guided).
+The current alpha release, Cargo, and Homebrew are source builds (`build=plain`). `install.sh` uses a checksummed PGO archive when a release provides one and otherwise falls back to Cargo. From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `make pgo`. `jqf --diagnostics` prints which.
 
 Stable Rust, edition 2024, MSRV 1.96. Shell completions (bash / zsh) live in `tools/completions/`. The man page is `docs/jqf.1`.
 

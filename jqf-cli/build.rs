@@ -6,7 +6,7 @@
 //! joins it here.
 //!
 //! The single fact this script exports is `JQF_PGO_PROFILE_ID`: empty for an ordinary `cargo build --release`, and
-//! otherwise the identity string that `tools/jqf-pgo-build.sh` stamped on the profile it merged. Emptiness is the
+//! otherwise the identity string that `tools/pgo/jqf-pgo-build.sh` stamped on the profile it merged. Emptiness is the
 //! authority for `build=plain`, so there is no second flag to keep consistent.
 //!
 //! The PGO fact is read from `CARGO_ENCODED_RUSTFLAGS` rather than from an environment variable of our own, because

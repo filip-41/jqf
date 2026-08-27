@@ -22,6 +22,7 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,10 +31,59 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: ${{ matrix.target }}
-      - run: cargo build --release --locked -p jqf --target "${{ matrix.target }}"
+          components: llvm-tools-preview
+      - run: tools/pgo/jqf-pgo-build.sh
+        env:
+          JQF_PGO_TARGET: ${{ matrix.target }}
+          CARGO_FLAGS: --locked
       - run: |
-          cp "target/${{ matrix.target }}/release/jqf" "jqf-${{ matrix.target }}"
-          "./jqf-${{ matrix.target }}" --version
-      - run: gh release upload "${{ github.event.release.tag_name }}" "jqf-${{ matrix.target }}" --clobber
+          asset="jqf-${{ matrix.target }}"
+          mkdir "$asset"
+          cp target/pgo/jqf "$asset/jqf"
+          cp docs/jqf.1 "$asset/"
+          cp tools/completions/jqf.bash tools/completions/jqf.zsh "$asset/"
+          "$asset/jqf" --version
+          "$asset/jqf" --diagnostics -n 'null' </dev/null 2>&1 | grep -F 'build=pgo'
+          python3 - "$asset" "$asset.tar.gz" <<'PY'
+          import gzip
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          paths = [source, *sorted(source.rglob("*"))]
+          with Path(sys.argv[2]).open("wb") as raw:
+              with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+                  with tarfile.open(fileobj=compressed, mode="w", format=tarfile.GNU_FORMAT) as archive:
+                      for path in paths:
+                          info = archive.gettarinfo(path, arcname=path.relative_to(source.parent))
+                          info.uid = info.gid = info.mtime = 0
+                          info.uname = info.gname = ""
+                          if path.is_file():
+                              with path.open("rb") as contents:
+                                  archive.addfile(info, contents)
+                          else:
+                              archive.addfile(info)
+          PY
+          shasum -a 256 "$asset.tar.gz" >"$asset.tar.gz.sha256"
+      - run: |
+          asset="jqf-${{ matrix.target }}.tar.gz"
+          tag="${{ github.event.release.tag_name }}"
+          upload_or_verify() {
+            file="$1"
+            local_digest="sha256:$(shasum -a 256 "$file" | awk '{print $1}')"
+            remote_digest="$(gh release view "$tag" --json assets \
+              --jq ".assets[] | select(.name == \"$file\") | .digest")"
+            if [ -z "$remote_digest" ]; then
+              gh release upload "$tag" "$file"
+            elif [ "$remote_digest" != "$local_digest" ]; then
+              echo "release asset $file already exists with digest $remote_digest, expected $local_digest" >&2
+              exit 1
+            else
+              echo "release asset $file already exists with the expected digest"
+            fi
+          }
+          upload_or_verify "$asset"
+          upload_or_verify "$asset.sha256"
         env:
           GH_TOKEN: ${{ github.token }}
