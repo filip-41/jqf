@@ -128,14 +128,14 @@ A jq program should answer the same here, except the places below. Everything el
 ## Install
 
 ```console
-$ cargo install jqf@0.1.0-alpha.2
+$ cargo install jqf
 $ brew tap filip-41/jqf && brew install jqf
 ```
 
 Docs and an in-browser playground run on GitHub Pages:
 <https://filip-41.github.io/jqf/> — [playground](https://filip-41.github.io/jqf/assets/playground/).
 
-The current alpha release, Cargo, and Homebrew are source builds (`build=plain`). `install.sh` uses a checksummed PGO archive when a release provides one and otherwise falls back to Cargo. From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `make pgo`. `jqf --diagnostics` prints which.
+Cargo and Homebrew are source builds (`build=plain`). `install.sh` uses a checksummed PGO archive when a release provides one and otherwise falls back to Cargo. From git HEAD: `cargo install --git https://github.com/filip-41/jqf jqf`. From a clone: `make pgo`. `jqf --diagnostics` prints which.
 
 Stable Rust, edition 2024, MSRV 1.96. Shell completions (bash / zsh) live in `tools/completions/`. The man page is `docs/jqf.1`.
 

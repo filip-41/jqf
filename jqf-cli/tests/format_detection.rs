@@ -512,3 +512,100 @@ fn json5_input_format_decodes_the_grammar() {
     assert_eq!(code, 0, "json5 decode of a json5 document must succeed");
     assert_eq!(out, b"{\"a\":0.5,\"b\":\"x\",\"c\":255}\n");
 }
+
+/// `--in-place` without `--edit` rewrites a named file in its detected format, not as JSON.
+#[test]
+fn in_place_without_edit_keeps_the_detected_format() {
+    let path = write_temp("yaml", b"port: 8080\nname: app\n");
+    let output = run_bytes(&["--in-place", ".port = 9090", path.to_str().unwrap()], b"");
+    let written = std::fs::read(&path).expect("edited file exists");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "in-place yaml rewrite succeeds: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        written, b"port: 9090\nname: app\n",
+        "unpinned --in-place keeps the exact YAML encoding"
+    );
+}
+
+/// One invocation has one codec selection, so mixed detected formats are rejected before any file is rewritten.
+#[test]
+fn in_place_rejects_mixed_detected_formats_before_writing() {
+    let yaml_bytes = b"port: 8080\nname: app\n";
+    let json_bytes = b"{\"port\":8081,\"name\":\"worker\"}\n";
+    let yaml = write_temp("yaml", yaml_bytes);
+    let json = write_temp("json", json_bytes);
+    let output = run_bytes(
+        &[
+            "--in-place",
+            ".",
+            yaml.to_str().expect("yaml path"),
+            json.to_str().expect("json path"),
+        ],
+        b"",
+    );
+    let written_yaml = std::fs::read(&yaml).expect("yaml file exists");
+    let written_json = std::fs::read(&json).expect("json file exists");
+    let _ = std::fs::remove_file(&yaml);
+    let _ = std::fs::remove_file(&json);
+    assert_eq!(output.status.code(), Some(2), "mixed formats are a usage error");
+    assert!(output.stdout.is_empty(), "a rejected request publishes no output");
+    assert_eq!(written_yaml, yaml_bytes, "the first file is untouched");
+    assert_eq!(written_json, json_bytes, "the second file is untouched");
+}
+
+/// `--edit --output-format yaml` on a `.yaml` file uses the detected input; the catalog-less pre-pass must not refuse
+/// it as json-vs-yaml.
+#[test]
+fn edit_output_format_uses_detected_input() {
+    let path = write_temp("yaml", b"port: 8080\nname: app\n");
+    let output = run_bytes(
+        &[
+            "--in-place",
+            "--edit",
+            "--output-format",
+            "yaml",
+            ".port = 9090",
+            path.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let written = std::fs::read(&path).expect("edited file exists");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "--edit --output-format yaml on a .yaml file must not refuse: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(written, b"port: 9090\nname: app\n", "the YAML splice lands exactly");
+}
+
+/// `--in-place --output-format json` on a `.yaml` file is a stated conversion.
+#[test]
+fn in_place_stated_output_format_converts() {
+    let path = write_temp("yaml", b"port: 8080\nname: app\n");
+    let output = run_bytes(
+        &[
+            "--in-place",
+            "--output-format",
+            "json",
+            ".port = 9090",
+            path.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let written = std::fs::read(&path).expect("edited file exists");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "stated json conversion succeeds: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        written, b"{\n  \"port\": 9090,\n  \"name\": \"app\"\n}\n",
+        "the stated conversion writes exact JSON"
+    );
+}

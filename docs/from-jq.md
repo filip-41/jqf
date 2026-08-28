@@ -114,6 +114,11 @@ platform). `0 * -1` is `0`, not `-0` (a decoded `-0` keeps its sign). A
 handful of `?//` / `foreach` / `limit` / constructor-key exit-class rows are
 pinned in the compat corpus.
 
+`[nan] | implode` is U+FFFD and exit 0; jq raises exit 5 (`number (null) can't
+be imploded, unicode codepoint needs to be numeric`). Out-of-range and
+non-integer codepoints already match jq's U+FFFD substitution; NaN is the extra
+defined case so a C `(int)nan` conversion is never reached.
+
 ### CLI extras
 
 Format flags, `--edit`, `--in-place`, `--diff`, `--follow`, `serve`,

@@ -1,4 +1,4 @@
-.TH JQF 1 "" "jqf" "jqf-0.1.0-alpha.1"
+.TH JQF 1 "" "jqf" "jqf-0.1.0"
 .SH NAME
 jqf \- a jq-compatible document processor
 .SH SYNOPSIS
@@ -550,10 +550,14 @@ Exactly one of --split-exp and --split-exp-file may be given.
 Read every positional input file as the input AND write the output back
 to it, atomically unless --no-atomic is given. Each file is edited
 INDEPENDENTLY — one run per file, that file's output written to itself —
-so several files keep their own bytes. A file's original trailing bytes
-are preserved. A usage error with -n/-s/--diff/--follow (a run over null,
-a slurp across files, or a diff pair has no single coherent file to write
-back to) and with --output (two destinations).
+so several files keep their own bytes. The output format defaults to the
+input's, so a `.yaml` file is rewritten as YAML; `--output-format` opts
+into a conversion. All files must use one input format: `--input-format`
+or `--seq` pins it, otherwise their detected extensions must agree. With
+`--edit`, a file's original trailing bytes are preserved. A usage error with
+-n/-s/--diff/--follow (a run over null, a slurp across files, or a diff
+pair has no single coherent file to write back to) and with --output (two
+destinations).
 The atomic-replace model is honest: the write is a NEW
 inode renamed over the old one, so the original mode and (best-effort,
 when the process may chown) owner survive, but HARDLINKS DETACH (the

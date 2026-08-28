@@ -34,7 +34,7 @@ jqf-codec-core = { workspace = true }
 jqf-codec-delimited = { workspace = true }
 jqf-codec-json = { workspace = true }
 jqf-data = { workspace = true }
-jqf-engine = { path = "../jqf-engine", version = "0.1.0-alpha.1", default-features = false }
+jqf-engine = { path = "../jqf-engine", version = "0.1.0", default-features = false }
 jqf-resource = { workspace = true }
 jqf-source = { workspace = true }
 memchr = { version = "2.8", default-features = false }

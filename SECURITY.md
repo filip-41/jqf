@@ -11,9 +11,7 @@ Please allow up to 90 days of coordinated disclosure before publishing details.
 
 ## Supported versions
 
-jqf is pre-release. Only the current `main` branch receives fixes; there
-are no maintained release lines yet. This policy will gain a version table
-with the first tagged release.
+The current release line and `main` receive fixes.
 
 ## Scope notes
 

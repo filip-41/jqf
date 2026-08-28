@@ -285,7 +285,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jqf"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-cbor",
  "jqf-codec-core",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-builtins"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "base64",
  "blake3",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-cbor"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-data",
  "jqf-resource",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-delimited"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-html"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-ini"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-jqft"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "jqf-codec-core",
@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-json"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-codec-jqft",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-messagepack"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-render"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "hashbrown 0.16.1",
  "jqf-codec-core",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-smoke"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "ciborium",
  "csv",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-toml"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-xml"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-codec-yaml"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-data",
@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-data"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-resource",
  "jqf-source",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-engine"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-builtins",
  "jqf-codec-core",
@@ -518,14 +518,14 @@ dependencies = [
 
 [[package]]
 name = "jqf-resource"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-source",
 ]
 
 [[package]]
 name = "jqf-runtime"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-codec-delimited",
@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-sdk"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-codec-delimited",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-sdk-ffi"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-core",
  "jqf-codec-delimited",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "jqf-sdk-smoke"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-cbor",
  "jqf-codec-core",
@@ -604,18 +604,18 @@ dependencies = [
 
 [[package]]
 name = "jqf-source"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 
 [[package]]
 name = "jqf-syntax"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-source",
 ]
 
 [[package]]
 name = "jqf-wasm"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "jqf-codec-cbor",
  "jqf-codec-core",

@@ -9,7 +9,7 @@ surfaces.
 Packaged on crates.io and Homebrew:
 
 ```console
-$ cargo install jqf@0.1.0-alpha.2
+$ cargo install jqf
 $ brew tap filip-41/jqf && brew install jqf
 ```
 
@@ -67,15 +67,15 @@ identical
 
 `--in-place` writes each positional file back to itself, independently and
 atomically (new inode, then rename). File mode survives; hardlinks, ACLs, and
-xattrs do not. `--no-atomic` writes the original inode.
+xattrs do not. `--no-atomic` writes the original inode. The output format is
+the input's unless `--output-format` is named — a `.yaml` file stays YAML.
+All files must use one input format: `--input-format` or `--seq` pins it,
+otherwise their detected extensions must agree. `--edit` splices; without it
+the file is re-encoded.
 
 ```console
 $ jqf --in-place --edit '.retries = 3' a.json b.json c.json
 ```
-
-Without `--input-format`, the first file's extension selects the format for the
-whole run. Mixed-format `--in-place` needs an explicit format or separate
-invocations.
 
 `--check` asks whether the edit would change the file and writes nothing (exit
 1 if it would). `--diff` is a path-keyed semantic diff of two documents,
@@ -188,8 +188,8 @@ jqf --diff old.toml new.toml --input-format toml >/dev/null || echo "drift"
   RSS ceiling is on. Raise it (`--max-rss 90%`) or turn it off (`--max-rss 0`).
 - **`01` / `+1` / `.5` / `1.` refuse.** Strict RFC 8259. `--strictness lenient`
   opts those number classes back in. Invalid UTF-8 still refuses.
-- **`--in-place` on mixed extensions parses later files as the first file's
-  format.** Pin `--input-format` or run them separately.
+- **`--in-place` on mixed extensions refuses before writing.** Pin
+  `--input-format` or run them separately.
 - **An inline TOML comment is `.@comment_inline`, not `.@comment`.** Leading
   block comments are `.@comment`.
 - **Comments vanished after `.port + 0`.** Facts ride on the value. Constructing

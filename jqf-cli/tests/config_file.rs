@@ -375,6 +375,24 @@ fn config_output_format_is_json_family_only() {
     );
 }
 
+/// `--in-place` keeps each file's format unless argv explicitly requests conversion; a presentation default in config
+/// must not silently rewrite a YAML file as JSON.
+#[test]
+fn in_place_ignores_config_output_format_for_conversion() {
+    let dir = scratch("in-place-output-format");
+    let home = scratch("in-place-output-format-home");
+    write(&dir.join(".jqf.toml"), "[defaults]\noutput-format = \"json\"\n");
+    write(&dir.join("app.yaml"), "port: 8080\nname: app\n");
+    let (code, out, err) = run_in(&dir, &home, &["--in-place", ".port = 9090", "app.yaml"], "", &[]);
+    assert_eq!(code, 0, "in-place rewrite succeeds: {}", String::from_utf8_lossy(&err));
+    assert!(out.is_empty(), "in-place output goes to the file");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("app.yaml")).expect("rewritten YAML"),
+        "port: 9090\nname: app\n",
+        "config output-format does not opt an in-place request into conversion"
+    );
+}
+
 /// The help text documents the config surface (the one-table law: the two new flags are rows of the same table the
 /// parser reads).
 #[test]

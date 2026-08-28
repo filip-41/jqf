@@ -120,7 +120,7 @@ A jq program should answer the same here, except the places below. Everything el
 ## Install
 
 ```console
-$ cargo install jqf@0.1.0-alpha.2
+$ cargo install jqf
 $ brew tap filip-41/jqf && brew install jqf
 ```
 

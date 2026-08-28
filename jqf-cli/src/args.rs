@@ -504,10 +504,14 @@ Options:
       Read every positional input file as the input AND write the output back
       to it, atomically unless --no-atomic is given. Each file is edited
       INDEPENDENTLY — one run per file, that file's output written to itself —
-      so several files keep their own bytes. A file's original trailing bytes
-      are preserved. A usage error with -n/-s/--diff/--follow (a run over null,
-      a slurp across files, or a diff pair has no single coherent file to write
-      back to) and with --output (two destinations).
+      so several files keep their own bytes. The output format defaults to the
+      input's, so a `.yaml` file is rewritten as YAML; `--output-format` opts
+      into a conversion. All files must use one input format: `--input-format`
+      or `--seq` pins it, otherwise their detected extensions must agree. With
+      `--edit`, a file's original trailing bytes are preserved. A usage error with
+      -n/-s/--diff/--follow (a run over null, a slurp across files, or a diff
+      pair has no single coherent file to write back to) and with --output (two
+      destinations).
       The atomic-replace model is honest: the write is a NEW
       inode renamed over the old one, so the original mode and (best-effort,
       when the process may chown) owner survive, but HARDLINKS DETACH (the
@@ -3533,16 +3537,45 @@ pub(crate) fn parse_arguments(catalog: Option<CodecCatalog<'_, '_>>) -> Result<C
                 .into(),
         );
     }
-    //: implicit input-format detection for NAMED FILES. When no
+    // Implicit input-format detection for NAMED FILES. When no
     // `--input-format` pinned a format, the first positional file's extension selects it through the catalog's own
     // declaration; stdin keeps the json default (no extension to read, and content sniffing is genuinely ambiguous —
     // every JSON document is valid YAML). An unrecognized extension falls back to json, so no currently-working
-    // invocation changes. Runs before the `--follow` default (a `.csv` tail follows as CSV, a `.ndjson` tail as NDJSON)
-    // and before the `--edit` output mirror (an edited `.toml` file re-emits as TOML); `--seq` still pins json-seq over
-    // a detection below.
+    // invocation changes. When extension detection selects the input for `--in-place`, every file must agree before
+    // any is opened for writing. The catalog-less pre-pass adopts a named dialect or CSV delimiter provisionally so
+    // format-specific validation waits for the catalog pass. Runs before the `--follow` default (a `.csv` tail follows
+    // as CSV, a `.ndjson` tail as NDJSON) and before the `--edit`/`--in-place` output mirror (a `.toml` file re-emits as
+    // TOML); `--seq` still pins json-seq over a detection below.
+    let seq_selects_input = seq && !input_format_given && input_dialect.is_none();
+    let seq_selects_output = seq && !output_format_given && output_dialect.is_none();
+    let extension_detection_pending =
+        catalog.is_none() && input_format.is_none() && input_dialect.is_none() && !input_files.is_empty();
+    if catalog.is_none() && input_format.is_none() && !input_files.is_empty() {
+        input_format = input_dialect
+            .map(CliInputDialect::format)
+            .or_else(|| csv_delimiter.is_some().then_some(CliFormat::Csv));
+    }
     if let Some(catalog) = catalog {
-        if input_format.is_none() && !input_files.is_empty() {
-            input_format = detect_format(&input_files[0], catalog, &CliFormat::INPUT_FORMATS, "input")?;
+        if input_format.is_none() && !input_files.is_empty() && !seq_selects_input {
+            let detected = detect_format(&input_files[0], catalog, &CliFormat::INPUT_FORMATS, "input")?;
+            if in_place {
+                let first = detected.unwrap_or(CliFormat::Json);
+                for path in &input_files[1..] {
+                    let next =
+                        detect_format(path, catalog, &CliFormat::INPUT_FORMATS, "input")?.unwrap_or(CliFormat::Json);
+                    if next != first {
+                        return Err(format!(
+                            "--in-place requires one input format per invocation: {} is {}, but {} is {}",
+                            input_files[0].display(),
+                            first.id(),
+                            path.display(),
+                            next.id()
+                        )
+                        .into());
+                    }
+                }
+            }
+            input_format = detected;
         }
         // A `--output PATH` whose extension a registration declares infers the output format. An explicit
         // `--output-format` wins; a config-only `output-format` does not beat the path extension (the path is the
@@ -3654,12 +3687,12 @@ pub(crate) fn parse_arguments(catalog: Option<CodecCatalog<'_, '_>>) -> Result<C
     // construction — the registered dialect is always `json-seq.strict@1`, and `json-seq.recover@1` stays reserved.
     // Computed BEFORE the block below pins the formats. The checks ask whether ARGV spoke (§5: argv beats config),
     // because a config output-format preference must not suppress `--seq`'s own json-seq selection.
-    let seq_recovering = seq && !input_format_given && input_dialect.is_none();
+    let seq_recovering = seq_selects_input;
     if seq {
         if !input_format_given && input_dialect.is_none() {
             input_format = Some(CliFormat::JsonSeq);
         }
-        if !output_format_given && output_dialect.is_none() {
+        if seq_selects_output {
             output_format = Some(CliFormat::JsonSeq);
             output_dialect = Some(CliOutputDialect::JsonSeqJqf);
         }
@@ -3671,29 +3704,32 @@ pub(crate) fn parse_arguments(catalog: Option<CodecCatalog<'_, '_>>) -> Result<C
                     record stream, json-seq is RS-framed"
             .into());
     }
-    // The edit lane's subject is the DOCUMENT, and the lane never changes format (seam 5): the edited file must be
-    // re-emitted in the input's own format. When the user pinned an input format but left the output unpinned, `--edit`
-    // defaults the output to that same format (`--edit --input-format toml` edits a TOML file as TOML, exactly as
-    // `--seq` defaults both sides). YAML output under edit names the edit-render dialect `yaml.jqf-1.0@1`, the output
-    // profile the edit lane's splice policy lives on.
+    // `--edit` never changes format: the document is re-emitted as it was read. Non-edit `--in-place` follows the input
+    // unless argv explicitly opted into conversion with `--output-format`; a config presentation default must not
+    // silently change a file's format. YAML/JSONC/JSON5 under `--edit` name the edit-render dialect the splice policy
+    // lives on.
+    if (in_place && !edit && !output_format_given && !seq_selects_output) || (edit && output_format.is_none()) {
+        output_format = input_format;
+    }
+    if extension_detection_pending && (edit || in_place) && output_format.is_none() {
+        output_format = output_dialect
+            .map(CliOutputDialect::format)
+            .or_else(|| ndjson_terminator.is_some().then_some(CliFormat::Ndjson))
+            .or_else(|| {
+                (render_header.is_some()
+                    || render_width.is_some()
+                    || render_shape.is_some()
+                    || render_max_width.is_some())
+                .then_some(CliFormat::Render)
+            });
+    }
     if edit && output_dialect.is_none() {
-        if output_format.is_none() {
-            output_format = input_format;
-        }
         match output_format {
             Some(CliFormat::Yaml) => output_dialect = Some(CliOutputDialect::YamlJqf),
             Some(CliFormat::Jsonc) => output_dialect = Some(CliOutputDialect::JsoncJqf),
             Some(CliFormat::Json5) => output_dialect = Some(CliOutputDialect::Json5Jqf10),
             _ => {}
         }
-    }
-    // The catalog-less argv pre-pass (the f68dfe9b9 split) cannot run extension detection — it has no catalog. When
-    // detection is PENDING (a named file, no explicit format) and a dialect was named, the dialect's own format is what
-    // the catalog pass will conclude anyway (every dialect row names its format), so adopt it here: the pre-pass must
-    // not reject as an invalid pair the request the real pass would accept (`--input-dialect yaml.core@1./x.yaml`). An
-    // explicit `--input-format` is untouched, and stdin (no files) keeps the json default with its pinned pair law.
-    if catalog.is_none() && input_format.is_none() && !input_files.is_empty() {
-        input_format = input_dialect.map(CliInputDialect::format);
     }
     let input = resolve_input_selection(input_format, input_dialect, csv_delimiter, csv_header)?;
     // `--raw-output0`'s NUL item terminator is a facade/JSON-renderer feature, but the RECORD route's terminator is
@@ -3778,17 +3814,21 @@ pub(crate) fn parse_arguments(catalog: Option<CodecCatalog<'_, '_>>) -> Result<C
     // never by a hand-written format list in the CLI. YAML output under edit names the edit-render dialect
     // `yaml.jqf-1.0@1`.
     if edit && input.format != output.format {
-        // Name WHERE the clashing output format came from: the refusal must not read as a flag the user never typed (a
-        // config-file preference or an --output path extension are both invisible on the command line).
-        let origin = output_format_source.unwrap_or("the built-in default");
-        return Err(format!(
-            "--edit requires matching input and output formats: the input is {}, \
-             but {} selected {}",
-            input.format.id(),
-            origin,
-            output.format.id()
-        )
-        .into());
+        // The catalog-less pre-pass defaults a pending named file to json. Failing here would refuse
+        // `--edit --output-format yaml t.yaml` as "the input is json" before the catalog pass can see `.yaml`.
+        if !extension_detection_pending {
+            // Name WHERE the clashing output format came from: the refusal must not read as a flag the user never
+            // typed (a config-file preference or an --output path extension are both invisible on the command line).
+            let origin = output_format_source.unwrap_or("the built-in default");
+            return Err(format!(
+                "--edit requires matching input and output formats: the input is {}, \
+                 but {} selected {}",
+                input.format.id(),
+                origin,
+                output.format.id()
+            )
+            .into());
+        }
     }
     if edit && let Some(catalog) = catalog {
         let format = jqf_data::FormatId::try_new(input.format.id()).map_err(|_| CliFailure::Message {
