@@ -1,9 +1,28 @@
 # Documentation
 
-- [Architecture](architecture.md) — document, engine IR, shape recognizers, crates
 - [Usage](usage.md) — formats, editing, facts, memory, exit codes
 - [Using jqf as jq](from-jq.md) — what carries over, and where it does not
+- [Architecture](architecture.md) — document, engine IR, shape recognizers, crates
 - [jqf(1)](jqf.1) — command-line reference
+
+**Formats.** [Formats and codecs](formats.md) ·
+[JSON, JSONC, JSON5](json.md) · [YAML](yaml.md) · [TOML](toml.md) ·
+[CSV and TSV](csv.md) · [CBOR and MessagePack](cbor.md) ·
+[HTML and XML](html.md) · [native formats](native-formats.md) ·
+[render](render.md)
+
+**Language.** [Numbers](numbers.md) · [Types](types.md) ·
+[Builtins](builtins.md) · [engine constructors](generators.md) ·
+[selectors](selectors.md) · [facts](facts.md)
+
+**Workflows.** [Editing](editing.md) · [diff and validation](diff-validate.md) ·
+[streaming and `--follow`](streaming.md) · [serve mode](serve.md) ·
+[explain and diagnostics](explain.md) · [memory and limits](memory.md) ·
+[configuration](configuration.md) · [embedding](embedding.md)
+
+**Architecture in depth.** [Document model](document-model.md) ·
+[engine IR](engine-ir.md) · [shape recognizers](recognizers.md) ·
+[demand and pushdown](demand.md) · [parallelism](parallelism.md)
 
 `jqf --help`, `jqf --help-format <fmt>`, and `jqf --help facts` are the live
 flag and format surfaces.

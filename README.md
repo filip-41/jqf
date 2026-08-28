@@ -120,9 +120,15 @@ A jq program should answer the same here, except the places below. Everything el
 
 ## Docs
 
-- [Architecture](docs/architecture.md)
+Hosted on GitHub Pages: <https://filip-41.github.io/jqf/>. The pages below are
+the same content, served from `docs/`.
+
 - [Usage](docs/usage.md) — formats, editing, facts, memory, exit codes
 - [Using jqf as jq](docs/from-jq.md)
+- [Architecture](docs/architecture.md) — with detail pages on the [document model](docs/document-model.md), [engine IR](docs/engine-ir.md), [shape recognizers](docs/recognizers.md), [demand and pushdown](docs/demand.md), and [parallelism](docs/parallelism.md)
+- Formats: [the codec architecture](docs/formats.md), [JSON/JSONC/JSON5](docs/json.md), [YAML](docs/yaml.md), [TOML](docs/toml.md), [CSV/TSV](docs/csv.md), [CBOR/MessagePack](docs/cbor.md), [HTML/XML](docs/html.md), [native formats](docs/native-formats.md), [render](docs/render.md)
+- Language: [numbers](docs/numbers.md), [types](docs/types.md), [builtins](docs/builtins.md), [engine constructors](docs/generators.md), [selectors](docs/selectors.md), [facts](docs/facts.md)
+- Workflows: [editing](docs/editing.md), [diff and validation](docs/diff-validate.md), [streaming](docs/streaming.md), [serve](docs/serve.md), [explain and diagnostics](docs/explain.md), [memory and limits](docs/memory.md), [configuration](docs/configuration.md), [embedding](docs/embedding.md)
 - [jqf(1)](docs/jqf.1)
 
 ## Install

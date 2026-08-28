@@ -27,7 +27,7 @@ A request walks that stack once. Content is never sniffed: a named file's format
 5. The engine runs the residual graph. Record streams (NDJSON, CSV, json-seq) are framers over byte ranges, not documents. Adjacent JSON texts are the default stdin; NDJSON is never inferred.
 6. Encode projects back to the output format. `--edit` splices assignments into the retained source instead of re-rendering the file.
 
-`--explain` prints the plan through the same accessors the route selector reads.
+[`--explain`](explain.md) prints the plan through the same accessors the route selector reads.
 
 ## Document
 
@@ -42,6 +42,8 @@ Facts (`.@comment`, `.@tag`, `.&href`, …) are ordered portable metadata on a n
 The lazy document keeps source spans. A codec that can defer materialization answers counts and element streams from the span skeleton; a field the program never reads is still *validated*. A corrupt byte in an unread field fails the request the same way the whole-document floor would.
 
 `--edit` is a span patch against that retained source. Untouched bytes stay the file you wrote.
+
+The detail is [Document model](document-model.md).
 
 ## Engine IR
 
@@ -63,6 +65,8 @@ What is left is a graph of those five node kinds. A bare-`Stage` root (pure path
 The **pushdown split** names the maximal static prefix of the entry stage before its first `.[]`. That prefix becomes a codec `AccessRequirement`; everything from the first iteration onward is the residual the executor drives. Identity is whole-document access, never an empty forward path.
 
 A bare-`Stage` residual takes a single-slot fast path. `Choice` / `FlatMap` engage the graph interpreter. One value is in flight per frame; an unsuppressed failure discards the frame stack.
+
+The detail is [Engine IR](engine-ir.md).
 
 ## Shape recognizers
 
@@ -102,6 +106,8 @@ jqf: explain: route: stream
 
 `--diagnostics` adds build provenance, the cost snapshot, and the RSS line.
 
+The detail is [Shape recognizers](recognizers.md).
+
 ## Codec demand
 
 The recognizers name what the program needs. The codec decides how much of the document to *build*. Engine and selector never branch on which format honoured the hint: they see only `jqf-codec-core`.
@@ -118,6 +124,8 @@ An exact demand with no Exact slot still opens Whole. Delivering more than asked
 The validating scan visits every byte before any node is published. Deferral changes whether a node is built, not whether a byte is validated. A codec that cannot defer (YAML aliases and merge keys, HTML recovery) says so in its own module; the engine still sees a document.
 
 Record streams (NDJSON, CSV, json-seq, cbor-seq) are a different kind: framers over byte ranges, never documents. Each record's payload then goes through the payload codec's ordinary access ladder — the same Whole / Exact bind, reused, not a second decode stack.
+
+The detail is [Demand and pushdown](demand.md).
 
 ## Crates
 
@@ -142,10 +150,12 @@ The binary crate lives in `jqf-cli/`; the package name is `jqf`. Each crate's `R
 
 Two shapes run on ordered workers: explicit NDJSON, and default adjacent-values stdin. A worker publishes bytes, or the whole request re-runs serially. A parallel answer is therefore byte-identical to a serial one. `--workers auto` keeps small inputs on the serial path.
 
+The detail is [Parallelism](parallelism.md).
+
 ## Embedding
 
 Depend on `jqf-sdk` plus the codec crates you want. Registration is one line per codec; a build understands exactly the formats it registered. Route-named drives are crate-private — `jqf_sdk::execute` is the entry.
 
-`jqf-sdk-ffi` is the C ABI. Python and Wasm bindings live under `bindings/`. Resource governance applies to embedded calls the same way it applies to the binary.
+`jqf-sdk-ffi` is the C ABI. Python and Wasm bindings live under `bindings/`. Resource governance applies to embedded calls the same way it applies to the binary. The detail is [Embedding jqf](embedding.md).
 
 Codecs are dependency edges, not feature flags. Builtin extension families (`ext-hash`, `ext-schema`, `ext-jsonpath`, `ext-net`, `ext-fuzzy`, `ext-redact`) are the one thing `jqf-sdk` gates by feature; all six are on by default.

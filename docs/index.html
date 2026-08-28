@@ -27,9 +27,57 @@
       <div class="eyebrow">Docs</div>
       <ul class="nav-tree" id="nav">
         <li><a href="#overview">Overview</a></li>
-        <li><a href="#architecture">Architecture</a></li>
         <li><a href="#usage">Usage</a></li>
         <li><a href="#from-jq">Coming from jq</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+      </ul>
+    </div>
+    <div class="nav-section">
+      <div class="eyebrow">Formats</div>
+      <ul class="nav-tree nav-pages">
+        <li><a href="#formats">Formats and codecs</a></li>
+        <li><a href="#json">JSON · JSONC · JSON5</a></li>
+        <li><a href="#yaml">YAML</a></li>
+        <li><a href="#toml">TOML</a></li>
+        <li><a href="#csv">CSV and TSV</a></li>
+        <li><a href="#cbor">CBOR and MessagePack</a></li>
+        <li><a href="#html">HTML and XML</a></li>
+        <li><a href="#native-formats">Native formats</a></li>
+        <li><a href="#render">Render</a></li>
+      </ul>
+    </div>
+    <div class="nav-section">
+      <div class="eyebrow">Language</div>
+      <ul class="nav-tree nav-pages">
+        <li><a href="#numbers">Numbers</a></li>
+        <li><a href="#types">Types</a></li>
+        <li><a href="#builtins">Builtins</a></li>
+        <li><a href="#generators">Engine constructors (~)</a></li>
+        <li><a href="#selectors">Selectors</a></li>
+        <li><a href="#facts">Facts (.@ and .&amp;)</a></li>
+      </ul>
+    </div>
+    <div class="nav-section">
+      <div class="eyebrow">Workflows</div>
+      <ul class="nav-tree nav-pages">
+        <li><a href="#editing">Editing documents</a></li>
+        <li><a href="#diff-validate">Diff and validation</a></li>
+        <li><a href="#streaming">Streaming and --follow</a></li>
+        <li><a href="#serve">Serve mode</a></li>
+        <li><a href="#explain">Explain and diagnostics</a></li>
+        <li><a href="#memory">Memory and limits</a></li>
+        <li><a href="#configuration">Configuration</a></li>
+        <li><a href="#embedding">Embedding jqf</a></li>
+      </ul>
+    </div>
+    <div class="nav-section">
+      <div class="eyebrow">Architecture in depth</div>
+      <ul class="nav-tree nav-pages">
+        <li><a href="#document-model">Document model</a></li>
+        <li><a href="#engine-ir">Engine IR</a></li>
+        <li><a href="#recognizers">Shape recognizers</a></li>
+        <li><a href="#demand">Demand and pushdown</a></li>
+        <li><a href="#parallelism">Parallelism</a></li>
       </ul>
     </div>
     <div class="nav-section">
@@ -61,10 +109,38 @@
 // page, `#<page>/<anchor>` lands mid-page, a bare `#<anchor>` scrolls inside
 // the page already on screen.
 const PAGES = {
-  'overview':    { file: 'README.md',       title: 'Overview' },
-  'architecture':{ file: 'architecture.md', title: 'Architecture' },
-  'usage':       { file: 'usage.md',        title: 'Usage' },
-  'from-jq':     { file: 'from-jq.md',      title: 'Coming from jq' },
+  'overview':       { file: 'README.md',         title: 'Overview' },
+  'architecture':   { file: 'architecture.md',   title: 'Architecture' },
+  'usage':          { file: 'usage.md',          title: 'Usage' },
+  'from-jq':        { file: 'from-jq.md',        title: 'Coming from jq' },
+  'formats':        { file: 'formats.md',        title: 'Formats and codecs' },
+  'json':           { file: 'json.md',           title: 'JSON, JSONC, JSON5' },
+  'yaml':           { file: 'yaml.md',           title: 'YAML' },
+  'toml':           { file: 'toml.md',           title: 'TOML' },
+  'csv':            { file: 'csv.md',            title: 'CSV and TSV' },
+  'cbor':           { file: 'cbor.md',           title: 'CBOR and MessagePack' },
+  'html':           { file: 'html.md',           title: 'HTML and XML' },
+  'native-formats': { file: 'native-formats.md', title: 'Native formats' },
+  'render':         { file: 'render.md',         title: 'Render' },
+  'numbers':        { file: 'numbers.md',        title: 'Numbers' },
+  'types':          { file: 'types.md',          title: 'Types' },
+  'builtins':       { file: 'builtins.md',       title: 'Builtins' },
+  'generators':     { file: 'generators.md',     title: 'Engine constructors' },
+  'selectors':      { file: 'selectors.md',      title: 'Selectors' },
+  'facts':          { file: 'facts.md',          title: 'Facts' },
+  'editing':        { file: 'editing.md',        title: 'Editing documents' },
+  'diff-validate':  { file: 'diff-validate.md',  title: 'Diff and validation' },
+  'streaming':      { file: 'streaming.md',      title: 'Streaming and --follow' },
+  'serve':          { file: 'serve.md',          title: 'Serve mode' },
+  'explain':        { file: 'explain.md',        title: 'Explain and diagnostics' },
+  'memory':         { file: 'memory.md',         title: 'Memory and limits' },
+  'configuration':  { file: 'configuration.md',  title: 'Configuration' },
+  'embedding':      { file: 'embedding.md',      title: 'Embedding jqf' },
+  'document-model': { file: 'document-model.md', title: 'Document model' },
+  'engine-ir':      { file: 'engine-ir.md',      title: 'Engine IR' },
+  'recognizers':    { file: 'recognizers.md',    title: 'Shape recognizers' },
+  'demand':         { file: 'demand.md',         title: 'Demand and pushdown' },
+  'parallelism':    { file: 'parallelism.md',    title: 'Parallelism' },
 };
 const PAGES_BY_FILE = Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [v.file, k]));
 
@@ -80,7 +156,7 @@ async function show() {
   const pageName = PAGES[name] ? name : 'overview';
   const page = PAGES[pageName];
   const targetAnchor = PAGES[name] ? anchor : name;
-  for (const a of document.querySelectorAll('#nav a')) {
+  for (const a of document.querySelectorAll('.rail .nav-tree a[href^="#"]')) {
     const active = a.getAttribute('href') === '#' + pageName;
     a.classList.toggle('active', active);
     if (active) a.setAttribute('aria-current', 'page');

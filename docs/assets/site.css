@@ -59,6 +59,10 @@ html {
   /* the gutter stays put across short and long pages — no horizontal shift
    * when the scrollbar comes and goes */
   scrollbar-gutter: stable;
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
 }
 body {
   margin: 0;
@@ -141,14 +145,14 @@ kbd {
   max-height: calc(100vh - 96px);
   overflow: auto;
 }
-.nav-section { margin-bottom: 28px; }
+.nav-section { margin-bottom: 22px; }
 .eyebrow {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-500);
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   padding: 0 12px;
 }
 .nav-tree {
@@ -158,15 +162,18 @@ kbd {
 }
 .nav-tree a {
   display: block;
-  padding: 5px 10px;
-  border-radius: 3px;
+  padding: 4px 10px;
+  border-left: 2px solid transparent;
+  border-radius: 0 3px 3px 0;
   text-decoration: none;
-  color: var(--ink-800);
-  font-size: 14px;
+  color: var(--ink-700);
+  font-size: 13.5px;
+  line-height: 1.45;
 }
-.nav-tree a:hover { background: var(--ink-050); }
+.nav-tree a:hover { background: var(--ink-050); color: var(--ink-900); }
 .nav-tree a.active {
   background: var(--ink-100);
+  border-left-color: var(--rust-600);
   color: var(--ink-900);
   font-weight: 500;
 }
@@ -225,6 +232,13 @@ kbd {
     margin-top: 44px;
     font-size: 23px;
   }
+  /* wide law tables scroll sideways instead of breaking the column */
+  .content table {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .site-footer { padding: 20px 16px 28px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -236,6 +250,8 @@ kbd {
   max-width: 820px;
   min-width: 0;
 }
+/* anchored headings land clear of the sticky header */
+.content :is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 72px; }
 .content h1 {
   margin: 0;
   font-size: 42px;

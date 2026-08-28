@@ -1,6 +1,8 @@
 # Usage
 
-Formats, editing, facts, memory, and exit codes.
+[Formats](formats.md), [editing](editing.md), [facts](facts.md),
+[memory](memory.md), and exit codes. Each section here is the short form and
+points at its detail page.
 `jqf --help`, `jqf --help-format <fmt>`, and `jqf --help facts` are the live
 surfaces.
 
@@ -43,15 +45,20 @@ Dialects (`--input-dialect` / `--output-dialect`) are the sharp choices most
 runs never name: `ndjson.strict` vs `ndjson.recovering`, CBOR encode dialects,
 YAML `block` vs `stream-canonical`.
 
-**CSV / TSV.** `--csv-delimiter BYTE` (the registered `tsv` format binds its
-own tab and rejects the dial). `--header` reads row 1 as keys; it is never
-guessed. `--follow` cannot serve the headered dialect.
+**[CSV / TSV](csv.md).** `--csv-delimiter BYTE` (the registered `tsv` format
+binds its own tab and rejects the dial). `--header` reads row 1 as keys; it is
+never guessed. `--follow` cannot serve the headered dialect.
 
 A value the target format cannot spell natively is written canonically and
 **reported** (one stderr line per kind per run), never silently mangled.
 
 Not shipped yet: Arrow, Parquet, Markdown, HCL, shell, and filesystem (a
 directory tree as a jq document).
+
+The detail is [Formats and codecs](formats.md); each format has its own page —
+[JSON / JSONC / JSON5](json.md), [YAML](yaml.md), [CSV and TSV](csv.md),
+[CBOR and MessagePack](cbor.md), [HTML and XML](html.md),
+[native formats](native-formats.md), [render](render.md).
 
 ## Editing
 
@@ -79,7 +86,8 @@ $ jqf --in-place --edit '.retries = 3' a.json b.json c.json
 
 `--check` asks whether the edit would change the file and writes nothing (exit
 1 if it would). `--diff` is a path-keyed semantic diff of two documents,
-including across formats (`--old-format toml --new-format yaml`).
+including across formats (`--old-format toml --new-format yaml`) — the detail
+is [Diff and validation](diff-validate.md).
 
 A program that produces zero or multiple outputs under `--edit` is an error.
 `--in-place` is a usage error with `-n`, `-s`, `--diff`, `--follow`, or
@@ -92,7 +100,10 @@ publish, so a fallback is correct, never corrupt.
 
 **YAML aliases.** Patching a node shared by an alias would silently change
 every alias site. The default is to refuse (exit 5). `--edit-expand-alias`
-accepts that rewrite and warns once.
+accepts that rewrite and warns once. See [YAML](yaml.md).
+
+The detail — the splice laws, `--in-place`, atomicity, `--output`, and
+`--split-exp` — is [Editing documents](editing.md).
 
 ## Facts (`.@` and `.&`)
 
@@ -136,6 +147,9 @@ $ echo '<a href="https://x">y</a>' | jqf --input-format xml --no-json-facts -c .
 
 Root-level paths differ between the two dials. Probe with `.` first.
 
+The detail — the whole fact catalogue, the write laws, the projection — is
+[Facts](facts.md).
+
 ## Memory and residency
 
 `--max-rss` watches the real resident set. **Default on: 80% of detected
@@ -147,11 +161,14 @@ raises it.
 named. `--diagnostics` prints both (`rss:` vs the cost snapshot).
 
 If detection fails, the governor degrades to measure-only with a warning.
+The detail — both ceilings, the spill and iteration dials — is
+[Memory and limits](memory.md).
 
-`--follow` tails a growing file per record. `jqf serve --listen <socket|host:port>`
+`--follow` tails a growing file per record — the detail is
+[Streaming and `--follow`](streaming.md). `jqf serve --listen <socket|host:port>`
 compiles once and serves NDJSON sessions; a per-value error does not kill the
 session. A unix socket is filesystem-authenticated; a TCP listener is
-trusted-network-only (no auth, no TLS).
+trusted-network-only (no auth, no TLS). The detail is [Serve mode](serve.md).
 
 ## Exit codes
 
@@ -168,13 +185,14 @@ jq's classes.
 | N | `halt(N)` / `halt_error(N)`; bare `halt` is 0, bare `halt_error` is 5 |
 
 Per-value errors that do not condemn the request keep exit 0.
-`--explain-code ID` prints one diagnostic-code row and does not read stdin.
+`--explain-code ID` prints one diagnostic-code row and does not read stdin —
+see [Explain and diagnostics](explain.md).
 
-`--strictness error|warn|strict|lenient` governs decode/encode. Default `error`
-is jq. `lenient` accepts jq's number grammar (`01`, `+1`, `.5`, `1.`) and
-plans serial. `--mismatch-policy lenient|warn|strict` governs jq's
-value-answering sites (missing key, out-of-range index). Default `lenient`
-**is** jq.
+`--strictness error|warn|strict|lenient` governs decode/encode (the detail is
+[Formats and codecs](formats.md)). Default `error` is jq. `lenient` accepts
+jq's number grammar (`01`, `+1`, `.5`, `1.`) and plans serial.
+`--mismatch-policy lenient|warn|strict` governs jq's value-answering sites
+(missing key, out-of-range index). Default `lenient` **is** jq.
 
 ```bash
 jqf '.' config.json >/dev/null || echo "bad json"
@@ -186,20 +204,23 @@ jqf --diff old.toml new.toml --input-format toml >/dev/null || echo "drift"
 
 - **A job that used to run under jq now dies with `MACHINE_MEMORY`.** The 80%
   RSS ceiling is on. Raise it (`--max-rss 90%`) or turn it off (`--max-rss 0`).
+  See [Memory and limits](memory.md).
 - **`01` / `+1` / `.5` / `1.` refuse.** Strict RFC 8259. `--strictness lenient`
   opts those number classes back in. Invalid UTF-8 still refuses.
+  See [JSON](json.md).
 - **`--in-place` on mixed extensions refuses before writing.** Pin
-  `--input-format` or run them separately.
+  `--input-format` or run them separately. See [Editing](editing.md).
 - **An inline TOML comment is `.@comment_inline`, not `.@comment`.** Leading
-  block comments are `.@comment`.
+  block comments are `.@comment`. See [Facts](facts.md).
 - **Comments vanished after `.port + 0`.** Facts ride on the value. Constructing
-  a new number drops them.
+  a new number drops them. See [Facts](facts.md).
 - **XML `.` is a tree, not the bare text.** `--json-facts` is on by default for
   markup→JSON. `--no-json-facts` asks for the bare value.
+  See [HTML and XML](html.md).
 - **YAML `--edit` refused an alias.** Default is refuse. `--edit-expand-alias`
-  if you want the shared-anchor rewrite.
+  if you want the shared-anchor rewrite. See [YAML](yaml.md).
 - **`--debug-dump-disasm` / `--debug-trace` are unknown flags.** Use `--explain`
   / `--diagnostics`.
 - **`type` grew extra answers** (`"bytes"`, `"localdate"`, …) on TOML / CBOR /
   YAML. `--types-as-strings` makes a ported jq program see jq's six types.
-  See [Using jqf as jq](from-jq.md).
+  See [Types](types.md) and [Using jqf as jq](from-jq.md).
