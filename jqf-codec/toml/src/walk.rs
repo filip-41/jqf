@@ -148,6 +148,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         dialect: DialectKind,
         steps: &'ctx [ScopedStep],
         resources: &'ctx ResourceContext<'ctx>,
+        collect_comments: bool,
     ) -> Self {
         let doc = Doc::default();
         Self {
@@ -161,6 +162,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                 comments: Vec::new(),
                 names: Vec::new(),
                 name_ids: BTreeMap::new(),
+                collect_comments,
             },
             doc,
             steps,
@@ -1086,7 +1088,7 @@ mod tests {
 
     fn walk(bytes: &[u8], steps: &[ScopedStep]) -> LocatedWalk {
         let resources = crate::test_support::resources();
-        Walker::try_new(source(bytes), DialectKind::Toml10, steps, &resources)
+        Walker::try_new(source(bytes), DialectKind::Toml10, steps, &resources, true)
             .walk()
             .expect("walk")
     }
@@ -1450,6 +1452,7 @@ mod tests {
             key_depth,
             element,
             DialectKind::Toml10,
+            jqf_data::BuilderCoverage::minimal_semantic(),
             &mut resources,
         )
         .expect("the collected table subtree must re-parse");
@@ -1492,6 +1495,7 @@ mod tests {
             key_depth,
             element,
             DialectKind::Toml10,
+            jqf_data::BuilderCoverage::minimal_semantic(),
             &mut resources,
         )
         .expect("the collected array-of-tables subtree must re-parse");
@@ -1692,6 +1696,7 @@ mod tests {
                 DialectKind::Toml10,
                 &[member("a"), member("b")],
                 &resources,
+                true,
             )
             .walk();
             assert!(result.is_err(), "walk accepted {corrupt:?}");
@@ -1973,7 +1978,7 @@ mod tests {
             b"a = 1979-13-99\n".as_slice(),
             b"a = \"\\q\"\n".as_slice(),
         ] {
-            let result = Walker::try_new(source(corrupt), DialectKind::Toml10, &[], &walk_resources).walk();
+            let result = Walker::try_new(source(corrupt), DialectKind::Toml10, &[], &walk_resources, true).walk();
             assert!(result.is_err(), "walk accepted {corrupt:?}");
             let mut parser_resources = crate::test_support::resources();
             let parsed = crate::parse::parse_direct(source(corrupt), DialectKind::Toml10, &mut parser_resources);
@@ -1996,6 +2001,7 @@ mod tests {
                 leading,
                 inline,
                 DialectKind::Toml10,
+                jqf_data::BuilderCoverage::minimal_semantic(),
                 &mut resources,
             ),
             LocatedWalk::Table {
@@ -2010,11 +2016,16 @@ mod tests {
                 *key_depth,
                 *element,
                 DialectKind::Toml10,
+                jqf_data::BuilderCoverage::minimal_semantic(),
                 &mut resources,
             ),
-            LocatedWalk::ImplicitTable { pieces } => {
-                crate::lazy::build_implicit_table(bytes, pieces, DialectKind::Toml10, &mut resources)
-            }
+            LocatedWalk::ImplicitTable { pieces } => crate::lazy::build_implicit_table(
+                bytes,
+                pieces,
+                DialectKind::Toml10,
+                jqf_data::BuilderCoverage::minimal_semantic(),
+                &mut resources,
+            ),
             other => panic!("expected a materializable walk answer, got {other:?}"),
         }
         .expect("the walk answer must re-parse");

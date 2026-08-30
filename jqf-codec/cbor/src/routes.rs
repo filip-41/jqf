@@ -21,7 +21,7 @@ use jqf_source::ResolvedSource;
 
 use alloc::vec::Vec;
 
-use crate::parse::{SCALAR_KIND, data_contract, decode_span, fresh_builder, map_data};
+use crate::parse::{PruneLookup, SCALAR_KIND, data_contract, decode_span, fresh_builder, kind_only_span, map_data};
 use crate::walk::{self, Located};
 
 /// The one input shape these routes serve: a raw source range (the record drive hands each route a byte range). A
@@ -72,6 +72,10 @@ pub(crate) struct NativeLocatedSession {
     /// The adjacent-value opt-in: the walk stops at the first top-level item and the session reports the item's end as
     /// the consumed offset, so the drive advances by exactly one item.
     adjacent: bool,
+    /// Re-anchored kept-subtree prune over the located span. `None` keeps every member.
+    prune: Option<PruneLookup>,
+    /// Kind-only span: empty container or dummy scalar from the first payload byte / tag.
+    type_demand: bool,
     finished: bool,
 }
 
@@ -80,11 +84,15 @@ impl NativeLocatedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         allow_adjacent_values: bool,
+        prune: Option<PruneLookup>,
+        type_demand: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: own_steps(steps)?,
             origin,
             adjacent: allow_adjacent_values,
+            prune,
+            type_demand,
             finished: false,
         })
     }
@@ -96,12 +104,16 @@ impl NativeLocatedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         allow_adjacent_values: bool,
+        prune: Option<PruneLookup>,
+        type_demand: bool,
     ) -> Result<bool, CodecError> {
         if !steps_match(&self.steps, steps) {
             self.steps = own_steps(steps)?;
         }
         self.origin = origin;
         self.adjacent = allow_adjacent_values;
+        self.prune = prune;
+        self.type_demand = type_demand;
         self.finished = false;
         Ok(true)
     }
@@ -118,7 +130,11 @@ impl NativeLocatedSession {
         let (located, item_end) = walk::locate(source, self.steps.as_slice(), self.adjacent, resources)?;
         let (product, selection) = match located {
             Located::Value { start, end, .. } => {
-                let product = decode_span(source, start, end, resources)?;
+                let product = if self.type_demand {
+                    kind_only_span(source, start, resources)?
+                } else {
+                    decode_span(source, start, end, self.prune.as_ref(), resources)?
+                };
                 let selection = ExactSelectionRecord::Node {
                     node: product
                         .document()

@@ -28,13 +28,15 @@ pub enum SourceCapabilityDemand {
 
 /// One exact codec demand clause.
 ///
-/// The vocabulary is closed, and production currently inserts exactly [`DemandClause::SemanticRoot`] and
-/// [`DemandClause::ValueShape`]. Most other clauses name CONDITIONAL-DECODE mechanisms whose first producer does not
-/// exist yet: fuzz tooling inserts them today, and codecs match them to decline. [`DemandClause::Attribute`] is the
-/// partial exception: the binder can already bind an Attribute demand through the attribute-absence adapters whenever a
-/// wired provider advertises that support, so its bind path works even before engine lowering produces the clause. A
-/// new clause lands only together with its production inserter; an existing clause stays until the mechanism it names
-/// ships (its doc names that mechanism).
+/// The vocabulary is closed. Production inserts [`DemandClause::SemanticRoot`] and [`DemandClause::ValueShape`] on
+/// every route, plus the unit clauses a decode can always deliver and one [`DemandClause::AttachedFact`] per
+/// catalogued `.@` role ([`ATTACHED_FACT_ROLES`]). The engine inserts [`DemandClause::IntrinsicTag`], named
+/// [`DemandClause::AttachedFact`]s, and [`DemandClause::Attribute`]s from the program's accessors. Formats that
+/// authoritatively lack markup attributes bind a [`DemandClause::Attribute`] demand through the absence adapters.
+///
+/// Catalogued [`DemandClause::AttachedFact`] identities are advertised so bind does not hard-mismatch; a codec that
+/// does not carry a named fact still answers `.@role` as null. [`DemandClause::Attribute`] is not advertised (the name
+/// set is open); JSON binds it as absence and markup formats bind it through the whole-document demand fallback.
 #[derive(Debug, Eq, PartialEq)]
 pub enum DemandClause {
     /// Semantic root projection.
@@ -64,7 +66,30 @@ pub enum DemandClause {
     Attribute(ExpandedName),
 }
 
+/// Selector roles the engine's `.@` catalog names. Every decode route advertises one [`DemandClause::AttachedFact`]
+/// per role (kind and role are the selector text) so bind does not hard-mismatch when the engine produces the clause.
+pub const ATTACHED_FACT_ROLES: &[&str] = &[
+    crate::comment::HEAD,
+    crate::comment::INLINE,
+    crate::comment::FOOT,
+    "style",
+    "anchor",
+    "alias",
+    crate::markup::NAME_FACT,
+    crate::markup::ATTRS_FACT,
+    crate::markup::CONTENT_FACT,
+];
+
 impl DemandClause {
+    /// Catalogued `.@` fact clause for `role`, or `None` when `role` is not a fact identity.
+    #[must_use]
+    pub fn try_attached_fact(role: &str) -> Option<Self> {
+        Some(Self::AttachedFact {
+            kind: FactKindId::try_new(role).ok()?,
+            role: FactRoleId::try_new(role).ok()?,
+        })
+    }
+
     fn compare(&self, other: &Self) -> Ordering {
         let rank = |value: &Self| match value {
             Self::SemanticRoot => 0,

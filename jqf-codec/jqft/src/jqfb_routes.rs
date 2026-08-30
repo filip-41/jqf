@@ -512,6 +512,7 @@ pub(crate) struct NativeLocatedSession {
     image: JqfbImage,
     steps: Vec<Step>,
     origin: SelectionOrigin,
+    coverage: BuilderCoverage,
     phase: Phase,
     /// The bounded subtree decode (scoped mode), driven to completion.
     decode: Option<JqfbDecodeState>,
@@ -533,11 +534,13 @@ impl NativeLocatedSession {
         image: JqfbImage,
         steps: &[PortableStep],
         origin: SelectionOrigin,
+        coverage: BuilderCoverage,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             image,
             steps: own_steps(steps)?,
             origin,
+            coverage,
             phase: Phase::Locate,
             decode: None,
             finalizer: None,
@@ -569,6 +572,7 @@ impl NativeLocatedSession {
                                 &self.image,
                                 start,
                                 size,
+                                self.coverage,
                                 context.resources(),
                             )?);
                             self.phase = Phase::Decode;
@@ -660,7 +664,8 @@ fn locate(image: &JqfbImage, chunks: &CoreChunks<'_>, steps: &[Step]) -> Result<
 
 /// A fresh request-accounted jqfb builder at the demand routes' minimal semantic coverage. Negative located
 /// observations (missing / kind mismatch) carry a null stand-in and no facts; a located VALUE goes through
-/// [`JqfbDecodeState::try_new_scoped`], which attaches FACT records on the subtree.
+/// [`JqfbDecodeState::try_new_scoped`], which validates FACT records on the subtree and attaches them when coverage
+/// demanded facts.
 fn fresh_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = provider::jqfb_recipe().map_err(map_data)?;
     let (mut builder, _schema) =

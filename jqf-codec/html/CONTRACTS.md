@@ -66,6 +66,12 @@ navigation produce the items.
 
 Duplicate start-tag attributes are first-wins.
 
+## Access
+
+After recover, empty-path `length` and Whole bare-root `type` may project
+a measure skeleton: the document element plus NAME-only child stubs.
+`.[]` does not — measure children are not recovered elements.
+
 ## Fragment
 
 `html.fragment@1` runs the fragment algorithm with the fixed context

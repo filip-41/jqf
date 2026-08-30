@@ -1,8 +1,12 @@
 //! CBOR decoder provider and access session.
+//!
+//! Slot 0 is Whole/`CompleteDocument`; slot 1 is Exact/`Located`. The whole
+//! route's plan (count-only vs lazy vs eager+prune) lives in
+//! [`jqf_codec_core::whole_document_open_plan`].
 
 use jqf_codec_core::{
     AccessGuarantees, AccessRequirement, AccessResultKind, CodecError, DiagnosticPolicy, ErasedAccessSession,
-    InputProvider, ProviderInput, RecycledSessionState, RouteDescription, RouteSlot,
+    InputProvider, ProviderInput, RecycledSessionState, RouteDescription, RouteSlot, whole_document_open_plan,
 };
 use jqf_resource::ResourceContext;
 
@@ -51,15 +55,26 @@ impl InputProvider for CborProvider {
         let source = input.source();
         if slot == RouteSlot::new(0) {
             requirement.expect_whole(AccessResultKind::CompleteDocument)?;
-            let lazy_frontier = (requirement.lazy_frontier() > 0)
-                .then(|| usize::try_from(requirement.lazy_frontier()).unwrap_or(usize::MAX));
-            let state =
+            let (lazy_frontier, count_only, prune) = whole_document_open_plan(requirement);
+            let mut state =
                 crate::parse::CborParseState::try_new(source, coverage, lazy_frontier, self.adjacent, resources)?;
+            if count_only {
+                state.enable_count_only();
+            } else if lazy_frontier.is_none() {
+                state.set_prune(prune);
+            }
             return ErasedAccessSession::try_new_source_with_route(source, crate::FULL_PHYSICAL_ROUTE_ID, || Ok(state));
         }
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
-            let session = crate::routes::NativeLocatedSession::try_new(path.steps(), origin, self.adjacent)?;
+            let prune = requirement.prune().and_then(crate::parse::PruneLookup::from_transport);
+            let session = crate::routes::NativeLocatedSession::try_new(
+                path.steps(),
+                origin,
+                self.adjacent,
+                prune,
+                requirement.type_demand(),
+            )?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });
@@ -84,14 +99,14 @@ impl InputProvider for CborProvider {
             let Some(parse) = state.downcast_mut::<crate::parse::CborParseState>() else {
                 return Ok(false);
             };
-            // The retention profile is derived from the frontier hint at open; a reopen whose hint derives the OTHER
-            // profile must not recycle this session — answers would stay correct, but span-backed and eager decodes
-            // are different retention profiles, so decline and let the binder open fresh.
-            let lazy_frontier = (requirement.lazy_frontier() > 0)
-                .then(|| usize::try_from(requirement.lazy_frontier()).unwrap_or(usize::MAX));
-            if lazy_frontier.is_some() != parse.retain_source() {
+            // The retention profile is derived from the frontier/count hints at open; a reopen whose hint derives the
+            // OTHER profile must not recycle this session — answers would stay correct, but span-backed, count-only,
+            // and eager decodes are different retention profiles, so decline and let the binder open fresh.
+            let (lazy_frontier, count_only, prune) = whole_document_open_plan(requirement);
+            if lazy_frontier.is_some() != parse.retain_source() || count_only != parse.count_only() {
                 return Ok(false);
             }
+            parse.set_prune(prune);
             parse.try_reset(resources)?;
             return Ok(true);
         }
@@ -106,6 +121,7 @@ impl InputProvider for CborProvider {
         let Some(located) = state.downcast_mut::<crate::routes::NativeLocatedSession>() else {
             return Ok(false);
         };
-        located.try_reset(path.steps(), origin, self.adjacent)
+        let prune = requirement.prune().and_then(crate::parse::PruneLookup::from_transport);
+        located.try_reset(path.steps(), origin, self.adjacent, prune, requirement.type_demand())
     }
 }

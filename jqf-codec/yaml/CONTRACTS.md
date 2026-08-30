@@ -148,8 +148,9 @@ profile; the separate identity is the edit lane's output namespace.
 Slot 0 is whole-document complete and reopens in place for the next
 adjacent document. Slot 1 is the exact-path located route and is never
 reopened per value. A prune hint on the whole-document requirement omits
-mapping members the program cannot read; it does not skip byte
-validation.
+mapping members the program cannot read. The same hint on Exact omits
+unread members of the located subtree after the graph is fully parsed.
+Neither skips byte validation.
 
 Input dialects retain the edit document's trailing byte. Output profiles
 have the facade supply the item newline.

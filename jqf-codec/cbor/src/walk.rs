@@ -144,6 +144,25 @@ pub(crate) fn locate(
     Ok((outcome, item_end))
 }
 
+/// Validates one complete item starting at `pos` without building nodes, returning the offset just past it.
+pub(crate) fn skip_item(
+    source: ResolvedSource<'_>,
+    pos: usize,
+    resources: &ResourceContext<'_>,
+) -> Result<usize, CodecError> {
+    let mut walker = Walker {
+        source,
+        bytes: source.bytes(),
+        steps: &[],
+        pos,
+        outcome: None,
+        adjacent: true,
+        resources,
+    };
+    walker.skip_item()?;
+    Ok(walker.pos)
+}
+
 impl<'a> Walker<'a> {
     fn walk(&mut self) -> Result<(), CodecError> {
         let _guard = self.resources.enter_nesting().map_err(CodecError::from)?;

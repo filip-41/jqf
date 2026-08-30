@@ -212,17 +212,17 @@ LANES = [
     Lane(
         "messagepack-nesting",
         # Floor measured on the debug build by the lane's own twin pair:
-        # 82328 KiB overflows the under twin, 82343 passes it, and the over
-        # twin raises the guard at the pin — roughly 8 KiB of debug frames
+        # 85296 KiB overflows the under twin, 85297 passes it, and the over
+        # twin raises the guard at the pin — roughly 8.5 KiB of debug frames
         # per nested level (the scan's depth guard, the document build, and
         # the JSON encode all recurse over the same depth). The pin is the
-        # round number above the measured floor.
-        82400,
+        # round hundred above the measured floor.
+        85400,
         ".",
         messagepack_nested_array_expected(10000),
         ".",
         "nesting depth limit exceeded",
-        "debug 82400; ~8 KiB of debug frames per nested fixarray level",
+        "debug 85400; ~8.5 KiB of debug frames per nested fixarray level",
         args=("--input-format", "messagepack"),
         under_input=messagepack_nested_array(10000),
         over_input=messagepack_nested_array(10001),

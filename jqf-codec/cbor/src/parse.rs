@@ -24,9 +24,9 @@ use jqf_codec_core::{
 };
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedIntrinsicTag, AccountedOccurrenceKey,
-    AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage, Document,
-    DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, DocumentSchemaRecipe, LocalOwnerRef, NodeId,
-    PreparedDocumentSchema,
+    AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind, DataError,
+    DiagnosticCoverage, Document, DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll,
+    DocumentSchemaRecipe, LocalOwnerRef, NodeId, PreparedDocumentSchema, ValueKind,
 };
 use jqf_resource::{DepthGuard, OwnedDepthGuard, ResourceContext, WorkAdmission};
 use jqf_source::ResolvedSource;
@@ -84,6 +84,8 @@ pub(crate) fn data_contract() -> CodecError {
     jqf_codec_core::data_contract("CBOR authoritative document construction")
 }
 
+pub(crate) use jqf_codec_core::{PRUNE_ALL, PruneLookup};
+
 /// The CBOR access session: one source, one document.
 #[expect(
     clippy::struct_excessive_bools,
@@ -120,6 +122,10 @@ pub(crate) struct CborParseState {
     coverage: BuilderCoverage,
     /// Whether the whole document is deferred to one source span.
     retain_source: bool,
+    /// Empty-path count: the root container is built and member payloads stay unbuilt after every byte is validated.
+    count_only: bool,
+    /// Kept-subtree prune on the eager path. `None` when lazy or when the hint keeps everything.
+    prune: Option<PruneLookup>,
 }
 
 enum Phase {
@@ -141,7 +147,7 @@ impl CborParseState {
         // is either "everything" or nothing). The source-retention paths (the cbor.source@1 output profile) request
         // exactly this.
         let retain_source = lazy_frontier.is_some();
-        let decoder = Decoder::try_new(coverage, retain_source, allow_adjacent_values, resources)?;
+        let decoder = Decoder::try_new(coverage, retain_source, allow_adjacent_values, None, false, resources)?;
         Ok(Self {
             phase: Phase::Parse,
             decoder: Some(decoder),
@@ -158,7 +164,33 @@ impl CborParseState {
             source_len: 0,
             coverage,
             retain_source,
+            count_only: false,
+            prune: None,
         })
+    }
+
+    /// Arms empty-path count: validate every byte, keep the root container, defer member payloads as child spans.
+    pub(crate) fn enable_count_only(&mut self) {
+        if self.retain_source {
+            return;
+        }
+        self.count_only = true;
+        self.prune = None;
+        if let Some(decoder) = &mut self.decoder {
+            decoder.enable_count_only();
+        }
+    }
+
+    /// Re-arms prune from a recycled requirement. A source-retaining or count-only session drops the hint.
+    pub(crate) fn set_prune(&mut self, prune: Option<PruneLookup>) {
+        self.prune = if self.retain_source || self.count_only {
+            None
+        } else {
+            prune
+        };
+        if let Some(decoder) = &mut self.decoder {
+            decoder.prune.clone_from(&self.prune);
+        }
     }
 
     /// Whether this session defers the whole document to one source span (the retention profile `try_new` derived from
@@ -168,6 +200,11 @@ impl CborParseState {
         self.retain_source
     }
 
+    /// Whether this session records only the root container for an empty-path count. A recycled reopen must match it.
+    pub(crate) fn count_only(&self) -> bool {
+        self.count_only
+    }
+
     /// Reinitializes this state for one more adjacent document, leaving exactly the state a fresh [`Self::try_new`]
     /// would have produced.
     pub(crate) fn try_reset(&mut self, resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
@@ -175,6 +212,8 @@ impl CborParseState {
             self.coverage,
             self.retain_source,
             self.adjacent,
+            self.prune.clone(),
+            self.count_only,
             resources,
         )?);
         self.phase = Phase::Parse;
@@ -332,10 +371,119 @@ pub(crate) fn decode_span(
     source: ResolvedSource<'_>,
     start: usize,
     end: usize,
+    prune: Option<&PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<DocumentProduct<'static>, CodecError> {
-    let document = decode_span_document(source, start, end, resources)?;
+    let document = decode_span_document(source, start, end, prune, resources)?;
     DocumentProduct::try_new(document, resources)
+}
+
+/// Kind-only document from the located item's first payload byte (or recognized tag). The walk already validated every
+/// unread byte.
+pub(crate) fn kind_only_span(
+    source: ResolvedSource<'_>,
+    start: usize,
+    resources: &mut ResourceContext<'_>,
+) -> Result<DocumentProduct<'static>, CodecError> {
+    if recognized_tag_may_project(source, start)? {
+        let end = crate::walk::skip_item(source, start, resources)?;
+        return decode_span(source, start, end, None, resources);
+    }
+    let kind = classify_kind(source, start)?;
+    let (mut builder, _) = fresh_builder(resources)?;
+    let root = add_kind_only_node(&mut builder, kind, resources)?;
+    let document = builder.finish(root, resources).map_err(map_data)?;
+    DocumentProduct::try_new(document, resources)
+}
+
+fn recognized_tag_may_project(source: ResolvedSource<'_>, mut pos: usize) -> Result<bool, CodecError> {
+    loop {
+        let (head, next) = read::head(source.bytes(), pos).map_err(|error| read_error(source, pos, error))?;
+        match head.major {
+            Major::Tag => {
+                let Arg::UInt(tag) = head.arg else {
+                    return Err(read_error(source, pos, ReadError::Eof));
+                };
+                if tag <= 5 {
+                    return Ok(true);
+                }
+                pos = next;
+            }
+            _ => return Ok(false),
+        }
+    }
+}
+
+fn classify_kind(source: ResolvedSource<'_>, mut pos: usize) -> Result<ValueKind, CodecError> {
+    loop {
+        let (head, next) = read::head(source.bytes(), pos).map_err(|error| read_error(source, pos, error))?;
+        match head.major {
+            Major::Tag => {
+                let Arg::UInt(tag) = head.arg else {
+                    return Err(read_error(source, pos, ReadError::Eof));
+                };
+                if tag <= 5 {
+                    return Ok(if tag <= 1 {
+                        ValueKind::OffsetDateTime
+                    } else {
+                        ValueKind::Number
+                    });
+                }
+                pos = next;
+            }
+            Major::Array => return Ok(ValueKind::Array),
+            Major::Map => return Ok(ValueKind::Object),
+            Major::Text => return Ok(ValueKind::String),
+            Major::Bytes => return Ok(ValueKind::Bytes),
+            Major::UInt | Major::NegInt => return Ok(ValueKind::Number),
+            Major::Simple => {
+                return Ok(match head.arg {
+                    Arg::UInt(20 | 21) => ValueKind::Bool,
+                    Arg::UInt(22 | 23) => ValueKind::Null,
+                    _ => ValueKind::Number,
+                });
+            }
+        }
+    }
+}
+
+fn add_kind_only_node(
+    builder: &mut AccountedDocumentBuilder<'static>,
+    kind: ValueKind,
+    resources: &mut ResourceContext<'_>,
+) -> Result<NodeId, CodecError> {
+    match kind {
+        ValueKind::Null => builder.add_node(SCALAR_KIND, AccountedSemanticNode::Null, None, resources),
+        ValueKind::Bool => builder.add_node(SCALAR_KIND, AccountedSemanticNode::Bool(false), None, resources),
+        ValueKind::Number => builder.add_node(SCALAR_KIND, AccountedSemanticNode::Integer("0"), None, resources),
+        ValueKind::String => builder.add_node(SCALAR_KIND, AccountedSemanticNode::String(""), None, resources),
+        ValueKind::Bytes => builder.add_node(SCALAR_KIND, AccountedSemanticNode::Bytes(&[]), None, resources),
+        ValueKind::Array => builder.add_node(
+            ARRAY_KIND,
+            AccountedSemanticNode::Array { item_role: ITEM_ROLE },
+            None,
+            resources,
+        ),
+        ValueKind::Object => builder.add_node(
+            OBJECT_KIND,
+            AccountedSemanticNode::Object {
+                member_role: MEMBER_ROLE,
+            },
+            None,
+            resources,
+        ),
+        ValueKind::OffsetDateTime => {
+            let datetime = parse_rfc3339("1970-01-01T00:00:00Z").map_err(|_| data_contract())?;
+            builder.add_node(
+                SCALAR_KIND,
+                AccountedSemanticNode::OffsetDateTime(&datetime),
+                None,
+                resources,
+            )
+        }
+        _ => return Err(data_contract()),
+    }
+    .map_err(map_data)
 }
 
 /// As [`decode_span`], but returns the built `Document` directly (no `DocumentProduct` wrapper): the lazy
@@ -345,12 +493,13 @@ pub(crate) fn decode_span_document(
     source: ResolvedSource<'_>,
     start: usize,
     end: usize,
+    prune: Option<&PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<Document<'static>, CodecError> {
     let span_source = span_source(source, start, end);
     let (builder, _schema) = fresh_builder(resources)?;
     let mut builder = Some(builder);
-    let root = decode_value_into(&mut builder, span_source, resources)?;
+    let root = decode_value_into(&mut builder, span_source, prune.cloned(), resources)?;
     let builder = builder.take().ok_or_else(data_contract)?;
     builder.finish(root, resources).map_err(map_data)
 }
@@ -369,10 +518,11 @@ fn span_source(source: ResolvedSource<'_>, start: usize, end: usize) -> Resolved
 fn decode_value_into(
     builder_slot: &mut Option<AccountedDocumentBuilder<'static>>,
     source: ResolvedSource<'_>,
+    prune: Option<PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
     let builder = builder_slot.take().ok_or_else(data_contract)?;
-    let mut decoder = Decoder::try_new_from_builder(builder);
+    let mut decoder = Decoder::try_new_from_builder(builder, prune);
     loop {
         match decoder.poll(source, resources)? {
             DecodePoll::Pending => {
@@ -457,6 +607,10 @@ struct Decoder {
     /// Whether any per-item span was stashed: the session must then seal the exact immutable source authority before
     /// the document may finish.
     spans_committed: bool,
+    /// Kept-subtree prune. `None` keeps every member.
+    prune: Option<PruneLookup>,
+    /// Empty-path count: root children that are containers are committed as spans, not built trees.
+    count_only: bool,
 }
 
 struct Frame {
@@ -470,6 +624,8 @@ struct Frame {
     start: usize,
     /// The creation-order slot of this container's span placeholder, when spans are recorded (filled at close).
     span_slot: Option<usize>,
+    /// Prune-tree node governing this container's children (`PRUNE_ALL` keeps every child).
+    prune: u32,
     _depth: OwnedDepthGuard,
 }
 
@@ -503,6 +659,8 @@ impl Decoder {
         coverage: BuilderCoverage,
         retain_source: bool,
         adjacent: bool,
+        prune: Option<PruneLookup>,
+        count_only: bool,
         _resources: &mut ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
         // A FRESH builder from the validated recipe (not the shared prototype builder): the dynamic
@@ -515,7 +673,7 @@ impl Decoder {
             DocumentCapabilityFamily::Attributes,
         ));
         builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
-        if retain_source {
+        if retain_source || count_only {
             builder.bind_span_materializer(&crate::lazy::CBOR_SPAN_MATERIALIZER);
         }
         Ok(Self {
@@ -536,7 +694,16 @@ impl Decoder {
             pending_tag_starts: Vec::new(),
             item_spans: Vec::new(),
             spans_committed: false,
+            prune,
+            count_only,
         })
+    }
+
+    fn enable_count_only(&mut self) {
+        self.count_only = true;
+        self.prune = None;
+        self.builder
+            .bind_span_materializer(&crate::lazy::CBOR_SPAN_MATERIALIZER);
     }
 
     fn finish(
@@ -627,7 +794,7 @@ impl Decoder {
     /// Constructs a decoder over a builder the CALLER prepared (the span re-decode path). The builder is reused across
     /// elements, so its node and occurrence ledger accumulates rather than being replaced. The re-decode is always
     /// single-item over a validated span, never adjacent.
-    fn try_new_from_builder(builder: AccountedDocumentBuilder<'static>) -> Self {
+    fn try_new_from_builder(builder: AccountedDocumentBuilder<'static>, prune: Option<PruneLookup>) -> Self {
         Self {
             pos: 0,
             frames: Vec::new(),
@@ -646,6 +813,8 @@ impl Decoder {
             pending_tag_starts: Vec::new(),
             item_spans: Vec::new(),
             spans_committed: false,
+            prune,
+            count_only: false,
         }
     }
 
@@ -685,8 +854,8 @@ impl Decoder {
         self.capacity_scanned = true;
         // Source-retention builds ONE span-backed node for a container root (a scalar root is a one-node document
         // either way), so pricing every node and occurrence in the input would reserve — and charge the ledger for
-        // — millions of slots nothing will ever build.
-        if self.retain_source {
+        // — millions of slots nothing will ever build. Empty-path count keeps the root plus one span per child.
+        if self.retain_source || self.count_only || self.prune.is_some() {
             return;
         }
         if bytes.is_empty() {
@@ -751,12 +920,115 @@ impl Decoder {
         if expecting_key {
             return self.read_map_key(source, resources);
         }
+        if self.omitted_map_value(source) {
+            return self.skip_omitted_map_value(source, resources);
+        }
         // Every value head read starts a new logical item: capture its first byte NOW so a leading tag chain's span
         // covers the chain from its first head through the value's end.
         if self.item_start.is_none() {
             self.item_start = Some(self.pos);
         }
         self.read_value_head(source, resources)
+    }
+
+    fn omitted_map_value(&self, source: ResolvedSource<'_>) -> bool {
+        let Some(lookup) = self.prune.as_ref() else {
+            return false;
+        };
+        let Some(frame) = self.frames.as_slice().last() else {
+            return false;
+        };
+        if frame.prune == PRUNE_ALL {
+            return false;
+        }
+        let FrameKind::Map {
+            phase: MapPhase::ExpectValue,
+            pending_key_text,
+            ..
+        } = &frame.kind
+        else {
+            return false;
+        };
+        let Some(pending) = pending_key_text else {
+            return false;
+        };
+        let key = match pending {
+            PendingKey::Range(range) => source.bytes().get(range.start..range.end),
+            PendingKey::Owned(text) => Some(text.as_bytes()),
+        };
+        let Some(key) = key else {
+            return false;
+        };
+        lookup.member_prune(frame.prune, key).is_none()
+    }
+
+    fn skip_omitted_map_value(
+        &mut self,
+        source: ResolvedSource<'_>,
+        resources: &ResourceContext<'_>,
+    ) -> Result<(), CodecError> {
+        self.item_start = None;
+        self.pos = crate::walk::skip_item(source, self.pos, resources)?;
+        let Some(frame) = self.frames.as_mut_slice().last_mut() else {
+            return Err(data_contract());
+        };
+        let FrameKind::Map {
+            remaining_pairs,
+            indefinite,
+            phase,
+            pending_key_text,
+            ..
+        } = &mut frame.kind
+        else {
+            return Err(data_contract());
+        };
+        if !matches!(phase, MapPhase::ExpectValue) {
+            return Err(data_contract());
+        }
+        pending_key_text.take();
+        *remaining_pairs = remaining_pairs.saturating_sub(1);
+        if !*indefinite && *remaining_pairs == 0 {
+            let frame = self.frames.pop().ok_or_else(data_contract)?;
+            self.restore_container_tags(&frame);
+            self.fill_container_span(&frame)?;
+            self.produced = Some(frame.node);
+        } else {
+            *phase = MapPhase::ExpectKey;
+        }
+        Ok(())
+    }
+
+    fn value_prune(&self, source: ResolvedSource<'_>) -> u32 {
+        let Some(lookup) = self.prune.as_ref() else {
+            return PRUNE_ALL;
+        };
+        let Some(frame) = self.frames.as_slice().last() else {
+            return jqf_codec_core::PruneTree::ROOT;
+        };
+        if frame.prune == PRUNE_ALL {
+            return PRUNE_ALL;
+        }
+        match &frame.kind {
+            FrameKind::Array { .. } => lookup.element_prune(frame.prune),
+            FrameKind::Map {
+                phase: MapPhase::ExpectValue,
+                pending_key_text,
+                ..
+            } => {
+                let Some(pending) = pending_key_text else {
+                    return PRUNE_ALL;
+                };
+                let key = match pending {
+                    PendingKey::Range(range) => source.bytes().get(range.start..range.end),
+                    PendingKey::Owned(text) => Some(text.as_bytes()),
+                };
+                let Some(key) = key else {
+                    return PRUNE_ALL;
+                };
+                lookup.member_prune(frame.prune, key).unwrap_or(PRUNE_ALL)
+            }
+            FrameKind::Map { .. } => PRUNE_ALL,
+        }
     }
 
     /// Whether the top frame is an indefinite-length container (BREAK closes it, never an item count).
@@ -1124,19 +1396,19 @@ impl Decoder {
             (Major::Text, arg) => self.read_text(arg, next, source, resources),
             (Major::Array, Arg::UInt(count)) => {
                 let start = self.item_start.take().unwrap_or(self.pos);
-                self.open_array(count, false, next, start, resources)
+                self.open_array(count, false, next, start, source, resources)
             }
             (Major::Array, Arg::Indef) => {
                 let start = self.item_start.take().unwrap_or(self.pos);
-                self.open_array(u64::MAX, true, next, start, resources)
+                self.open_array(u64::MAX, true, next, start, source, resources)
             }
             (Major::Map, Arg::UInt(count)) => {
                 let start = self.item_start.take().unwrap_or(self.pos);
-                self.open_map(count, false, next, start, resources)
+                self.open_map(count, false, next, start, source, resources)
             }
             (Major::Map, Arg::Indef) => {
                 let start = self.item_start.take().unwrap_or(self.pos);
-                self.open_map(u64::MAX, true, next, start, resources)
+                self.open_map(u64::MAX, true, next, start, source, resources)
             }
             (Major::Simple, Arg::UInt(kind)) => {
                 let kind = u8::try_from(kind).map_err(|_| CodecError::new(CodecFailureKind::Overflow))?;
@@ -1238,14 +1510,57 @@ impl Decoder {
         Ok((chunks, end))
     }
 
+    /// Validates one complete child item and commits it as a deferred container span — the empty-path count skeleton.
+    #[allow(
+        unsafe_code,
+        reason = "the bound-span contract is unsafe by jqf-data's design; skip_item just proved these bytes one complete item of the session-owned source"
+    )]
+    fn defer_container_span(
+        &mut self,
+        start: usize,
+        container: ContainerSpanKind,
+        source: ResolvedSource<'_>,
+        resources: &ResourceContext<'_>,
+    ) -> Result<(), CodecError> {
+        let end = crate::walk::skip_item(source, start, resources)?;
+        self.pending_tags.clear();
+        self.pending_tag_starts.clear();
+        self.item_start = None;
+        let span = jqf_source::Span::try_new(
+            u32::try_from(start).map_err(|_| CodecError::new(CodecFailureKind::Overflow))?,
+            u32::try_from(end).map_err(|_| CodecError::new(CodecFailureKind::Overflow))?,
+        )
+        .ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+        let schema = self.schema.as_ref().ok_or_else(data_contract)?;
+        let slot = match container {
+            ContainerSpanKind::Array => 1,
+            ContainerSpanKind::Object => 2,
+        };
+        let kind = schema.node_kind(slot).ok_or_else(data_contract)?;
+        // SAFETY: skip_item validated [start, end) as one complete item of this session's immutable source authority.
+        let node = unsafe {
+            self.builder
+                .add_prepared_bound_container_span_node(schema, kind, span, container, resources)
+        }
+        .map_err(map_data)?;
+        self.pos = end;
+        self.spans_committed = true;
+        self.produced = Some(node);
+        Ok(())
+    }
+
     fn open_array(
         &mut self,
         count: u64,
         indefinite: bool,
         next: usize,
         start: usize,
+        source: ResolvedSource<'_>,
         resources: &ResourceContext<'_>,
     ) -> Result<(), CodecError> {
+        if self.count_only && !self.frames.is_empty() {
+            return self.defer_container_span(start, ContainerSpanKind::Array, source, resources);
+        }
         self.pos = next;
         let node = self
             .builder
@@ -1264,6 +1579,7 @@ impl Decoder {
             self.produced = Some(node);
             return Ok(());
         }
+        let prune = self.value_prune(source);
         let depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
         // Tags pending when the container opened wrap the WHOLE container at close, never its items.
         let (tags, tag_starts) = self.take_pending_tags();
@@ -1278,6 +1594,7 @@ impl Decoder {
             tag_starts,
             start,
             span_slot,
+            prune,
             _depth: depth,
         });
         Ok(())
@@ -1289,8 +1606,12 @@ impl Decoder {
         indefinite: bool,
         next: usize,
         start: usize,
+        source: ResolvedSource<'_>,
         resources: &ResourceContext<'_>,
     ) -> Result<(), CodecError> {
+        if self.count_only && !self.frames.is_empty() {
+            return self.defer_container_span(start, ContainerSpanKind::Object, source, resources);
+        }
         self.pos = next;
         let node = self
             .builder
@@ -1308,6 +1629,7 @@ impl Decoder {
             self.produced = Some(node);
             return Ok(());
         }
+        let prune = self.value_prune(source);
         let depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
         let (tags, tag_starts) = self.take_pending_tags();
         let span_slot = self.reserve_container_span();
@@ -1324,6 +1646,7 @@ impl Decoder {
             tag_starts,
             start,
             span_slot,
+            prune,
             _depth: depth,
         });
         Ok(())
@@ -2264,7 +2587,11 @@ mod tests {
     use super::*;
     use alloc::vec;
     use core::fmt::Write as _;
-    use jqf_codec_core::AccessInput;
+    use jqf_codec_core::{
+        AccessFootprint, AccessGuarantees, AccessInput, AccessRequirement, CodecDemand, DiagnosticPolicy, ExactPath,
+        ValidationMode,
+    };
+    use jqf_data::{CountDemand, CountRow};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceLimits, WorkMeter};
     use jqf_source::{SourceId, SourceKind, SourceRef};
 
@@ -2312,6 +2639,61 @@ mod tests {
             panic!("expected a full document")
         };
         Ok(product.document().materialize_root(&mut ctx).expect("materialize"))
+    }
+
+    fn keep_member_tree(name: &str, resources: &ResourceContext<'_>) -> jqf_codec_core::PruneTree {
+        let mut tree = jqf_codec_core::PruneTree::try_new(resources).expect("tree");
+        let keep = tree.try_push_node(true).expect("keep");
+        tree.try_push_key(jqf_codec_core::PruneTree::ROOT, name, keep)
+            .expect("key");
+        tree
+    }
+
+    fn object_keys(value: &jqf_data::Value) -> alloc::vec::Vec<&str> {
+        let jqf_data::Value::Object(object) = value else {
+            panic!("expected object");
+        };
+        object.iter().map(jqf_data::ObjectEntry::key).collect()
+    }
+
+    fn decode_request() -> jqf_codec_core::DecodeRequest<'static> {
+        let dialect: &'static jqf_data::DialectId = alloc::boxed::Box::leak(alloc::boxed::Box::new(
+            jqf_data::DialectId::try_new(crate::CBOR_GENERIC_DIALECT_ID).expect("dialect"),
+        ));
+        jqf_codec_core::DecodeRequest {
+            validation: ValidationMode::Strict,
+            diagnostics: DiagnosticPolicy::ErrorsOnly,
+            dialect,
+            options: None,
+            allow_adjacent_values: false,
+            value_separator: &[],
+        }
+    }
+
+    fn decode_requirement(
+        bytes: &[u8],
+        requirement: &AccessRequirement,
+    ) -> Result<(jqf_data::Value, usize), CodecError> {
+        let mut ctx = resources();
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(source(bytes), decode_request(), &mut ctx)
+            .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut ctx).expect("open");
+        let mut run = CodecRunContext::new(&mut ctx);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run)?;
+        let outcome = result.into_parts().0;
+        let product = match &outcome {
+            AccessOutcome::FullDocument(product) => product,
+            AccessOutcome::Located(located) => located.product(),
+        };
+        let nodes = product.document().node_count();
+        let value = product.document().materialize_root(&mut ctx).expect("materialize");
+        Ok((value, nodes))
     }
 
     fn tag_chain(value: &jqf_data::Value) -> alloc::vec::Vec<&str> {
@@ -3081,5 +3463,266 @@ mod tests {
         bytes.push(0x01);
         bytes.extend(core::iter::repeat_n(0x00_u8, MAX_BIGNUM_BYTES - 1));
         decode(&bytes).expect("a bignum at the ceiling decodes");
+    }
+
+    #[test]
+    fn whole_prune_omits_unobservable_members() {
+        let resources = resources();
+        let requirement = AccessRequirement::try_whole(
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_prune(keep_member_tree("a", &resources));
+        // {"a": 1, "b": [true, null]}
+        let (value, nodes) =
+            decode_requirement(&[0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0xf5, 0xf6], &requirement).expect("decode");
+        assert_eq!(object_keys(&value), ["a"]);
+        assert_eq!(nodes, 2, "object + kept scalar; omitted array is not built");
+        decode_requirement(&[0xa2, 0x61, 0x61, 0x01, 0x61, 0x62], &requirement)
+            .expect_err("omitted members still validate");
+    }
+
+    #[test]
+    fn count_only_open_ignores_the_prune_hint() {
+        let resources = resources();
+        let requirement = AccessRequirement::try_whole(
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_count(CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        })
+        .with_prune(keep_member_tree("a", &resources));
+        let (value, _) =
+            decode_requirement(&[0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0xf5, 0xf6], &requirement).expect("decode");
+        assert_eq!(
+            object_keys(&value),
+            ["a", "b"],
+            "count-only ignores prune and delivers every member"
+        );
+    }
+
+    #[test]
+    fn lazy_frontier_open_ignores_the_prune_hint() {
+        let resources = resources();
+        let requirement = AccessRequirement::try_whole(
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_lazy_frontier(1)
+        .with_prune(keep_member_tree("a", &resources));
+        let (value, _) =
+            decode_requirement(&[0xa2, 0x61, 0x61, 0x01, 0x61, 0x62, 0x82, 0xf5, 0xf6], &requirement).expect("decode");
+        assert_eq!(
+            object_keys(&value),
+            ["a", "b"],
+            "a lazy open ignores prune and delivers every member"
+        );
+    }
+
+    #[test]
+    fn reopen_declines_a_count_only_profile_mismatch() {
+        let bytes: &[u8] = &[0xa2, 0x61, 0x61, 0x82, 0xf5, 0xf6, 0x61, 0x62, 0x82, 0xf5, 0xf6];
+        let mut ctx = resources();
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(source(bytes), decode_request(), &mut ctx)
+            .expect("provider");
+        let identity = AccessRequirement::try_whole(
+            CodecDemand::try_new(&ctx),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &ctx,
+        )
+        .expect("identity");
+        let count = AccessRequirement::try_whole(
+            CodecDemand::try_new(&ctx),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &ctx,
+        )
+        .expect("count")
+        .with_count(CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        });
+        let mut reuse = jqf_codec_core::ReusableAccessSession::new();
+        let identity_handle = provider.bind(&identity).expect("bind identity");
+        {
+            let session = provider
+                .open_at_reusing(&identity_handle, 0, &mut reuse, &mut ctx)
+                .expect("open identity");
+            let mut run = CodecRunContext::new(&mut ctx);
+            run.set_cooperative_credits(4_096);
+            let result = session.decode(&mut run).expect("decode identity");
+            let AccessOutcome::FullDocument(product) = result.outcome() else {
+                panic!("expected a full document")
+            };
+            assert!(
+                product.document().node_count() > 3,
+                "eager identity builds omitted member payloads"
+            );
+        }
+        let count_handle = provider.bind(&count).expect("bind count");
+        let session = provider
+            .open_at_reusing(&count_handle, 0, &mut reuse, &mut ctx)
+            .expect("reopen");
+        let mut run = CodecRunContext::new(&mut ctx);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run).expect("decode count");
+        let AccessOutcome::FullDocument(product) = result.outcome() else {
+            panic!("expected a full document")
+        };
+        assert_eq!(
+            product.document().node_count(),
+            3,
+            "a declined recycle must open a fresh count-only session"
+        );
+    }
+
+    #[test]
+    fn owned_filter_equality_declines_a_live_tagged_member() {
+        // [{"x": 6(1)}]
+        let value = decode(&[0x81, 0xa1, 0x61, 0x78, 0xc6, 0x01]).expect("decode");
+        let jqf_data::Value::Array(items) = &value else {
+            panic!("expected array")
+        };
+        let item = items.iter().next().expect("one element");
+        let jqf_data::Value::Object(object) = item else {
+            panic!("expected object")
+        };
+        let x = object
+            .iter()
+            .find(|entry| entry.key() == "x")
+            .map(jqf_data::ObjectEntry::value)
+            .expect("x");
+        assert!(matches!(x, jqf_data::Value::Tagged { .. }), "tag 6 stays tagged");
+        let filter = jqf_data::CountFilter {
+            path: vec![jqf_data::CountStep::ObjectKey(alloc::string::String::from("x"))],
+            test: jqf_data::CountTest::Compare {
+                op: jqf_data::CountCompare::Equal,
+                rhs: jqf_data::CountLiteral::Decimal {
+                    negative: false,
+                    digits: alloc::string::String::from("1"),
+                    scale: 0,
+                },
+            },
+        };
+        assert_eq!(
+            filter.contributes(item),
+            None,
+            "tagged equality must decline to the floor"
+        );
+    }
+
+    #[test]
+    fn exact_prune_omits_unread_members_of_the_located_object() {
+        let resources = resources();
+        let mut path = ExactPath::try_new(&resources);
+        path.try_push_semantic_member("catalog", &resources).expect("member");
+        let requirement = AccessRequirement::try_exact(
+            AccessFootprint::try_exact(path, &resources),
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_prune(keep_member_tree("id", &resources));
+        // {"catalog": {"id": 1, "name": "x"}}
+        let bytes: &[u8] = &[
+            0xa1, 0x67, b'c', b'a', b't', b'a', b'l', b'o', b'g', 0xa2, 0x62, b'i', b'd', 0x01, 0x64, b'n', b'a', b'm',
+            b'e', 0x61, b'x',
+        ];
+        let (value, nodes) = decode_requirement(bytes, &requirement).expect("decode");
+        assert_eq!(object_keys(&value), ["id"]);
+        assert_eq!(nodes, 2, "located object + kept scalar; omitted siblings are not built");
+        let truncated: &[u8] = &[
+            0xa1, 0x67, b'c', b'a', b't', b'a', b'l', b'o', b'g', 0xa2, 0x62, b'i', b'd', 0x01, 0x64, b'n', b'a', b'm',
+            b'e',
+        ];
+        decode_requirement(truncated, &requirement).expect_err("omitted members still validate");
+    }
+
+    fn empty_path_count() -> jqf_data::CountDemand {
+        jqf_data::CountDemand {
+            row: jqf_data::CountRow::Container,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: None,
+        }
+    }
+
+    fn decode_count(bytes: &[u8]) -> Result<(jqf_data::CountVerdict, usize, u32), CodecError> {
+        let demand = empty_path_count();
+        let mut ctx = resources();
+        let requirement = AccessRequirement::try_whole(
+            CodecDemand::try_new(&ctx),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &ctx,
+        )
+        .expect("requirement")
+        .with_count(demand.clone());
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(source(bytes), decode_request(), &mut ctx)
+            .expect("provider");
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut ctx).expect("open");
+        let mut run = CodecRunContext::new(&mut ctx);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run)?;
+        let AccessOutcome::FullDocument(product) = result.into_parts().0 else {
+            panic!("expected a full document")
+        };
+        let document = product.document();
+        let nodes = document.node_count();
+        let spans = document.container_span_count();
+        let verdict = document.count_children_demand(&demand, &mut ctx).expect("count");
+        Ok((verdict, nodes, spans))
+    }
+
+    #[test]
+    fn empty_path_length_on_a_map_does_not_retain_omitted_member_payloads() {
+        // {"a": [true, null], "b": [true, null]}
+        let bytes: &[u8] = &[0xa2, 0x61, 0x61, 0x82, 0xf5, 0xf6, 0x61, 0x62, 0x82, 0xf5, 0xf6];
+        let (verdict, nodes, spans) = decode_count(bytes).expect("decode");
+        assert_eq!(verdict, jqf_data::CountVerdict::Count(2));
+        assert_eq!(spans, 2, "each map value is a deferred array span");
+        assert_eq!(
+            nodes, 3,
+            "object + two child spans; omitted array payloads are not built"
+        );
+        decode_count(&[0xa2, 0x61, 0x61, 0x82, 0xf5, 0xf6, 0x61, 0x62, 0x82, 0xf5])
+            .expect_err("truncated input still fails");
+    }
+
+    #[test]
+    fn empty_path_length_on_an_array_does_not_retain_omitted_member_payloads() {
+        // [[true, null], [true, null]]
+        let bytes: &[u8] = &[0x82, 0x82, 0xf5, 0xf6, 0x82, 0xf5, 0xf6];
+        let (verdict, nodes, spans) = decode_count(bytes).expect("decode");
+        assert_eq!(verdict, jqf_data::CountVerdict::Count(2));
+        assert_eq!(spans, 2, "each element is a deferred array span");
+        assert_eq!(
+            nodes, 3,
+            "root array + two child spans; omitted element payloads are not built"
+        );
+        decode_count(&[0x82, 0x82, 0xf5, 0xf6, 0x82, 0xf5]).expect_err("truncated input still fails");
     }
 }

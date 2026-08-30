@@ -4,10 +4,8 @@
 //! walk in `jqfb_routes.rs`). The session validates the header, the footer directory, and every chunk against the file
 //! extent FIRST (the trust boundary), then verifies each chunk's blake3 digest, re-slices the core chunk payloads from
 //! the source, and walks the flattened preorder node table into the Document model with an EXPLICIT container stack —
-//! document depth costs heap, never call stack — validating the subtree-size invariant exactly. The FACT chunk
-//! re-attaches attached facts (markup name/attrs/content/attribute/comment), the SOUR chunk becomes a `jqfb.source@1`
-//! fact on the root (conformance level 1, the lossless re-emission authority), and the PROV chunk becomes a
-//! `.@provenance` fact.
+//! document depth costs heap, never call stack — validating the subtree-size invariant exactly. The FACT, SOUR, and
+//! PROV chunks are always validated; they attach as facts only when the requirement demands attached facts.
 
 use alloc::borrow::ToOwned;
 use alloc::string::String;
@@ -82,7 +80,8 @@ impl InputProvider for JqfbProvider {
         let source = input.source();
         if slot == RouteSlot::new(0) {
             requirement.expect_whole(AccessResultKind::CompleteDocument)?;
-            let state = JqfbDecodeState::try_new(source, resources)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let state = JqfbDecodeState::try_new(source, coverage, resources)?;
             return ErasedAccessSession::try_new_source_with_route(source, JQFB_FULL_PHYSICAL_ROUTE_ID, || Ok(state));
         }
         // The demand routes share one validated image (the trust boundary: header, footer directory, every chunk
@@ -90,7 +89,8 @@ impl InputProvider for JqfbProvider {
         let image = JqfbImage::validate(source.bytes())?;
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
-            let session = jqfb_routes::NativeLocatedSession::try_new(image, path.steps(), origin)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let session = jqfb_routes::NativeLocatedSession::try_new(image, path.steps(), origin, coverage)?;
             return ErasedAccessSession::try_new_source_with_route(source, JQFB_LOCATED_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });
@@ -190,6 +190,8 @@ pub(crate) struct JqfbDecodeState {
     /// hold a borrow of the source, so `try_new` records each chunk's extent and every poll re-slices the chunks from
     /// the source bytes it is handed.
     image: JqfbImage,
+    /// Builder coverage the decode honours: FACT/SOUR/PROV are always validated; attach only when facts are demanded.
+    coverage: BuilderCoverage,
 }
 
 /// One validated jqfb image: the core chunk extents within the source and the pool offset tables, built by the shared
@@ -304,10 +306,14 @@ impl ChunkRanges {
 }
 
 impl JqfbDecodeState {
-    pub(crate) fn try_new(source: ResolvedSource<'_>, resources: &mut ResourceContext<'_>) -> Result<Self, CodecError> {
+    pub(crate) fn try_new(
+        source: ResolvedSource<'_>,
+        coverage: BuilderCoverage,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<Self, CodecError> {
         let image = JqfbImage::validate(source.bytes())?;
         let node_count = image.node_count;
-        let mut state = Self::new_with_image(image, BuilderCoverage::complete(), resources)?;
+        let mut state = Self::new_with_image(image, coverage, resources)?;
         state.cursor = 0;
         state.start = 0;
         state.end = node_count;
@@ -317,13 +323,14 @@ impl JqfbDecodeState {
     }
 
     /// A decode state SCOPED to one located subtree (the scoped route's second read): the walk covers `[start, start +
-    /// size)` node-table entries and attaches FACT records whose owner sits in that range (markup/comment facts travel
-    /// with the located subtree). Source and provenance stay whole-document. The builder keeps minimal semantics plus
-    /// attached facts. The image was already validated by the session's walk, so this construction is allocation-only.
+    /// size)` node-table entries and attaches FACT records whose owner sits in that range when coverage demands facts
+    /// (markup/comment facts travel with the located subtree). Source and provenance stay whole-document. The image was
+    /// already validated by the session's walk, so this construction is allocation-only.
     pub(crate) fn try_new_scoped(
         image: &JqfbImage,
         start: usize,
         size: u32,
+        coverage: BuilderCoverage,
         resources: &mut ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
         let node_count = image.node_count;
@@ -333,11 +340,7 @@ impl JqfbDecodeState {
         if end > node_count {
             return Err(jqfb::invalid("the located subtree exceeds the node table"));
         }
-        let mut state = Self::new_with_image(
-            image.clone(),
-            BuilderCoverage::minimal_semantic().with_attached_facts(true),
-            resources,
-        )?;
+        let mut state = Self::new_with_image(image.clone(), coverage, resources)?;
         state.cursor = start;
         state.start = start;
         state.end = end;
@@ -374,6 +377,7 @@ impl JqfbDecodeState {
             binding_stage: None,
             scoped: false,
             image,
+            coverage,
         })
     }
 
@@ -779,23 +783,28 @@ impl JqfbDecodeState {
         self.attach_facts(chunks.fact, resources)?;
         if !self.scoped
             && let Some(sour) = chunks.sour
-            && let Some((label, origin)) = split_source_record(sour)?
         {
-            self.builder_mut()?
-                .add_fact(
-                    LocalOwnerRef::Node(root),
-                    provider::JQFB_SOURCE_FACT,
-                    provider::JQFB_SOURCE_FACT,
-                    1,
-                    &FactPayload::OpaqueBytes(origin.to_vec()),
-                    resources,
-                )
-                .map_err(map_data)?;
-            let _ = label;
+            // Validate the SOUR record even when identity coverage skips attaching it.
+            if let Some((label, origin)) = split_source_record(sour)?
+                && self.coverage.attached_facts()
+            {
+                self.builder_mut()?
+                    .add_fact(
+                        LocalOwnerRef::Node(root),
+                        provider::JQFB_SOURCE_FACT,
+                        provider::JQFB_SOURCE_FACT,
+                        1,
+                        &FactPayload::OpaqueBytes(origin.to_vec()),
+                        resources,
+                    )
+                    .map_err(map_data)?;
+                let _ = label;
+            }
         }
         if !self.scoped
             && let Some(prov) = chunks.prov
             && let Some(payload) = parse_provenance(prov)?
+            && self.coverage.attached_facts()
         {
             self.builder_mut()?
                 .add_fact(
@@ -825,7 +834,9 @@ impl JqfbDecodeState {
         builder.begin_finish(root, resources).map_err(map_data)
     }
 
-    /// Attaches every FACT chunk record to its node.
+    /// Validates every FACT chunk record (node index, UTF-8 role/kind, payload grammar) and attaches those whose owner
+    /// sits in this decode's range when coverage demanded attached facts. Identity `.` still refuses a corrupt FACT
+    /// chunk.
     fn attach_facts(&mut self, fact: &[u8], resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
         // An ABSENT FACT chunk is zero facts. `locate_core` defaults the missing chunk to the empty slice; only foreign
         // or hand-built images hit this (the encoder always writes the chunk, even with no records), and absence is
@@ -849,13 +860,12 @@ impl JqfbDecodeState {
             cursor = after;
             let revision = jqfb::read_u32(fact, cursor).ok_or_else(|| jqfb::invalid("truncated fact revision"))?;
             cursor += 4;
-            let (payload, after) = read_fact_payload(fact, cursor)?;
-            cursor = after;
             let abs = usize::try_from(node_index).map_err(|_| jqfb::invalid("fact node index overflows"))?;
             if abs < self.start || abs >= self.end {
                 // The FACT chunk is whole-image. A scoped walk only built `[start, end)`; off-path facts stay with
                 // their nodes.
                 if self.scoped {
+                    cursor = skip_fact_payload(fact, cursor)?;
                     continue;
                 }
                 return Err(jqfb::invalid("a fact names an unknown node"));
@@ -866,7 +876,13 @@ impl JqfbDecodeState {
                 .copied()
                 .flatten()
                 .ok_or_else(|| jqfb::invalid("a fact names an unknown node"))?;
-            records.push((owner, role.to_owned(), kind.to_owned(), revision, payload));
+            if self.coverage.attached_facts() {
+                let (payload, after) = read_fact_payload(fact, cursor)?;
+                cursor = after;
+                records.push((owner, role.to_owned(), kind.to_owned(), revision, payload));
+            } else {
+                cursor = skip_fact_payload(fact, cursor)?;
+            }
         }
         for (owner, role, kind, revision, payload) in records {
             self.builder_mut()?
@@ -1149,6 +1165,108 @@ pub(crate) fn read_fact_payload(bytes: &[u8], offset: usize) -> Result<(FactPayl
                         Some(Frame::Map { entries, .. }) => finished = FactPayload::Map(entries),
                         _ => return Err(jqfb::invalid("fact map frame")),
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Validates one fact payload and returns the next offset without owning the payload.
+fn skip_fact_payload(bytes: &[u8], offset: usize) -> Result<usize, CodecError> {
+    enum Frame {
+        List { remaining: u64 },
+        Map { remaining: u64, need_key: bool },
+    }
+
+    let mut cursor = offset;
+    let mut stack: Vec<Frame> = Vec::new();
+    loop {
+        if let Some(Frame::Map {
+            remaining, need_key, ..
+        }) = stack.last_mut()
+            && *need_key
+            && *remaining > 0
+        {
+            let (_, after) = jqfb::pool_entry(bytes, cursor)?;
+            cursor = after;
+            *need_key = false;
+        }
+
+        let tag = *bytes
+            .get(cursor)
+            .ok_or_else(|| jqfb::invalid("truncated fact payload tag"))?;
+        cursor += 1;
+        match tag {
+            0 => {}
+            1 => {
+                let _ = bytes.get(cursor).ok_or_else(|| jqfb::invalid("truncated fact bool"))?;
+                cursor += 1;
+            }
+            2 => {
+                let (text, after) = jqfb::pool_entry(bytes, cursor)?;
+                let text = core::str::from_utf8(text).map_err(|_| jqfb::invalid("a fact integer is not UTF-8"))?;
+                let _ = jqf_data::Integer::parse(text).map_err(|_| jqfb::invalid("a fact integer does not parse"))?;
+                cursor = after;
+            }
+            4 => {
+                let (text, after) = jqfb::pool_entry(bytes, cursor)?;
+                let _ = core::str::from_utf8(text).map_err(|_| jqfb::invalid("a fact text is not UTF-8"))?;
+                cursor = after;
+            }
+            3 => {
+                let (coef, after) = jqfb::pool_entry(bytes, cursor)?;
+                let coef = core::str::from_utf8(coef).map_err(|_| jqfb::invalid("a fact decimal is not UTF-8"))?;
+                let scale =
+                    jqfb::read_u64(bytes, after).ok_or_else(|| jqfb::invalid("truncated fact decimal scale"))?;
+                let coefficient =
+                    jqf_data::Integer::parse(coef).map_err(|_| jqfb::invalid("a fact decimal does not parse"))?;
+                jqf_data::Decimal::from_literal_parts(coefficient, i64::from_ne_bytes(scale.to_ne_bytes()))
+                    .map_err(|_| jqfb::invalid("a fact decimal is out of range"))?;
+                cursor = after + 8;
+            }
+            5 | 8 => {
+                let (_, after) = jqfb::pool_entry(bytes, cursor)?;
+                cursor = after;
+            }
+            6 => {
+                let count = jqfb::read_u64(bytes, cursor).ok_or_else(|| jqfb::invalid("truncated fact list count"))?;
+                cursor += 8;
+                if count > 0 {
+                    stack.push(Frame::List { remaining: count });
+                    continue;
+                }
+            }
+            7 => {
+                let count = jqfb::read_u64(bytes, cursor).ok_or_else(|| jqfb::invalid("truncated fact map count"))?;
+                cursor += 8;
+                if count > 0 {
+                    stack.push(Frame::Map {
+                        remaining: count,
+                        need_key: true,
+                    });
+                    continue;
+                }
+            }
+            _ => return Err(jqfb::invalid("unknown fact payload tag")),
+        }
+
+        loop {
+            match stack.last_mut() {
+                None => return Ok(cursor),
+                Some(Frame::List { remaining }) => {
+                    *remaining -= 1;
+                    if *remaining > 0 {
+                        break;
+                    }
+                    stack.pop();
+                }
+                Some(Frame::Map { remaining, need_key }) => {
+                    *remaining -= 1;
+                    *need_key = true;
+                    if *remaining > 0 {
+                        break;
+                    }
+                    stack.pop();
                 }
             }
         }

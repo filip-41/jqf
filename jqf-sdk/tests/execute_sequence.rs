@@ -537,6 +537,23 @@ fn construct_fan_out_declines_on_a_deep_path_mismatch_without_republishing() {
     assert!(matches!(error.failure(), PipelineFailure::TypeMismatch { .. }));
 }
 
+/// The collected twin of [`construct_fan_out_declines_on_a_deep_path_mismatch_without_republishing`]:
+/// nothing reaches the sink (the array is encoded only after a complete walk)
+/// and the floor raise is the same type mismatch.
+#[test]
+fn collected_construct_fan_out_declines_on_a_deep_path_mismatch_without_publishing() {
+    let mut sink = CollectingSink::new();
+    let error = run_sequence_with(
+        br#"[{"id":1,"attrs":{"warehouse":"w1"}},{"id":2,"attrs":"oops"}]"#,
+        &mut sink,
+        "[.[] | {id: .id, w: .attrs.warehouse}]",
+    )
+    .expect_err("the deep mismatch is the floor's raise");
+    assert!(sink.bytes.is_empty(), "collect publishes nothing on decline");
+    assert_eq!(sink.items, 0);
+    assert!(matches!(error.failure(), PipelineFailure::TypeMismatch { .. }));
+}
+
 /// Missing + zero-items under the residual-flows law: `{}` with `.a[]?` pushes
 /// `.a` down (missing → null), the residual `.[]?` iterates that null and
 /// suppresses, publishing nothing at exit 0.
@@ -1177,5 +1194,36 @@ fn a_split_destination_collision_refuses_the_second_writer() {
     assert_eq!(
         sink.bytes, b"1\n",
         "first writer stands; the colliding item is not published"
+    );
+}
+
+#[test]
+fn path_type_names_the_located_node_kind() {
+    // PATH | type Exact-locates the prefix; residual type must see the
+    // named node (an array here), not the document root object.
+    let mut sink = CollectingSink::new();
+    let report = run_sequence_with(br#"{"users":[1,2,3]}"#, &mut sink, ".users | type").expect("runs");
+    assert_eq!(report.items(), 1);
+    assert_eq!(sink.bytes, b"\"array\"\n");
+    let mut root = CollectingSink::new();
+    run_sequence_with(br#"{"users":[1,2,3]}"#, &mut root, "type").expect("runs");
+    assert_eq!(root.bytes, b"\"object\"\n");
+}
+
+#[test]
+fn empty_path_slice_then_type_raises_on_an_object() {
+    // `.[1:3] | type` is not bare-root `type`. An object has no array slice;
+    // the residual must raise instead of printing the root kind.
+    let mut sink = CollectingSink::new();
+    let error = run_sequence_with(br#"{"a":1}"#, &mut sink, ".[1:3] | type").expect_err("slicing an object must raise");
+    assert!(
+        sink.bytes != b"\"object\"\n",
+        "must not type the root: {}",
+        String::from_utf8_lossy(&sink.bytes)
+    );
+    assert!(
+        matches!(error.failure(), PipelineFailure::TypeMismatch { .. }),
+        "object slice is a type mismatch: {:?}",
+        error.failure()
     );
 }

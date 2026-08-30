@@ -15,7 +15,7 @@
 use jqf_codec_core::{
     AccessGuarantees, AccessOutcome, AccessRequirement, AccessResultKind, ByteSink, CodecDemand, CodecError,
     CodecFailureKind, CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, EncodeItem, EncodeRequest,
-    PreservationOutcome, PreservationRequest, ValidationMode, VecByteSink,
+    FactIntent, PreservationOutcome, PreservationRequest, ValidationMode, VecByteSink,
 };
 use jqf_data::{DialectId, FormatId, NodeHandle, Value};
 use jqf_resource::{
@@ -91,7 +91,10 @@ fn decode_whole<'s>(
         },
         resources,
     )?;
-    let requirement = requirement(resources, whole_demand(resources));
+    // Encode roundtrips and `--edit` spans read ATTRIBUTE_FACT. Deterministic
+    // encode requires Preserve (or a Topology clause) so the topology arena
+    // exists; the CLI sets that intent for XML→XML output.
+    let requirement = requirement(resources, whole_demand(resources)).with_fact_intent(FactIntent::Preserve);
     let handle = provider.bind(&requirement).expect("bind");
     let mut session = provider.open(&handle, resources)?;
     let result = {
@@ -109,6 +112,50 @@ fn decode_whole<'s>(
         .materialize_node_with(&mut jqf_data::MaterializeWorkspace::new(), root, resources)
         .map_err(|_| jqf_codec_core::data_contract("materialize XML root"))?;
     Ok((value, product))
+}
+
+/// Identity demand omits the topology arena; deterministic encode must refuse
+/// rather than emit a silently degraded document.
+#[test]
+fn identity_demand_encode_refuses_without_topology() {
+    let mut resources = resources();
+    let registration = jqf_codec_xml::registration().expect("registration");
+    let dialect = DialectId::try_new(DECODE_DIALECT).expect("dialect");
+    let mut provider = registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(b"<a b=\"1\">t</a>"),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )
+        .expect("provider");
+    let requirement = requirement(&resources, whole_demand(&resources));
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, &mut resources).expect("open");
+    let result = {
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run).expect("decode")
+    };
+    let AccessOutcome::FullDocument(product) = result.outcome() else {
+        panic!("expected full document");
+    };
+    let product = product.try_clone().expect("clone");
+    let root = product.document().root_handle();
+    let error = encode_located(&product, root, &mut resources).expect_err("identity encode must refuse");
+    assert!(
+        matches!(error.kind(), CodecFailureKind::InternalContractViolation { .. }),
+        "missing topology is a contract refusal, not silent output: {:?}",
+        error.kind()
+    );
 }
 
 /// Encodes the located root of a decoded document under the deterministic

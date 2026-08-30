@@ -7,11 +7,12 @@
 //! node. Scalars at kept positions are always delivered verbatim.
 //!
 //! The hint is MONOTONE: delivering more than the tree names is always sound, so a codec is free to ignore it entirely.
-//! The consumers that do consult it each keep their own flattened copy of this tree — the retained-source document
-//! decoders, and the builtins' decode path over pulled records. Nothing pre-folds the element demand into the named
-//! keys: the join happens AT lookup, here in [`PruneTreeNode::member`] (exact hit, else the element node) and again in
-//! every consumer-side copy's own table.
+//! Codecs that consult it copy the tree into [`PruneLookup`] (byte keys, keep-whole sentinel). The builtins' decode path
+//! over pulled records still folds its own table. Nothing pre-folds the element demand into the named keys: the join
+//! happens AT lookup, here in [`PruneTreeNode::member`] (exact hit, else the element node) and again in
+//! [`PruneLookup::member_prune`].
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use jqf_resource::{ResourceContext, ResourceError};
@@ -285,6 +286,135 @@ impl PruneTree {
     }
 }
 
+/// Keep-whole sentinel: no pruning below this position.
+pub const PRUNE_ALL: u32 = u32::MAX;
+
+/// Session-owned copy of a [`PruneTree`]: byte keys and a keep-whole sentinel. `None` from [`Self::from_transport`]
+/// when the hint keeps everything at the root (nothing to prune).
+#[derive(Clone)]
+pub struct PruneLookup {
+    nodes: Vec<PruneLookupNode>,
+}
+
+#[derive(Clone)]
+struct PruneLookupNode {
+    all: bool,
+    element: Option<u32>,
+    keys: Vec<(Box<[u8]>, u32)>,
+}
+
+impl PruneLookup {
+    /// Copies the transported tree; `None` when the hint keeps everything at the root.
+    #[must_use]
+    pub fn from_transport(tree: &PruneTree) -> Option<Self> {
+        if tree.root().is_all() {
+            return None;
+        }
+        let mut nodes = Vec::new();
+        for id in 0..u32::MAX {
+            let Some(node) = tree.node(id) else { break };
+            nodes.push(PruneLookupNode {
+                all: node.is_all(),
+                element: node.element(),
+                keys: node
+                    .members()
+                    .map(|(name, child)| (Box::from(name.as_bytes()), child))
+                    .collect(),
+            });
+        }
+        Some(Self { nodes })
+    }
+
+    fn node(&self, id: u32) -> Option<&PruneLookupNode> {
+        self.nodes.get(id as usize)
+    }
+
+    /// Child node when `name` is observed at `id` (named key or shared element), [`PRUNE_ALL`] when the node keeps
+    /// everything, `None` when the member is unobservable and may be omitted.
+    ///
+    /// A count demand's element spine (`[C[]] | length`) has neither a named key nor an element demand. `None` is the
+    /// tree's meaning: a `{}` node is produced only where analysis proved the members unobservable.
+    #[must_use]
+    pub fn member_prune(&self, id: u32, name: &[u8]) -> Option<u32> {
+        let node = self.node(id)?;
+        if node.all {
+            return Some(PRUNE_ALL);
+        }
+        if let Ok(position) = node.keys.binary_search_by(|(key, _)| key.as_ref().cmp(name)) {
+            Some(node.keys[position].1)
+        } else {
+            node.element
+        }
+    }
+
+    /// Shared every-child demand at `id`: the element node when the tree names one, else keep-whole.
+    #[must_use]
+    pub fn element_prune(&self, id: u32) -> u32 {
+        match self.node(id) {
+            Some(node) if !node.all => node.element.unwrap_or(PRUNE_ALL),
+            _ => PRUNE_ALL,
+        }
+    }
+
+    /// Whether the root object's member `name` is unobservable and may be omitted.
+    #[must_use]
+    pub fn omits_member(&self, name: &str) -> bool {
+        self.member_prune(PruneTree::ROOT, name.as_bytes()).is_none()
+    }
+}
+
+/// One prune position: optional lookup plus the current tree node id (or [`PRUNE_ALL`] to keep everything below).
+#[derive(Clone, Copy)]
+pub struct PruneRef<'a> {
+    lookup: Option<&'a PruneLookup>,
+    id: u32,
+}
+
+impl<'a> PruneRef<'a> {
+    /// Position at the transported root, or keep-whole when there is no lookup.
+    #[must_use]
+    pub fn root(lookup: Option<&'a PruneLookup>) -> Self {
+        Self {
+            lookup,
+            id: lookup.map_or(PRUNE_ALL, |_| PruneTree::ROOT),
+        }
+    }
+
+    /// The member demand at this position: child id when observed, `None` when unobservable.
+    #[must_use]
+    pub fn member(self, name: &[u8]) -> Option<u32> {
+        match self.lookup {
+            Some(lookup) if self.id != PRUNE_ALL => lookup.member_prune(self.id, name),
+            _ => Some(PRUNE_ALL),
+        }
+    }
+
+    /// This position's shared every-child demand (array elements).
+    #[must_use]
+    pub fn element(self) -> Self {
+        let id = match self.lookup {
+            Some(lookup) if self.id != PRUNE_ALL => lookup.element_prune(self.id),
+            _ => PRUNE_ALL,
+        };
+        self.at(id)
+    }
+
+    /// A descendant position named by a member or element lookup.
+    #[must_use]
+    pub fn at(self, id: u32) -> Self {
+        Self {
+            lookup: self.lookup,
+            id,
+        }
+    }
+
+    /// The tree node id at this position ([`PRUNE_ALL`] means keep-whole below).
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        self.id
+    }
+}
+
 fn mix(hash: &mut u64, byte: u8) {
     *hash ^= u64::from(byte);
     *hash = hash.wrapping_mul(0x100_0000_01b3);
@@ -302,7 +432,7 @@ fn mix_bytes(hash: &mut u64, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{PruneTree, PruneTreeError};
+    use super::{PruneLookup, PruneTree, PruneTreeError};
     use crate::test_support::resources;
 
     #[test]
@@ -358,5 +488,18 @@ mod tests {
             tree.try_push_key(PruneTree::ROOT, "b", child),
             Err(PruneTreeError::UnorderedKey)
         );
+    }
+
+    #[test]
+    fn lookup_from_transport_omits_unobservable_members() {
+        let resources = resources();
+        let mut tree = PruneTree::try_new(&resources).expect("tree");
+        let id_node = tree.try_push_node(true).expect("node");
+        tree.try_push_key(PruneTree::ROOT, "id", id_node).expect("key");
+        let lookup = PruneLookup::from_transport(&tree).expect("lookup");
+        assert_eq!(lookup.member_prune(PruneTree::ROOT, b"id"), Some(id_node));
+        assert!(lookup.member_prune(PruneTree::ROOT, b"name").is_none());
+        assert!(!lookup.omits_member("id"));
+        assert!(lookup.omits_member("name"));
     }
 }

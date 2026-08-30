@@ -34,8 +34,8 @@ evaluators live in `jqf-builtins` and are re-exported here.
   on the builtins side of the boundary reads them.
 - Join, partial-sort, and count facts change how the executor walks, not
   what it publishes and not which codec requirement is lowered.
-- Count and element demands are derived once at compile and consulted
-  per record. A per-record re-derivation is a contract break.
+- Count, element, type, and keys demands are derived once at compile and
+  consulted per record. A per-record re-derivation is a contract break.
 - A document-side range row admits only non-negative bounds. A negative
   bound needs the container length and declines the row.
 

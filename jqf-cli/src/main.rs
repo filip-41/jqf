@@ -365,9 +365,9 @@ fn write_decimal<W: IoWrite>(out: &mut W, value: u64) -> io::Result<()> {
 ///
 /// The shipped default is LAZY for programs that do not consume the whole document (`JQF_CONTAINER_SPANS` unset): the
 /// decoder defers container subtrees below the root to validated source spans, materialized only when something touches
-/// them. Root-structure reads (`length` at the root) and member-scoped programs run up to 2.5x faster and ~5x lighter
-/// under spans; touch-everything programs (identity, `..`, root folds, whole-document `|=`) pay a measured +35-72% and
-/// are routed back to the eager decode by [`CompiledProgram:consumes_whole_document`] (the §8.8 route decision).
+/// them. Unbounded count and element-iteration rows (`PATH | length`, `[C[] | .id]`) default EAGER so the prune hint is
+/// armed. Bounded prefixes (`limit`/`first`/`nth`) stay lazy. Identity, `..`, and whole-document `|=` stay eager via
+/// [`CompiledProgram:consumes_whole_document`].
 ///
 /// The environment variable remains the explicit override, because the standing force-lazy differential must run BOTH
 /// arms from one binary: `JQF_CONTAINER_SPANS=0` forces eager, a positive value forces the frame depth. It is

@@ -53,6 +53,8 @@ pub(crate) const PRUNE_OMIT: u32 = u32::MAX - 1;
 /// landed `<fmt>.comment@1` shape verbatim. The codec-agnostic matcher (`fact_role_serves` in the edit lane,
 /// `jqf-sdk/src/drive/edit.rs`) serves `.@comment` with zero SDK/engine change.
 pub(crate) const COMMENT_FACT: &str = "jsonc.comment@1";
+/// The JSON5 comment-fact role: the JSONC shape with the namespace swapped.
+pub(crate) const JSON5_COMMENT_FACT: &str = "json5.comment@1";
 
 /// The session-owned copy of a requirement's kept-subtree prune hint: the transported tree flattened into plain lookup
 /// nodes, so the parse state owns it without borrowing the requirement.
@@ -326,6 +328,13 @@ impl JsonParseState {
     /// `json5.comment@1`.
     pub(crate) fn set_comment_fact_role(&mut self, role: &'static str) {
         self.comment_fact_role = role;
+    }
+
+    /// Seeds leading comment texts collected outside a located span so the first node the re-parse commits — the
+    /// subtree root; containers attach at open — carries them. The scoped Exact route uses this when a member's
+    /// `.@comment` sits before its key, which the value span does not include.
+    pub(crate) fn seed_pending_comments(&mut self, comments: Vec<alloc::string::String>) {
+        self.pending_comments = comments;
     }
 
     /// Names the deferred-span reader this session binds when the lazy frontier is armed. Commented dialects set this

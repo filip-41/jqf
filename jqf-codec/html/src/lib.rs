@@ -254,7 +254,8 @@ mod tests {
             bytes,
             0,
         );
-        let mut state = crate::session::HtmlSession::new(source, false).expect("session");
+        let mut state = crate::session::HtmlSession::new(source, false, jqf_data::BuilderCoverage::complete(), false)
+            .expect("session");
         let mut context = jqf_codec_core::CodecRunContext::new(&mut resources);
         let result = state.decode(AccessInput::Source(source), &mut context).expect("decode");
         let product = match result.outcome() {

@@ -6,17 +6,21 @@ use jqf_resource::ResourceContext;
 use jqf_source::ResolvedSource;
 
 use crate::jsonc::provider::{CommentedSpec, create_commented_provider};
-use crate::parse::{JSON_NODE_KINDS, JSON_OCCURRENCE_ROLES};
+use crate::parse::{JSON_NODE_KINDS, JSON_OCCURRENCE_ROLES, JSON5_COMMENT_FACT};
 
 use super::{DOCUMENT_DIALECT_ID, FORMAT_ID};
 
 /// The JSON5 comment-fact role: the JSONC shape, swapped namespace. The codec-agnostic matcher strips the prefix and
 /// serves `.@comment` with zero SDK change.
-pub(crate) const COMMENT_FACT_ROLE: &str = "json5.comment@1";
+pub(crate) const COMMENT_FACT_ROLE: &str = JSON5_COMMENT_FACT;
 
 /// Stable physical identity of JSON5 whole-document decode.
 pub(crate) const WHOLE_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
     jqf_codec_core::PhysicalRouteId::derive_or_panic(FORMAT_ID, 1, 1);
+
+/// Stable physical identity of JSON5 scoped exact-path decode.
+pub(crate) const SCOPED_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
+    jqf_codec_core::PhysicalRouteId::derive_or_panic(FORMAT_ID, 2, 1);
 
 /// The JSON5 schema recipe: strict JSON's value model, plus the `json5.comment@1` fact role so the decode's comment
 /// attachment has a declared home.
@@ -53,6 +57,7 @@ pub(crate) fn create_provider<'source>(
             // U+FEFF is JSON5 whitespace, so the grammar accepts a marked document without a source-prefix rule.
             consume_bom: false,
             route: WHOLE_PHYSICAL_ROUTE_ID,
+            scoped_route: SCOPED_PHYSICAL_ROUTE_ID,
         },
         request.diagnostics,
         resources,

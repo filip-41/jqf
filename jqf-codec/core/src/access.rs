@@ -16,7 +16,7 @@ use crate::pattern::{AccessFootprint, AccessFootprintFingerprint, ExactPath};
 use crate::schedule::{SelectionOrigin, SelectionSchedule};
 use crate::{
     AccessGuarantees, CapabilityBundle, CodecDemand, CodecError, CodecFailureKind, CodecRunContext, DiagnosticPolicy,
-    DocumentProduct, LocatedOutcome, ValidationMode,
+    DocumentProduct, LocatedOutcome, SourceCapabilityDemand, TopologyDemand, ValidationMode,
 };
 use crate::{AccessReport, DemandClause};
 
@@ -229,6 +229,22 @@ fn minimal_semantic_demand(resources: &ResourceContext<'_>) -> Result<CodecDeman
     let mut demand = CodecDemand::try_new(resources);
     demand.try_insert(&DemandClause::SemanticRoot)?;
     demand.try_insert(&DemandClause::ValueShape)?;
+    // Unit clauses a decode can always deliver (more than asked is sound). Catalogued
+    // AttachedFact identities are advertised so bind does not HardMismatch; Attribute
+    // stays off (open name set) and binds through absence or the whole-document fallback.
+    demand.try_insert(&DemandClause::IntrinsicTag)?;
+    demand.try_insert(&DemandClause::Topology(TopologyDemand::Children))?;
+    demand.try_insert(&DemandClause::Topology(TopologyDemand::Owner))?;
+    demand.try_insert(&DemandClause::Source(SourceCapabilityDemand::ByteRanges))?;
+    demand.try_insert(&DemandClause::Source(SourceCapabilityDemand::WholeSource))?;
+    for role in crate::demand::ATTACHED_FACT_ROLES {
+        let clause = DemandClause::try_attached_fact(role).ok_or_else(|| {
+            CodecError::new(CodecFailureKind::InternalContractViolation {
+                contract: "attached-fact catalog identity",
+            })
+        })?;
+        demand.try_insert(&clause)?;
+    }
     Ok(demand)
 }
 
@@ -302,8 +318,8 @@ pub struct AccessRequirement {
     /// The ELEMENT-ITERATION demand hint: a recognized fan-out/fold row's full demand, carried when the requesting
     /// program is an element-iteration row. MONOTONE, like [`Self::count`]: a codec may ignore it (the document-core
     /// consumer then walks the demand against the document the decode produced, iterating deferred spans through the
-    /// format leaf) or shape its decode from it (the XML provider's measure parse serves a root-bound element demand).
-    /// `None` by construction.
+    /// format leaf) or shape its decode from it. See [`markup_measure_demand`] for why markup measure ignores this
+    /// hint. `None` by construction.
     ///
     /// All three of these hints may shape how a decode runs, but none enters a recycle key: what the decode delivers is
     /// identical either way, so a recycled session re-shapes per requirement.
@@ -547,6 +563,12 @@ impl AccessRequirement {
         self
     }
 
+    /// Inserts one demand clause into this requirement. Engine lowering names
+    /// `.@tag`, `.@role`, and `.&name` after the semantic pair is built.
+    pub fn try_insert_clause(&mut self, clause: &DemandClause) -> Result<(), jqf_resource::ResourceError> {
+        self.demand.try_insert(clause)
+    }
+
     /// The kept-subtree prune hint, when the requesting program's reads bounded below the whole document.
     #[must_use]
     pub fn prune(&self) -> Option<&crate::prune::PruneTree> {
@@ -652,7 +674,6 @@ pub(crate) struct RequiredCoverage {
     /// an attribute clause served by an absence adapter asks the document to PROVE it holds no attributes, and no other
     /// clause asks a family to be empty at all.
     empty_attributes: bool,
-    unsupported_positive_attribute: bool,
     diagnostics: DiagnosticCoverage,
 }
 impl RequiredCoverage {
@@ -677,10 +698,8 @@ impl RequiredCoverage {
             DocumentCapability::AttachedFacts,
             DocumentCapability::WholeSource,
         ];
-        !self.unsupported_positive_attribute
-            && ALL
-                .into_iter()
-                .all(|cap| self.capabilities & cap_bit(cap) == 0 || coverage.contains(cap))
+        ALL.into_iter()
+            .all(|cap| self.capabilities & cap_bit(cap) == 0 || coverage.contains(cap))
             && (!self.empty_attributes
                 || coverage
                     .authoritative_empty_families()
@@ -706,7 +725,6 @@ fn required_coverage_for_demand(
     let mut result = RequiredCoverage {
         capabilities: 0,
         empty_attributes: false,
-        unsupported_positive_attribute: false,
         diagnostics: coverage_for(diagnostics),
     };
     result.add(DocumentCapability::SemanticRoot);
@@ -726,7 +744,8 @@ fn required_coverage_for_demand(
                 ) {
                     result.empty_attributes = true;
                 } else {
-                    result.unsupported_positive_attribute = true;
+                    // Markup attributes are stored as attached facts (role `attribute`).
+                    result.add(DocumentCapability::AttachedFacts);
                 }
             }
         }
@@ -741,11 +760,66 @@ pub(crate) fn required_coverage(requirement: &AccessRequirement, adapter: Access
 /// Side-data coverage a document builder must physically construct to satisfy one bound access requirement.
 ///
 /// A requirement whose demand names no topology, attached-fact, or provenance clause maps to
-/// [`BuilderCoverage::minimal_semantic`]; each such clause turns its family back on. Providers pass the result to the
-/// builder so decode routes pay only for the coverage they were asked for.
+/// [`BuilderCoverage::minimal_semantic`]; each such clause turns its family back on.
+/// [`FactIntent::Preserve`] (identity re-encode / `--edit`) also turns attached facts and occurrence topology on:
+/// markup encode walks topology. Providers pass the result to the builder so decode routes pay only for the coverage
+/// they were asked for.
 #[must_use]
 pub fn required_builder_coverage(requirement: &AccessRequirement) -> BuilderCoverage {
     required_builder_coverage_with(requirement, CoveragePolicy::PerClause)
+}
+
+/// True when a markup codec may open the measure-skeleton route: empty-path
+/// count, or a Whole bare-root `type` call. Element demand is never a measure
+/// row — HTML children are NAME-only stubs, so `.[]` must recover the tree.
+/// HTML and XML share this predicate so the two providers cannot drift.
+#[must_use]
+pub fn markup_measure_demand(requirement: &AccessRequirement) -> bool {
+    requirement.count().is_some_and(|demand| demand.path.is_empty())
+        || (requirement.type_demand() && requirement.footprint().is_whole())
+}
+
+/// Whole-document decode knobs: count-only vs lazy vs eager+prune.
+///
+/// Empty-path `count()` skips member payloads after every byte is validated. Empty-path `element()` is eager+prune
+/// when unbounded and lazy when bounded. A positive frontier never carries prune.
+#[must_use]
+pub fn whole_document_open_plan(
+    requirement: &AccessRequirement,
+) -> (Option<usize>, bool, Option<crate::prune::PruneLookup>) {
+    let count_only = requirement.count().is_some_and(|demand| demand.path.is_empty());
+    let mut lazy_frontier =
+        (requirement.lazy_frontier() > 0).then(|| usize::try_from(requirement.lazy_frontier()).unwrap_or(usize::MAX));
+    if count_only {
+        lazy_frontier = None;
+    } else if let Some(demand) = requirement.element()
+        && demand.path.is_empty()
+    {
+        if demand.range.is_some() {
+            if lazy_frontier.is_none() {
+                lazy_frontier = Some(1);
+            }
+        } else {
+            lazy_frontier = None;
+        }
+    }
+    let prune = if lazy_frontier.is_some() || count_only {
+        None
+    } else {
+        requirement.prune().and_then(crate::prune::PruneLookup::from_transport)
+    };
+    (lazy_frontier, count_only, prune)
+}
+
+/// Whether the requirement named [`.@tag`](DemandClause::IntrinsicTag) or asked to preserve facts for re-encode.
+#[must_use]
+pub fn requirement_wants_intrinsic_tag(requirement: &AccessRequirement) -> bool {
+    requirement.fact_intent() == FactIntent::Preserve
+        || requirement
+            .demand()
+            .clauses()
+            .iter()
+            .any(|clause| matches!(clause, DemandClause::IntrinsicTag))
 }
 
 /// The builder-coverage POLICY a provider serves with.
@@ -764,13 +838,16 @@ pub enum CoveragePolicy {
 /// table so codecs do not grow private clause scans that drift apart.
 #[must_use]
 pub fn required_builder_coverage_with(requirement: &AccessRequirement, policy: CoveragePolicy) -> BuilderCoverage {
-    match policy {
+    let mut coverage = match policy {
         CoveragePolicy::PerClause => required_coverage(requirement, AccessAdapter::None).to_builder_coverage(),
         CoveragePolicy::WholeRouteRichComplete => {
             let rich = requirement.demand().clauses().iter().any(|clause| {
                 matches!(
                     clause,
-                    DemandClause::AttachedFact { .. } | DemandClause::Topology(_) | DemandClause::Source(_)
+                    DemandClause::AttachedFact { .. }
+                        | DemandClause::Attribute(_)
+                        | DemandClause::Topology(_)
+                        | DemandClause::Source(_)
                 )
             });
             if rich {
@@ -779,7 +856,11 @@ pub fn required_builder_coverage_with(requirement: &AccessRequirement, policy: C
                 BuilderCoverage::minimal_semantic()
             }
         }
+    };
+    if requirement.fact_intent() == FactIntent::Preserve {
+        coverage = coverage.with_attached_facts(true).with_topology(true);
     }
+    coverage
 }
 
 /// Deterministic first incompatible bundle axis.
@@ -1391,15 +1472,15 @@ mod tests {
     use core::any::Any;
 
     use super::{
-        AccessInput, AccessOutcome, AccessRequirement, AccessSession, ErasedAccessSession, PhysicalRouteId, RouteSlot,
-        required_coverage,
+        AccessInput, AccessOutcome, AccessRequirement, AccessSession, ErasedAccessSession, FactIntent, PhysicalRouteId,
+        RouteSlot, required_builder_coverage, required_coverage, requirement_wants_intrinsic_tag,
     };
     use crate::pattern::{AccessFootprint, ExactPath};
     use crate::{
-        AccessAdapter, AccessGuarantees, AccessResult, CodecDemand, CodecError, CodecRunContext, DiagnosticPolicy,
-        DocumentProduct,
+        AccessAdapter, AccessGuarantees, AccessResult, CodecDemand, CodecError, CodecRunContext, DemandClause,
+        DiagnosticPolicy, DocumentProduct, TopologyDemand,
     };
-    use jqf_data::{AccountedDocumentBuilder, AccountedSemanticNode, DocumentCoverage};
+    use jqf_data::{AccountedDocumentBuilder, AccountedSemanticNode, DocumentCoverage, FactKindId, FactRoleId};
     use jqf_resource::ResourceContext;
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -1760,5 +1841,57 @@ mod tests {
         assert!(session.decode(&mut context).is_err());
         // The failure is terminal-stable: a second decode re-raises it rather than running again.
         assert!(session.decode(&mut context).is_err());
+    }
+
+    #[test]
+    fn required_builder_coverage_honors_attached_fact_and_preserve() {
+        let resources = resources();
+        let empty = AccessRequirement::try_whole(
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        assert!(!required_builder_coverage(&empty).attached_facts());
+        assert!(!required_builder_coverage(&empty).topology());
+        assert!(!requirement_wants_intrinsic_tag(&empty));
+        let mut demand = CodecDemand::try_new(&resources);
+        let kind = FactKindId::try_new("comment").expect("kind");
+        let role = FactRoleId::try_new("comment").expect("role");
+        demand
+            .try_insert(&DemandClause::AttachedFact { kind, role })
+            .expect("insert");
+        let facted = AccessRequirement::try_whole(
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        assert!(required_builder_coverage(&facted).attached_facts());
+        let mut tagged = CodecDemand::try_new(&resources);
+        tagged.try_insert(&DemandClause::IntrinsicTag).expect("insert");
+        let tagged = AccessRequirement::try_whole(
+            tagged,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        assert!(requirement_wants_intrinsic_tag(&tagged));
+        let preserved = empty.with_fact_intent(FactIntent::Preserve);
+        assert!(required_builder_coverage(&preserved).attached_facts());
+        assert!(required_builder_coverage(&preserved).topology());
+        assert!(requirement_wants_intrinsic_tag(&preserved));
+        let mut topology = CodecDemand::try_new(&resources);
+        topology
+            .try_insert(&DemandClause::Topology(TopologyDemand::Children))
+            .expect("insert");
+        let topology = AccessRequirement::try_whole(
+            topology,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        assert!(required_builder_coverage(&topology).topology());
+        assert!(!required_builder_coverage(&topology).attached_facts());
     }
 }

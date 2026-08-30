@@ -612,7 +612,8 @@ mod tests {
         resources: &mut ResourceContext<'_>,
     ) -> (jqf_codec_core::DocumentProduct<'s>, NodeId, ResolvedSource<'s>) {
         let source = ResolvedSource::new(SourceRef::new(SourceId::new(1), SourceKind::Input), "test.xml", xml, 0);
-        let mut session = crate::session::XmlSession::new(source, false, true).expect("session");
+        let mut session = crate::session::XmlSession::new(source, false, true, jqf_data::BuilderCoverage::complete())
+            .expect("session");
         let mut context = CodecRunContext::new(resources);
         let result = session
             .decode(AccessInput::Source(source), &mut context)

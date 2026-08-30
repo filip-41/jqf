@@ -475,7 +475,7 @@ impl CountFilter {
     /// floor render it. Returns the item's contribution: 0 or 1.
     #[must_use]
     pub fn contributes(&self, item: &Value) -> Option<u64> {
-        let mut view = item.untagged();
+        let mut view = item;
         for step in &self.path {
             match view {
                 Value::Object(object) => {
@@ -484,8 +484,9 @@ impl CountFilter {
                         return None;
                     };
                     match object.get(key.as_str()) {
-                        // The member value; descend.
-                        Some(child) => view = child.untagged(),
+                        // The member value; descend. Keep tags so equality
+                        // declines to the floor, matching the built gate.
+                        Some(child) => view = child,
                         // The absent member is the reference's null; the remaining steps are total over it.
                         None => return self.test.answer(CountMember::Null).map(u64::from),
                     }
@@ -1047,6 +1048,7 @@ mod tests {
             range: None,
             probe: crate::ElementProbe::Path(Vec::new()),
             increment: None,
+            filter: None,
         };
         assert_eq!(
             document

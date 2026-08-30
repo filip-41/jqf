@@ -12,8 +12,8 @@ use alloc::vec;
 use jqf_codec_core::{CodecError, CodecFailureKind};
 
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedSemanticNode, BuilderCoverage, DataError, DocumentSchemaRecipe, FactPayload,
-    Integer, LocalOwnerRef, NodeId,
+    AccountedDocumentBuilder, AccountedSemanticNode, BuilderCoverage, DataError, DocumentCapacity,
+    DocumentSchemaRecipe, FactPayload, Integer, LocalOwnerRef, NodeId,
 };
 use jqf_resource::ResourceContext;
 
@@ -101,16 +101,134 @@ pub(crate) fn map_data(error: DataError) -> CodecError {
 /// so the source-echo encoder can read the sealed source segment.
 pub(crate) fn build_document(
     tree: &Tree,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_builder(resources)?;
+    // Names, content, and occurrence topology are the HTML value model (the
+    // encoder reads them). Attribute and comment facts skip when the demand
+    // named neither (checked before attached_facts is forced). NAME_FACT
+    // writes need attached_facts; topology follows the requirement.
+    let attach_attrs = coverage.attached_facts();
+    let mut builder = fresh_builder(coverage.with_attached_facts(true), resources)?;
     // The document element: the html element. An element-less tree (a comment-only or doctype-only document — the
     // "<!--x-->" corpus row) still decodes: the semantic root is a SYNTHETIC empty html element, because the WHATWG
     // parser accepts such documents (the tree has no document element for them) and the document's facts need a home.
     // The recovered comments/doctype stay document-level facts on that root.
-    let root = build_document_element(&mut builder, tree, resources)?;
+    let root = build_document_element(&mut builder, tree, resources, attach_attrs)?;
+    attach_document_level_facts(&mut builder, tree, root, resources)?;
+    Ok((builder, root))
+}
 
-    // The document-level facts: mode, pragma language, doctype.
+/// Builds the COUNT/TYPE skeleton from a recovered tree: the document element as an array of its
+/// direct children. HTML recover cannot skip unread bytes (WHATWG), so the tree is already complete; this
+/// path does not project descendant ATTRIBUTE_FACT tables. Each child ELEMENT is an empty array (NAME only)
+/// and each text child is a leaf — comments stay facts and are omitted. Element demand uses
+/// [`build_document`]: these stubs cannot rematerialize.
+pub(crate) fn build_measure_document(
+    tree: &Tree,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    // Dynamic builder: NAME and doctype facts. Recover rearranges the tree, so
+    // children are cheap nodes rather than source spans.
+    let mut builder = fresh_builder(BuilderCoverage::complete(), resources)?;
+    let child_ids: Vec<HtmlNodeId> = match tree.document_element() {
+        Some(html) => measure_child_ids(tree, html),
+        None => Vec::new(),
+    };
+    let n_children = if tree.document_element().is_none() {
+        2
+    } else {
+        child_ids.len()
+    };
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: n_children.saturating_add(1),
+            occurrences: n_children,
+            facts: n_children.saturating_add(4),
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
+    let root_name = tree
+        .document_element()
+        .map(|html| tree.nodes[html.0].name.as_str())
+        .unwrap_or("html");
+    let root = add_measure_element(&mut builder, root_name, resources)?;
+    if tree.document_element().is_some() {
+        for child in child_ids {
+            let node = match tree.nodes[child.0].kind {
+                NodeKind::Element => add_measure_element(&mut builder, &tree.nodes[child.0].name, resources)?,
+                NodeKind::Text => builder
+                    .add_node(
+                        TEXT_KIND,
+                        AccountedSemanticNode::String(&tree.nodes[child.0].data),
+                        None,
+                        resources,
+                    )
+                    .map_err(map_data)?,
+                NodeKind::Comment | NodeKind::Doctype | NodeKind::Document => {
+                    unreachable!("measure_child_ids keeps only Element and Text")
+                }
+            };
+            builder
+                .add_occurrence(LocalOwnerRef::Node(root), CHILD_ROLE, None, node, resources)
+                .map_err(map_data)?;
+        }
+    } else {
+        for name in ["head", "body"] {
+            let child = add_measure_element(&mut builder, name, resources)?;
+            builder
+                .add_occurrence(LocalOwnerRef::Node(root), CHILD_ROLE, None, child, resources)
+                .map_err(map_data)?;
+        }
+    }
+    attach_document_level_facts(&mut builder, tree, root, resources)?;
+    Ok((builder, root))
+}
+
+fn measure_child_ids(tree: &Tree, parent: HtmlNodeId) -> Vec<HtmlNodeId> {
+    tree.nodes[parent.0]
+        .children
+        .iter()
+        .copied()
+        .filter(|child| matches!(tree.nodes[child.0].kind, NodeKind::Element | NodeKind::Text))
+        .collect()
+}
+
+fn add_measure_element(
+    builder: &mut AccountedDocumentBuilder<'static>,
+    name: &str,
+    resources: &mut ResourceContext<'_>,
+) -> Result<NodeId, CodecError> {
+    let id = builder
+        .add_node(
+            ELEMENT_KIND,
+            AccountedSemanticNode::Array { item_role: CHILD_ROLE },
+            None,
+            resources,
+        )
+        .map_err(map_data)?;
+    builder
+        .add_fact(
+            LocalOwnerRef::Node(id),
+            NAME_FACT,
+            NAME_FACT,
+            1,
+            &FactPayload::Text(String::from(name)),
+            resources,
+        )
+        .map_err(map_data)?;
+    Ok(id)
+}
+
+/// Mode, pragma language, and doctype on the document element. Doctype stays for encode preflight even when
+/// per-element ATTRIBUTE_FACT tables skip.
+fn attach_document_level_facts(
+    builder: &mut AccountedDocumentBuilder<'static>,
+    tree: &Tree,
+    root: NodeId,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(), CodecError> {
     let mode = match tree.quirks {
         QuirksMode::NoQuirks => "no-quirks",
         QuirksMode::LimitedQuirks => "limited-quirks",
@@ -127,7 +245,7 @@ pub(crate) fn build_document(
         )
         .map_err(|error| {
             #[cfg(jqf_trace)]
-            std::eprintln!("doc build site L152 {error:?}");
+            std::eprintln!("html document build {error:?}");
             map_data(error)
         })?;
     if let Some(language) = &tree.pragma_language {
@@ -142,11 +260,10 @@ pub(crate) fn build_document(
             )
             .map_err(|error| {
                 #[cfg(jqf_trace)]
-                std::eprintln!("doc build site L186 {error:?}");
+                std::eprintln!("html document build {error:?}");
                 map_data(error)
             })?;
     }
-    // The doctype: the document node's doctype child.
     if let Some(doctype) = tree.nodes[tree.document.0]
         .children
         .iter()
@@ -177,11 +294,11 @@ pub(crate) fn build_document(
             )
             .map_err(|error| {
                 #[cfg(jqf_trace)]
-                std::eprintln!("doc build site L223 {error:?}");
+                std::eprintln!("html document build {error:?}");
                 map_data(error)
             })?;
     }
-    Ok((builder, root))
+    Ok(())
 }
 
 /// Builds the document element (the html element) as the root node.
@@ -193,12 +310,15 @@ fn build_document_element(
     builder: &mut AccountedDocumentBuilder<'static>,
     tree: &Tree,
     resources: &mut ResourceContext<'_>,
+    attach_attrs: bool,
 ) -> Result<NodeId, CodecError> {
     let Some(html) = tree.document_element() else {
-        return build_synthetic_empty_document(builder, tree, resources);
+        return build_synthetic_empty_document(builder, tree, resources, attach_attrs);
     };
-    let id = build_node(builder, tree, html, resources).map(|(id, _)| id)?;
-    attach_document_edge_comments(builder, tree, id, resources)?;
+    let id = build_node(builder, tree, html, resources, attach_attrs).map(|(id, _)| id)?;
+    if attach_attrs {
+        attach_document_edge_comments(builder, tree, id, resources)?;
+    }
     Ok(id)
 }
 
@@ -208,6 +328,7 @@ fn build_synthetic_empty_document(
     builder: &mut AccountedDocumentBuilder<'static>,
     tree: &Tree,
     resources: &mut ResourceContext<'_>,
+    attach_attrs: bool,
 ) -> Result<NodeId, CodecError> {
     let html = builder
         .add_node(
@@ -250,7 +371,9 @@ fn build_synthetic_empty_document(
             .add_occurrence(LocalOwnerRef::Node(html), CHILD_ROLE, None, child, resources)
             .map_err(map_data)?;
     }
-    attach_document_edge_comments(builder, tree, html, resources)?;
+    if attach_attrs {
+        attach_document_edge_comments(builder, tree, html, resources)?;
+    }
     Ok(html)
 }
 
@@ -298,6 +421,7 @@ fn build_node(
     tree: &Tree,
     index: HtmlNodeId,
     resources: &mut ResourceContext<'_>,
+    attach_attrs: bool,
 ) -> Result<(NodeId, String), CodecError> {
     let _depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
     let element = &tree.nodes[index.0];
@@ -310,7 +434,7 @@ fn build_node(
         )
         .map_err(|error| {
             #[cfg(jqf_trace)]
-            std::eprintln!("doc build site L248 {error:?}");
+            std::eprintln!("html document build {error:?}");
             map_data(error)
         })?;
     builder
@@ -324,93 +448,95 @@ fn build_node(
         )
         .map_err(|error| {
             #[cfg(jqf_trace)]
-            std::eprintln!("doc build site L273 {error:?}");
+            std::eprintln!("html document build {error:?}");
             map_data(error)
         })?;
-    for attribute in &element.attrs {
-        // A WHATWG attribute name may carry ASCII control bytes (a parse error, but valid — the tokenizer keeps them).
-        // The per-name `attribute` fact keys on the name as a jqf-data identity, and the identity grammar rejects ASCII
-        // control/whitespace and the empty string. A name outside that grammar is still one attribute fact: the kind is
-        // a reserved identity and the payload carries the original name plus value, so encode and `.@attrs` keep the
-        // recovered pair.
-        if is_valid_identity(&attribute.name) {
-            builder
-                .add_fact(
-                    LocalOwnerRef::Node(id),
-                    ATTRIBUTE_FACT,
-                    &attribute.name,
-                    1,
-                    &FactPayload::Text(attribute.value.clone()),
-                    resources,
-                )
-                .map_err(map_data)?;
-        } else {
-            builder
-                .add_fact(
-                    LocalOwnerRef::Node(id),
-                    ATTRIBUTE_FACT,
-                    HTML_ATTR_BYTES_KIND,
-                    1,
-                    &FactPayload::Map(vec![
-                        (String::from("name"), FactPayload::Text(attribute.name.clone())),
-                        (String::from("value"), FactPayload::Text(attribute.value.clone())),
-                    ]),
-                    resources,
-                )
-                .map_err(map_data)?;
+    if attach_attrs {
+        for attribute in &element.attrs {
+            // A WHATWG attribute name may carry ASCII control bytes (a parse error, but valid — the tokenizer keeps them).
+            // The per-name `attribute` fact keys on the name as a jqf-data identity, and the identity grammar rejects ASCII
+            // control/whitespace and the empty string. A name outside that grammar is still one attribute fact: the kind is
+            // a reserved identity and the payload carries the original name plus value, so encode and `.@attrs` keep the
+            // recovered pair.
+            if is_valid_identity(&attribute.name) {
+                builder
+                    .add_fact(
+                        LocalOwnerRef::Node(id),
+                        ATTRIBUTE_FACT,
+                        &attribute.name,
+                        1,
+                        &FactPayload::Text(attribute.value.clone()),
+                        resources,
+                    )
+                    .map_err(map_data)?;
+            } else {
+                builder
+                    .add_fact(
+                        LocalOwnerRef::Node(id),
+                        ATTRIBUTE_FACT,
+                        HTML_ATTR_BYTES_KIND,
+                        1,
+                        &FactPayload::Map(vec![
+                            (String::from("name"), FactPayload::Text(attribute.name.clone())),
+                            (String::from("value"), FactPayload::Text(attribute.value.clone())),
+                        ]),
+                        resources,
+                    )
+                    .map_err(map_data)?;
+            }
         }
-    }
-    // Children are reached through the ARRAY MODEL (`.[]` over the element array), never a fact — matching XML, which
-    // cut `xml.children@1` on the same redundancy. The child ELEMENTS are the array items;
-    // `.@name`/`.@content`/`.@attrs` per item cover the projections. The comments: attached facts grouped by recovered
-    // role, never child values. The role classification follows §4.10 as served: a before-child comment is leading on
-    // the next recovered occurrence, and every after-child comment is inline on the preceding occurrence.
-    let mut roles: [Vec<FactPayload>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    for (position, child) in element.children.iter().enumerate() {
-        if tree.nodes[child.0].kind != NodeKind::Comment {
-            continue;
+        // Children are reached through the ARRAY MODEL (`.[]` over the element array), never a fact — matching XML, which
+        // cut `xml.children@1` on the same redundancy. The child ELEMENTS are the array items;
+        // `.@name`/`.@content`/`.@attrs` per item cover the projections. The comments: attached facts grouped by recovered
+        // role, never child values. The role classification follows §4.10 as served: a before-child comment is leading on
+        // the next recovered occurrence, and every after-child comment is inline on the preceding occurrence.
+        let mut roles: [Vec<FactPayload>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        for (position, child) in element.children.iter().enumerate() {
+            if tree.nodes[child.0].kind != NodeKind::Comment {
+                continue;
+            }
+            let role = comment_role(position);
+            let slot = match role {
+                COMMENT_ROLE_LEADING => 0,
+                COMMENT_ROLE_INLINE => 1,
+                COMMENT_ROLE_ROOT => 2,
+                _ => unreachable!(),
+            };
+            // The payload carries the comment's TREE POSITION beside its text (a map per comment): the document-serialize
+            // encoder reconstructs the in-place order from it, which is what keeps text runs on both sides of a comment
+            // separate across a round trip. The role stays the §4.10 classification.
+            roles[slot].push(FactPayload::Map(vec![
+                (
+                    String::from("text"),
+                    FactPayload::Text(tree.nodes[child.0].data.clone()),
+                ),
+                (
+                    String::from("position"),
+                    FactPayload::Integer(Integer::from_i64(position as i64)),
+                ),
+            ]));
         }
-        let role = comment_role(position);
-        let slot = match role {
-            COMMENT_ROLE_LEADING => 0,
-            COMMENT_ROLE_INLINE => 1,
-            COMMENT_ROLE_ROOT => 2,
-            _ => unreachable!(),
-        };
-        // The payload carries the comment's TREE POSITION beside its text (a map per comment): the document-serialize
-        // encoder reconstructs the in-place order from it, which is what keeps text runs on both sides of a comment
-        // separate across a round trip. The role stays the §4.10 classification.
-        roles[slot].push(FactPayload::Map(vec![
-            (
-                String::from("text"),
-                FactPayload::Text(tree.nodes[child.0].data.clone()),
-            ),
-            (
-                String::from("position"),
-                FactPayload::Integer(Integer::from_i64(position as i64)),
-            ),
-        ]));
-    }
-    for (slot, role) in [
-        (0usize, COMMENT_ROLE_LEADING),
-        (1, COMMENT_ROLE_INLINE),
-        (2, COMMENT_ROLE_ROOT),
-    ] {
-        if !roles[slot].is_empty() {
-            builder
-                .add_fact(
-                    LocalOwnerRef::Node(id),
-                    COMMENT_FACT,
-                    role,
-                    1,
-                    &FactPayload::List(core::mem::take(&mut roles[slot])),
-                    resources,
-                )
-                .map_err(|error| {
-                    #[cfg(jqf_trace)]
-                    std::eprintln!("doc build site L397 {error:?}");
-                    map_data(error)
-                })?;
+        for (slot, role) in [
+            (0usize, COMMENT_ROLE_LEADING),
+            (1, COMMENT_ROLE_INLINE),
+            (2, COMMENT_ROLE_ROOT),
+        ] {
+            if !roles[slot].is_empty() {
+                builder
+                    .add_fact(
+                        LocalOwnerRef::Node(id),
+                        COMMENT_FACT,
+                        role,
+                        1,
+                        &FactPayload::List(core::mem::take(&mut roles[slot])),
+                        resources,
+                    )
+                    .map_err(|error| {
+                        #[cfg(jqf_trace)]
+                        std::eprintln!("html document build {error:?}");
+                        map_data(error)
+                    })?;
+            }
         }
     }
     // The children: text runs and child elements (comments are facts). The descendant text accumulates BOTTOM-UP — each
@@ -423,7 +549,7 @@ fn build_node(
         let child_node = &tree.nodes[child.0];
         let built = match child_node.kind {
             NodeKind::Element => {
-                let (built, child_content) = build_node(builder, tree, *child, resources)?;
+                let (built, child_content) = build_node(builder, tree, *child, resources, attach_attrs)?;
                 content.push_str(&child_content);
                 built
             }
@@ -444,7 +570,7 @@ fn build_node(
             .add_occurrence(LocalOwnerRef::Node(id), CHILD_ROLE, None, built, resources)
             .map_err(|error| {
                 #[cfg(jqf_trace)]
-                std::eprintln!("doc build site L441 {error:?}");
+                std::eprintln!("html document build {error:?}");
                 map_data(error)
             })?;
     }
@@ -459,7 +585,7 @@ fn build_node(
         )
         .map_err(|error| {
             #[cfg(jqf_trace)]
-            std::eprintln!("doc build site L328 {error:?}");
+            std::eprintln!("html document build {error:?}");
             map_data(error)
         })?;
     Ok((id, content))
@@ -483,11 +609,13 @@ fn comment_role(position: usize) -> &'static str {
     COMMENT_ROLE_INLINE
 }
 
-pub(crate) fn fresh_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
+pub(crate) fn fresh_builder(
+    coverage: BuilderCoverage,
+    _resources: &ResourceContext<'_>,
+) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = html_schema_recipe().map_err(map_data)?;
-    let builder =
-        AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), BuilderCoverage::complete())
-            .map_err(map_data)?;
+    let builder = AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), coverage)
+        .map_err(map_data)?;
     Ok(builder)
 }
 
@@ -498,9 +626,11 @@ pub(crate) fn build_subtree_document(
     located: &crate::locate::Located,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_builder(resources)?;
+    let mut builder = fresh_builder(BuilderCoverage::complete(), resources)?;
     let root = match located {
-        crate::locate::Located::Element(element) => build_node(&mut builder, tree, HtmlNodeId(*element), resources)?.0,
+        crate::locate::Located::Element(element) => {
+            build_node(&mut builder, tree, HtmlNodeId(*element), resources, true)?.0
+        }
         crate::locate::Located::Leaf { parent, position } => {
             let child = tree.nodes[*parent].children[*position];
             let data = tree.nodes[child.0].data.clone();
@@ -528,12 +658,12 @@ pub(crate) fn decline_located_range() -> CodecError {
 pub(crate) fn build_null_document(
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_builder(resources)?;
+    let mut builder = fresh_builder(BuilderCoverage::complete(), resources)?;
     let root = builder
         .add_node(NULL_KIND, AccountedSemanticNode::Null, None, resources)
         .map_err(|error| {
             #[cfg(jqf_trace)]
-            std::eprintln!("doc build site L551 {error:?}");
+            std::eprintln!("html document build {error:?}");
             map_data(error)
         })?;
     Ok((builder, root))
@@ -545,5 +675,304 @@ mod kernel_receipt {
     fn mode_and_pragma_roles_are_html_crate_literals() {
         assert_eq!(super::MODE_FACT, "html.mode@1");
         assert_eq!(super::PRAGMA_LANGUAGE_FACT, "html.pragma-language@1");
+    }
+}
+
+#[cfg(test)]
+mod measure_build_tests {
+    use super::*;
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+
+    #[test]
+    fn measure_build_makes_root_and_cheap_children() {
+        let mut resources = ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &ContinueControl,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources");
+        let tree = crate::tree::TreeBuilder::build("<a href=\"https://ex\">hi</a>");
+        let _ = build_measure_document(&tree, &mut resources).expect("build");
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::{ATTRIBUTE_FACT, NAME_FACT};
+    use jqf_codec_core::{
+        AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext, DecodeRequest, DemandClause,
+        DiagnosticPolicy, FactIntent, TopologyDemand, ValidationMode,
+    };
+    use jqf_data::{
+        CountDemand, CountRow, DialectId, DocumentCapability, ElementDemand, ElementProbe, ElementRow, ExpandedName,
+        NodeId,
+    };
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    static CONTROL: ContinueControl = ContinueControl;
+    const INPUT: &[u8] = b"<a href=\"https://ex\">hi</a>";
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &CONTROL,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.html",
+            bytes,
+            0,
+        )
+    }
+
+    fn whole_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        AccessRequirement::try_whole(
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn decode_requirement<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> jqf_codec_core::DocumentProduct<'bytes> {
+        let dialect = DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect");
+        let mut provider = crate::registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &dialect,
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                resources,
+            )
+            .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources).expect("open");
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run).expect("decode");
+        let AccessOutcome::FullDocument(product) = result.outcome() else {
+            panic!("expected full document");
+        };
+        product.try_clone().expect("clone")
+    }
+
+    fn attribute_pairs(
+        product: &jqf_codec_core::DocumentProduct<'_>,
+    ) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String)> {
+        let document = product.document();
+        let mut out = alloc::vec::Vec::new();
+        for index in 0..document.node_count() {
+            let Some(node) = NodeId::try_from_index(index) else {
+                break;
+            };
+            for fact_id in document.owner_fact_ids(node) {
+                let fact = document.fact(*fact_id).expect("fact");
+                if fact.role().as_str() != ATTRIBUTE_FACT {
+                    continue;
+                }
+                if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                    out.push((
+                        alloc::string::String::from(fact.kind().as_str()),
+                        alloc::string::String::from(text),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    fn named_elements(product: &jqf_codec_core::DocumentProduct<'_>) -> alloc::vec::Vec<alloc::string::String> {
+        let document = product.document();
+        let mut names = alloc::vec::Vec::new();
+        for index in 0..document.node_count() {
+            let Some(node) = NodeId::try_from_index(index) else {
+                break;
+            };
+            for fact_id in document.owner_fact_ids(node) {
+                let fact = document.fact(*fact_id).expect("fact");
+                if fact.role().as_str() != NAME_FACT {
+                    continue;
+                }
+                if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                    names.push(alloc::string::String::from(text));
+                }
+            }
+        }
+        names
+    }
+
+    fn has_name_fact(product: &jqf_codec_core::DocumentProduct<'_>) -> bool {
+        let document = product.document();
+        (0..document.node_count()).any(|index| {
+            let Some(node) = NodeId::try_from_index(index) else {
+                return false;
+            };
+            document.owner_fact_ids(node).iter().any(|fact_id| {
+                document
+                    .fact(*fact_id)
+                    .is_ok_and(|fact| fact.role().as_str() == NAME_FACT)
+            })
+        })
+    }
+
+    #[test]
+    fn identity_skips_attribute_facts_and_keeps_names() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "identity must skip attribute facts"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
+        assert!(
+            !product.document().coverage().contains(DocumentCapability::Topology),
+            "identity JSON projection omits occurrence topology"
+        );
+    }
+
+    #[test]
+    fn empty_path_count_skips_attribute_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources).with_count(CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        });
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "empty-path length must skip ATTRIBUTE_FACT tables"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
+        assert!(
+            !named_elements(&product).iter().any(|name| name == "a"),
+            "measure skeleton must not project descendant elements: {:?}",
+            named_elements(&product)
+        );
+    }
+
+    #[test]
+    fn empty_path_type_skips_attribute_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources).with_type_demand();
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "bare type must skip ATTRIBUTE_FACT tables"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
+        assert!(
+            !named_elements(&product).iter().any(|name| name == "a"),
+            "measure skeleton must not project descendant elements"
+        );
+        let kind = product
+            .document()
+            .value_view(product.document().root_handle())
+            .expect("root view")
+            .kind()
+            .expect("root kind");
+        assert_eq!(kind, jqf_data::ValueKind::Array, "root kind is array");
+    }
+
+    #[test]
+    fn empty_path_element_projects_recovered_children() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources).with_element(ElementDemand {
+            row: ElementRow::FanOut,
+            path: Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(Vec::new()),
+            increment: None,
+            filter: None,
+        });
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "empty-path element must skip ATTRIBUTE_FACT tables"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
+        assert!(
+            named_elements(&product).iter().any(|name| name == "a"),
+            "element demand must project recovered children, not measure stubs: {:?}",
+            named_elements(&product)
+        );
+    }
+
+    #[test]
+    fn preserve_attaches_attribute_facts() {
+        let mut resources = resources();
+        let requirement =
+            whole_requirement(CodecDemand::try_new(&resources), &resources).with_fact_intent(FactIntent::Preserve);
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product)
+                .iter()
+                .any(|(name, value)| name == "href" && value == "https://ex"),
+            "Preserve must keep @attr"
+        );
+        assert!(
+            product.document().coverage().contains(DocumentCapability::Topology),
+            "Preserve is identity re-encode; encode reads occurrence topology"
+        );
+    }
+
+    #[test]
+    fn topology_clause_keeps_occurrence_topology() {
+        let mut resources = resources();
+        let mut demand = CodecDemand::try_new(&resources);
+        demand
+            .try_insert(&DemandClause::Topology(TopologyDemand::Children))
+            .expect("insert");
+        let product = decode_requirement(INPUT, &whole_requirement(demand, &resources), &mut resources);
+        assert!(
+            product.document().coverage().contains(DocumentCapability::Topology),
+            "xpath/css Topology clause retains occurrence topology"
+        );
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "Topology without Preserve still skips attribute facts"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
+    }
+
+    #[test]
+    fn attribute_clause_attaches_attribute_facts() {
+        let mut resources = resources();
+        let mut demand = CodecDemand::try_new(&resources);
+        demand
+            .try_insert(&DemandClause::Attribute(
+                ExpandedName::try_new("", "href").expect("href"),
+            ))
+            .expect("insert");
+        let product = decode_requirement(INPUT, &whole_requirement(demand, &resources), &mut resources);
+        assert!(
+            attribute_pairs(&product)
+                .iter()
+                .any(|(name, value)| name == "href" && value == "https://ex"),
+            ".&href must keep attrs"
+        );
     }
 }

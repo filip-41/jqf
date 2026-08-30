@@ -15,7 +15,7 @@ What it has:
 - `ErasedRecordStreamProvider` / `RecordItem` / `RecordBatch` — framed records
 - `CodecError` / `CodecFailureKind` — closed failure vocabulary
 - `byte_scan::prefix_len` — stop-set SIMD prefix scan
-- `PruneTree`, `AccessFootprint`, comment roles, kernel markup segments
+- `PruneTree`, `PruneLookup`, `AccessFootprint`, comment roles, kernel markup segments
 
 ## Routes and failures
 

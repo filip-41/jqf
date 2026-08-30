@@ -51,13 +51,14 @@ pub(crate) mod test_support;
 pub use access::{
     AccessAdapter, AccessBindError, AccessHandle, AccessInput, AccessOutcome, AccessRequirement, AccessResult,
     AccessSession, CapabilityMismatch, CoveragePolicy, ErasedAccessSession, FactIntent, PhysicalRouteId,
-    PhysicalRouteReceipt, RecycledSessionState, RouteDescription, RouteSlot, required_builder_coverage,
-    required_builder_coverage_with,
+    PhysicalRouteReceipt, RecycledSessionState, RouteDescription, RouteSlot, markup_measure_demand,
+    required_builder_coverage, required_builder_coverage_with, requirement_wants_intrinsic_tag,
+    whole_document_open_plan,
 };
 pub use binder::ReusableAccessSession;
 pub use capability::{AccessFootprintKind, AccessGuarantees, AccessResultKind, CapabilityBundle, RouteCapability};
 pub use deferral::{committed_container_spans, declined_deferrals, record_declined_deferral, record_published_spans};
-pub use demand::{CodecDemand, DemandClause, SourceCapabilityDemand, TopologyDemand};
+pub use demand::{ATTACHED_FACT_ROLES, CodecDemand, DemandClause, SourceCapabilityDemand, TopologyDemand};
 pub use descriptor::{CodecDescriptor, CodecOperations, ItemByteOwner};
 pub use encode::{
     ByteSink, EditAppendMembers, EditInsertion, EditRemoval, EditRemoveMembers, EditRenameMembers, EditReplacement,
@@ -85,7 +86,7 @@ pub use project::{
     tag_layer, value_tag_layer, view_tag_layer,
 };
 pub use provider::{InputProvider, ProviderInput};
-pub use prune::{PruneTree, PruneTreeError};
+pub use prune::{PRUNE_ALL, PruneLookup, PruneRef, PruneTree, PruneTreeError};
 pub use record::{
     ErasedRecordStreamProvider, ErasedRecordStreamSession, RecordBatch, RecordBatchLimit, RecordCompletion,
     RecordEntry, RecordIssue, RecordIssueCode, RecordIssueSeverity, RecordItem, RecordLease, RecordOrdinal, RecordPoll,

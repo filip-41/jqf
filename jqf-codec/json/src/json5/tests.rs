@@ -1,11 +1,14 @@
 //! JSON5 decode/encode/comment-fact tests.
 
 use alloc::boxed::Box;
-use jqf_codec_core::{AccessOutcome, CodecRunContext, DecodeRequest, DiagnosticPolicy, ValidationMode};
+use jqf_codec_core::{
+    AccessAdapter, AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecRunContext, DecodeRequest,
+    DiagnosticPolicy, ExactPath, ExactSelectionRecord, FactIntent, ValidationMode,
+};
 use jqf_data::{DialectId, FormatId, LocalOwnerRef, ReaderPoll};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
-use crate::test_support::{self, requirement, requirement_preserving_facts};
+use crate::test_support::{self, demand, requirement, requirement_preserving_facts};
 
 use super::{DOCUMENT_DIALECT_ID, registration};
 
@@ -208,6 +211,91 @@ fn every_strict_document_decodes() {
 #[test]
 fn unterminated_comment_is_rejected() {
     assert!(decode_ok(b"{\"a\": 1 /* never closes}").is_err());
+}
+
+/// Exact locates an unquoted key and keeps the leading comment as `json5.comment@1` on the subtree root.
+#[test]
+fn exact_preserves_leading_comment_on_an_unquoted_key() {
+    let bytes = b"{\n  // name comment\n  name: 'ada',\n  id: 0x10,\n}\n";
+    let mut resources = test_support::resources();
+    let dialect = DialectId::try_new(DOCUMENT_DIALECT_ID).expect("dialect");
+    let mut provider = registration()
+        .expect("registration")
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )
+        .expect("provider");
+    assert_eq!(provider.route_descriptions().len(), 2);
+    let guarantees = AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly);
+    let mut exact = ExactPath::try_new(&resources);
+    exact.try_push_semantic_member("name", &resources).expect("member");
+    let footprint = AccessFootprint::try_exact(exact, &resources);
+    let requirement = AccessRequirement::try_exact(footprint, demand(&resources), guarantees, &resources)
+        .expect("exact")
+        .with_fact_intent(FactIntent::Preserve);
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, &mut resources).expect("open");
+    let result = {
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run).expect("decode")
+    };
+    assert_eq!(result.report().adapter(), AccessAdapter::None);
+    assert_eq!(
+        result.report().route().expect("receipt").route(),
+        super::provider::SCOPED_PHYSICAL_ROUTE_ID
+    );
+    let AccessOutcome::Located(located) = result.into_parts().0 else {
+        panic!("expected located")
+    };
+    let ExactSelectionRecord::Node { .. } = located.result() else {
+        panic!("node")
+    };
+    let document = located.product().document();
+    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let mut reader = document.fact_reader(&mut resources).expect("reader");
+    let mut found = alloc::vec::Vec::new();
+    loop {
+        match reader.poll_batch(limit, &mut resources).expect("poll") {
+            ReaderPoll::Batch(batch) => {
+                for fact in batch.iter() {
+                    if fact.role().as_str() != "json5.comment@1" {
+                        continue;
+                    }
+                    let jqf_data::FactPayloadView::List(texts) = fact.payload() else {
+                        continue;
+                    };
+                    let lines: alloc::vec::Vec<_> = texts
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            jqf_data::FactPayloadView::Text(text) => Some(alloc::string::String::from(text)),
+                            _ => None,
+                        })
+                        .collect();
+                    found.push(lines);
+                }
+            }
+            ReaderPoll::Pending => {
+                resources.try_begin_next_cooperative_entry(4_096).expect("resume");
+            }
+            ReaderPoll::End(_) => break,
+        }
+    }
+    assert_eq!(
+        found,
+        alloc::vec![alloc::vec![alloc::string::String::from("name comment")]]
+    );
 }
 
 /// The leading comment attaches to the VALUE node of the member it precedes as a `json5.comment@1` fact.

@@ -10,7 +10,8 @@
 
 use jqf_codec_core::{
     AccessFootprintKind, AccessGuarantees, AccessRequirement, AccessResultKind, CodecError, DiagnosticPolicy,
-    ErasedAccessSession, InputProvider, ProviderInput, RouteDescription, RouteSlot,
+    ErasedAccessSession, InputProvider, ProviderInput, RouteDescription, RouteSlot, markup_measure_demand,
+    required_builder_coverage,
 };
 use jqf_resource::ResourceContext;
 
@@ -61,28 +62,16 @@ impl InputProvider for XmlProvider {
             if exact || requirement.result() != AccessResultKind::CompleteDocument {
                 return Err(mismatch());
             }
-            // A ROOT count demand, a bare-root `type` call, or a ROOT-BOUND
-            // element-iteration demand licenses the
-            // measure-skeleton decode: the provider serves
-            // the document element as an array of deferred child spans,
-            // validated without building the tree — the count consumer reads
-            // the child count, the `type` evaluation reads the root KIND, and
-            // the element-iteration consumer (fan-out over `.[]`)
-            // materializes one child span at a time. None of them materialize
-            // a leaf beyond the one in
-            // hand.
-            // CONTENT stays on: xpath string(.) reads xml.content@1 after
-            // decode, and that demand does not travel as an attached-fact
-            // clause on this requirement. NAME/ATTRS stay on complete()
-            // coverage for the deterministic encoder.
+            // Empty-path count or Whole bare-root `type` licenses the
+            // measure-skeleton decode: the provider serves the document element
+            // as an array of deferred child spans — the same kind `type`/`length`
+            // read on the full document. Element demand keeps the full tree.
+            // Content stays on: xpath string(.) reads xml.content@1 after decode.
+            // The whole build forces NAME_FACT and takes topology from the
+            // requirement (Preserve for encode).
             let attach_content = true;
-            let session = XmlSession::new(
-                source,
-                requirement.count().is_some_and(|demand| demand.path.is_empty())
-                    || requirement.type_demand()
-                    || requirement.element().is_some_and(|demand| demand.path.is_empty()),
-                attach_content,
-            )?;
+            let coverage = required_builder_coverage(requirement);
+            let session = XmlSession::new(source, markup_measure_demand(requirement), attach_content, coverage)?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::FULL_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });

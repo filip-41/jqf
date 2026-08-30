@@ -39,7 +39,7 @@ A request walks that stack once. Content is never sniffed: a named file's format
 
 Facts (`.@comment`, `.@tag`, `.&href`, …) are ordered portable metadata on a node. They cannot change intrinsic meaning. Any operation that constructs a new `Value` drops them — they are provenance, not data.
 
-The lazy document keeps source spans. A codec that can defer materialization answers counts and element streams from the span skeleton; a field the program never reads is still *validated*. A corrupt byte in an unread field fails the request the same way the whole-document floor would.
+The lazy document keeps source spans. A codec that can defer materialization answers counts, element streams, kind-only `type`, and `keys` from the span skeleton; a field the program never reads is still *validated*. A corrupt byte in an unread field fails the request the same way the whole-document floor would.
 
 `--edit` is a span patch against that retained source. Untouched bytes stay the file you wrote.
 
@@ -76,12 +76,14 @@ After fusion, analysis walks the arena against **closed tables**. A shape that i
 | --- | --- | --- |
 | Projection | how much of each streamed element is consumed: `Structure < Fields(S) < Subtree` | always building the whole element |
 | Count | `PATH \| length`, `[C[] \| probe] \| length` | walking every element to count |
-| Element | `.catalog[] \| .name`, collected fan-out, `reduce` object-increment, `limit`/`first`/`nth` | materializing every element into the evaluator |
+| Type | `type`, `PATH \| type` | building the named node's payload |
+| Element | `.catalog[] \| .name`, collected fan-out including `map`, `reduce` object-increment, `limit`/`first`/`nth`, select fan-out | materializing every element into the evaluator |
+| Keys | `keys`, `PATH \| keys` | walking the container to collect names |
 | Correlated scan | `.users[] \| select(.id == $o.user_id)` and the `map` spelling | Θ(k·m) nested rescans |
 | Partial sort | `sort \| .[0:k]`, `sort_by(f) \| .[-k:]`, `sort \| first`/`last` | a full sort for a k-element question |
 | Range locate | a static slice the codec can serve by span | decoding the whole container |
 
-Count and element demands are derived once at compile and consulted per record. The SDK drive publishes the consumer's answer when the document can prove it, and the ordinary route stands when it cannot. Join and partial-sort change no route and no codec requirement — only how many children the executor visits, or whether a bounded heap replaces `sort`.
+Count, element, type, and keys demands are derived once at compile and consulted per record. The SDK drive publishes the consumer's answer when the document can prove it, and the ordinary route stands when it cannot. Join and partial-sort change no route and no codec requirement — only how many children the executor visits, or whether a bounded heap replaces `sort`.
 
 `--explain` is the public view of this:
 

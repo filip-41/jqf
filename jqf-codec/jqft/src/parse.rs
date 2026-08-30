@@ -2,9 +2,10 @@
 //!
 //! ONE resumable value parser in two modes. The jqft mode implements the `%jqft 1` header, `---` document streams, core
 //! scalars (null/bool/exact number/binary64-by-`f`-suffix/string/bytes/temporal literals), `@tag("name")` layers
-//! retained as [`jqf_data::Value::Tagged`] chains, comments attached as facts (they are not the value), bare keys and
-//! trailing commas. Markup nodes are first-class — a `<name &attr="v">children</name>` element decodes as a role-tagged
-//! array of its children, with the node name, the attribute map, and the content attached as facts — while every
+//! retained as [`jqf_data::Value::Tagged`] chains, comments attached as facts when the bound requirement demands them
+//! (see `ensure_builder`; they are not the value), bare keys and trailing commas. Markup nodes are first-class — a
+//! `<name &attr="v">children</name>` element decodes as a role-tagged array of its children, with the node name, the
+//! attribute map, and the content attached as facts when demanded — while every
 //! reserved spelling (anchors and aliases, namespaced markup names) is refused with a dedicated diagnostic. The jqfjson
 //! mode is strict JSON (RFC 8259 member-name and number laws), one document per source.
 //!
@@ -133,6 +134,8 @@ pub(crate) struct JqftParseState {
     builder: Option<AccountedDocumentBuilder<'static>>,
     /// Cached recipe: rebuilt never across adjacent documents of one session.
     recipe: jqf_data::DocumentSchemaRecipe<'static>,
+    /// Builder coverage the decode honours: skip attaching comments/markup facts unless demanded.
+    coverage: BuilderCoverage,
     /// The in-flight cooperative source seal, pending before the parse begins (the document retains its source
     /// authority).
     binding_stage: Option<jqf_data::DocumentSourceBindingStage>,
@@ -168,13 +171,10 @@ impl JqftParseState {
         // `add_node`/`add_occurrence` path this parser uses is refused by the shared-schema prototype builder (the CBOR
         // decoder precedent).
         //
-        // Decode coverage is COMPLETE, unconditionally: the fact and source retention are unconditional — the grammar
-        // spells comments/markup facts, so a decode that dropped them would be lossy (the XML precedent), and source
-        // attachment happens at publish, after the builder's coverage claim, so it grants no coverage capability beyond
-        // complete.
+        // Coverage follows the bound requirement: identity `.` skips comments/markup facts; `.@comment` and Preserve
+        // attach them. Source attachment happens at publish and does not widen builder coverage.
         let (mut builder, _schema) =
-            AccountedDocumentBuilder::try_new_prepared_with_coverage(&self.recipe, BuilderCoverage::complete())
-                .map_err(map_data)?;
+            AccountedDocumentBuilder::try_new_prepared_with_coverage(&self.recipe, self.coverage).map_err(map_data)?;
         // The document retains its source authority (the input bytes) so `with_source` can echo the origin format
         // byte-identically (the memo's conformance level 1). The XML codec's precedent: bind the session source,
         // codec-core attaches the backing at publish. The seal is a linear pass, so it is started here as a cooperative
@@ -192,6 +192,11 @@ impl JqftParseState {
         self.binding_stage = Some(binding_stage);
         self.phase = Phase::Seal;
         Ok(())
+    }
+
+    /// Rebinds builder coverage when the requirement changes on the reopen path.
+    pub(crate) fn set_coverage(&mut self, coverage: BuilderCoverage) {
+        self.coverage = coverage;
     }
 
     /// Reinitializes this state for one more adjacent document, leaving exactly the state a fresh [`Self::try_new`]
@@ -222,7 +227,12 @@ impl JqftParseState {
         self.scratch.clear();
     }
 
-    pub(crate) fn try_new(source: ResolvedSource<'_>, kind: JqftKind, allow_adjacent_values: bool) -> Self {
+    pub(crate) fn try_new(
+        source: ResolvedSource<'_>,
+        kind: JqftKind,
+        allow_adjacent_values: bool,
+        coverage: BuilderCoverage,
+    ) -> Self {
         // The header is a stream-start fact: a reopened session (the SDK's adjacent-value sequence drive opens each
         // document at its own offset) never sees the header again.
         let at_stream_start = source.base_offset() == 0;
@@ -249,6 +259,7 @@ impl JqftParseState {
             root: None,
             builder: None,
             recipe: provider::jqft_recipe(kind).expect("jqft recipe is a static identity table"),
+            coverage,
             binding_stage: None,
             finalizer: None,
             product: None,
@@ -436,20 +447,22 @@ impl JqftParseState {
                 if text.starts_with(' ') {
                     text = &text[1..];
                 }
-                if newline_seen {
-                    self.pending_leading_comments.push(PendingComment {
-                        text: String::from(text),
-                        depth: self.frames.len(),
-                    });
-                } else if let Some(owner) = self.last_node {
-                    self.comment_events
-                        .push((owner, CommentRole::Inline, String::from(text)));
-                } else {
-                    // A comment before any node has no previous owner; it is a leading comment of whatever comes next.
-                    self.pending_leading_comments.push(PendingComment {
-                        text: String::from(text),
-                        depth: self.frames.len(),
-                    });
+                if self.coverage.attached_facts() {
+                    if newline_seen {
+                        self.pending_leading_comments.push(PendingComment {
+                            text: String::from(text),
+                            depth: self.frames.len(),
+                        });
+                    } else if let Some(owner) = self.last_node {
+                        self.comment_events
+                            .push((owner, CommentRole::Inline, String::from(text)));
+                    } else {
+                        // A comment before any node has no previous owner; it is a leading comment of whatever comes next.
+                        self.pending_leading_comments.push(PendingComment {
+                            text: String::from(text),
+                            depth: self.frames.len(),
+                        });
+                    }
                 }
                 continue;
             }
@@ -1104,60 +1117,63 @@ impl JqftParseState {
         else {
             return Err(data_contract());
         };
+        let attach_facts = self.coverage.attached_facts();
         let builder = self.builder()?;
-        // `.@name`
-        builder
-            .add_fact(
-                LocalOwnerRef::Node(owner),
-                provider::JQFT_NAME_FACT,
-                provider::JQFT_NAME_FACT,
-                1,
-                &FactPayload::Text(name.clone()),
-                resources,
-            )
-            .map_err(map_data)?;
-        // `.@attrs` — the COMPLETE recovered attribute map.
-        let attrs_payload = FactPayload::Map(
-            attributes
-                .iter()
-                .map(|(key, value)| (key.clone(), FactPayload::Text(value.clone())))
-                .collect(),
-        );
-        builder
-            .add_fact(
-                LocalOwnerRef::Node(owner),
-                provider::JQFT_ATTRS_FACT,
-                provider::JQFT_ATTRS_FACT,
-                1,
-                &attrs_payload,
-                resources,
-            )
-            .map_err(map_data)?;
-        // One fact PER ATTRIBUTE, so `.&name` serves each expanded-name attribute (the engine's `.&` selector matches
-        // role `attribute` + the attribute name as the fact kind).
-        for (key, value) in &attributes {
+        if attach_facts {
+            // `.@name`
             builder
                 .add_fact(
                     LocalOwnerRef::Node(owner),
-                    provider::ATTRIBUTE_FACT,
-                    key,
+                    provider::JQFT_NAME_FACT,
+                    provider::JQFT_NAME_FACT,
                     1,
-                    &FactPayload::Text(value.clone()),
+                    &FactPayload::Text(name.clone()),
+                    resources,
+                )
+                .map_err(map_data)?;
+            // `.@attrs` — the COMPLETE recovered attribute map.
+            let attrs_payload = FactPayload::Map(
+                attributes
+                    .iter()
+                    .map(|(key, value)| (key.clone(), FactPayload::Text(value.clone())))
+                    .collect(),
+            );
+            builder
+                .add_fact(
+                    LocalOwnerRef::Node(owner),
+                    provider::JQFT_ATTRS_FACT,
+                    provider::JQFT_ATTRS_FACT,
+                    1,
+                    &attrs_payload,
+                    resources,
+                )
+                .map_err(map_data)?;
+            // One fact PER ATTRIBUTE, so `.&name` serves each expanded-name attribute (the engine's `.&` selector matches
+            // role `attribute` + the attribute name as the fact kind).
+            for (key, value) in &attributes {
+                builder
+                    .add_fact(
+                        LocalOwnerRef::Node(owner),
+                        provider::ATTRIBUTE_FACT,
+                        key,
+                        1,
+                        &FactPayload::Text(value.clone()),
+                        resources,
+                    )
+                    .map_err(map_data)?;
+            }
+            // `.@content` — concatenated descendant character data in document order (no separators).
+            builder
+                .add_fact(
+                    LocalOwnerRef::Node(owner),
+                    provider::JQFT_CONTENT_FACT,
+                    provider::JQFT_CONTENT_FACT,
+                    1,
+                    &FactPayload::Text(content.clone()),
                     resources,
                 )
                 .map_err(map_data)?;
         }
-        // `.@content` — concatenated descendant character data in document order (no separators).
-        builder
-            .add_fact(
-                LocalOwnerRef::Node(owner),
-                provider::JQFT_CONTENT_FACT,
-                provider::JQFT_CONTENT_FACT,
-                1,
-                &FactPayload::Text(content.clone()),
-                resources,
-            )
-            .map_err(map_data)?;
         // A parent markup node appends this child's content to its own (the `.@content` law: concatenated descendant
         // character data).
         let child_content = content;
@@ -1181,7 +1197,7 @@ impl JqftParseState {
     )]
     fn attach_comment_facts(&mut self, resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
         let events = core::mem::take(&mut self.comment_events);
-        if events.is_empty() {
+        if events.is_empty() || !self.coverage.attached_facts() {
             return Ok(());
         }
         let mut by_node: Vec<(NodeId, Vec<(CommentRole, String)>)> = Vec::new();

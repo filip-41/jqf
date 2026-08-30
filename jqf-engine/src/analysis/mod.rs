@@ -39,7 +39,7 @@ mod projection;
 pub(crate) mod count;
 pub(crate) mod element;
 mod lazy;
-mod path_steps;
+pub(crate) mod path_steps;
 mod prune;
 mod tailcall;
 mod topk;

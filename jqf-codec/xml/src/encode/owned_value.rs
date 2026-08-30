@@ -23,7 +23,7 @@ pub(super) fn serialize_owned_value(
     value: &Value,
     resources: &mut ResourceContext<'_>,
 ) -> Result<alloc::vec::Vec<u8>, CodecError> {
-    let mut builder = crate::document::fresh_builder(resources)?;
+    let mut builder = crate::document::fresh_builder(jqf_data::BuilderCoverage::complete(), resources)?;
     let root = build_value_element(&mut builder, VALUE_ROOT_NAME, value, resources)?;
     let document = builder.finish(root, resources).map_err(crate::document::map_data)?;
     let node = document.root_handle();

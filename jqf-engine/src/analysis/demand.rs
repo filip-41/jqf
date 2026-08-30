@@ -63,6 +63,7 @@ use alloc::vec::Vec;
 
 use jqf_resource::ResourceError;
 
+use crate::analysis::path_steps::{hoistable_collect_prefix, prepend_in_place};
 use crate::program::{
     BinaryKind, LogicalOp, ObjectMemberNode, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess,
 };
@@ -1223,6 +1224,22 @@ fn fuse_flatmap(
             prefix.extend(suffix);
             Ok(Fused::Stage { start, steps: prefix })
         }
+        // `PATH | map(f)` ≡ `PATH | [.[] | f]`: hoist a static Key/Index prefix
+        // into the collected fan-out so the arena is `[PATH[] | f]` in
+        // path-normal form (the element/count tables then see one collect).
+        // Not `PATH | (map(f) | g)`: pipe is right-associative, and hoisting
+        // through `g` would hide `PATH` from a spine join (`(PATH | map | add)
+        // / (PATH | length)`). Those spellings are rows on the count and
+        // collect-add tables instead.
+        (
+            Fused::Stage {
+                start: StageStart::Current,
+                steps: prefix,
+            },
+            Fused::Node(body_id),
+        ) if hoistable_collect_prefix(&prefix) && collect_inner(out, body_id).is_some() => {
+            hoist_prefix_into_collect(prefix, body_id, out)
+        }
         // A Choice/constructor on either side, or a literal-start body, blocks
         // fusion: keep the FlatMap.
         (upstream, body) => {
@@ -1230,6 +1247,48 @@ fn fuse_flatmap(
             let body = materialize(body, out)?;
             Ok(Fused::Node(push(out, ProgramNode::FlatMap { upstream, body })?))
         }
+    }
+}
+
+/// When `body` is a `CollectArray`, prepend `prefix` onto its body's leading
+/// Current-start stage (or onto that stage when the body is a `FlatMap` of one)
+/// and return the rebuilt collect. `None` if `body` is not that shape.
+fn hoist_prefix_into_collect(
+    prefix: Vec<StageStep>,
+    body_id: ProgramNodeId,
+    out: &mut Vec<ProgramNode>,
+) -> Result<Fused, ResourceError> {
+    let inner = collect_inner(out, body_id).expect("guard proved a collect");
+    if prepend_in_place(out, inner, &prefix)? {
+        // Reuse the collect node: copying Each into a fresh stage would leave
+        // the old Each in the arena and `count_each_steps` (whole-arena) would
+        // see two boundaries.
+        return Ok(Fused::Node(body_id));
+    }
+    let stage = push(
+        out,
+        ProgramNode::Stage {
+            start: StageStart::Current,
+            steps: prefix,
+        },
+    )?;
+    let mapped = push(
+        out,
+        ProgramNode::FlatMap {
+            upstream: stage,
+            body: inner,
+        },
+    )?;
+    Ok(Fused::Node(push(
+        out,
+        ProgramNode::CollectArray { body: Some(mapped) },
+    )?))
+}
+
+fn collect_inner(out: &[ProgramNode], body_id: ProgramNodeId) -> Option<ProgramNodeId> {
+    match out.get(body_id.index()) {
+        Some(ProgramNode::CollectArray { body: Some(inner) }) => Some(*inner),
+        _ => None,
     }
 }
 

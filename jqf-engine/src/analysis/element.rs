@@ -19,10 +19,11 @@
 //! | fan-out, static probe | `.catalog[] \| .name` | [`ElementRow::FanOut`], path `C`, probe `[name]` |
 //! | fan-out, bare | `.catalog[]` | [`ElementRow::FanOut`], path `C`, empty probe |
 //! | fan-out, length | `.[] \| length` | [`ElementRow::FanOut`], path `[]`, [`ElementProbe::Length`] |
-//! | collected fan-out | `[.catalog[] \| .id]` | [`ElementRow::FanOut`], path `C`, probe `[id]`, collect |
+//! | collected fan-out | `[.catalog[] \| .id]` / `.catalog \| map(.id)` | [`ElementRow::FanOut`], path `C`, probe `[id]`, collect |
 //! | fold | `reduce (C[] \| .attrs.warehouse) as $x ({}; .[$x] += 1)` | [`ElementRow::ReduceFold`], path `C`, probe `[attrs, warehouse]` |
 //! | counted prefix | `limit(k; C[] \| .id)` / `nth(k; C[] \| .id)` | [`ElementRow::FanOut`], path `C`, range `[0:k]` / `[k:k+1]` |
 //! | first | `first(C[] \| .id)` | [`ElementRow::FanOut`], path `C`, range `[0:1]` |
+//! | select fan-out | `.catalog[] \| select(.ok) \| .name` | [`ElementRow::FanOut`] with [`ElementDemand::filter`] |
 //!
 //! The fold row requires the update to be the OBJECT-INCREMENT shape —
 //! `.[$x] += LITERAL` with a document-independent literal init — because the
@@ -34,13 +35,13 @@
 //!
 //! Deliberate v1 declines (the floor serves them byte for byte): optional
 //! (`?`) probe steps, nested iteration (more than one `.[]`), a residual
-//! with `select` or any call beyond a bare `length`, a non-literal fold init,
+//! call beyond `select`/`length`, a non-literal fold init,
 //! a fold update that is not the increment row, `foreach`, a non-literal
 //! `limit`/`nth` count, `skip` (it still walks the tail), `first`/`limit`
 //! whose generator is not a static-probe fan-out (`select` in the residual
-//! is first-k-matches, not a prefix range), and collect of a constructed
-//! object (`[C[] | {id}]` — the construct arm does not own that publication
-//! law). Each decline is a missed win, never a wrong answer.
+//! is first-k-matches, not a prefix range). Collected construct
+//! (`[C[] | {id}]`, `PATH | map({id})`) is a row: the SDK publishes one array
+//! of reconstructed objects. Each decline is a missed win, never a wrong answer.
 
 use alloc::vec::Vec;
 
@@ -80,6 +81,7 @@ pub(crate) fn element_plan(
     split: crate::analysis::PushdownSplit,
 ) -> Option<ElementPlan> {
     fan_out_row(nodes, root, split)
+        .or_else(|| select_fan_out_row(nodes, root))
         .or_else(|| reduce_fold_row(nodes, root))
         .or_else(|| counted_fan_out_row(nodes, root))
 }
@@ -91,9 +93,8 @@ pub(crate) fn element_plan(
 /// `.[] | length` shape).
 ///
 /// A root [`ProgramNode::CollectArray`] wrapping either shape is the same
-/// row with [`ElementPlan::collect`]: the SDK publishes one array. Collect
-/// of a constructed object (`[C[] | {id}]`) declines — the construct arm
-/// does not own that publication law.
+/// row with [`ElementPlan::collect`]: the SDK publishes one array. Collected
+/// construct (`[C[] | {id}]`, `PATH | map({id, name})`) is that row too.
 fn fan_out_row(
     nodes: &[ProgramNode],
     root: ProgramNodeId,
@@ -193,26 +194,8 @@ fn fan_out_row(
                     }
                     (ElementProbe::Length, None)
                 }
-                ProgramNode::ConstructObject { members } => {
-                    // `PATH[] | {static keys}`: every member key is a
-                    // compile-time string and every value is a static
-                    // Key/Index path (no `?`). The consumer visits whole
-                    // elements (empty path) and the SDK reconstructs the
-                    // object from those fields. A dynamic key or a value
-                    // that reads beyond a static field set declines.
-                    if !trailing.is_empty() {
-                        return None;
-                    }
-                    let fields = static_construct_fields(nodes, members)?;
-                    (ElementProbe::Path(Vec::new()), Some(fields))
-                }
-                _ => return None,
+                _ => construct_plan(nodes, *body, &trailing)?,
             };
-            // Collect of a constructed object (`[C[] | {id}]`) is a second
-            // publication law the construct arm does not own.
-            if collect && construct.is_some() {
-                return None;
-            }
             Some(fan_out_plan(path, range, probe, construct, collect))
         }
         _ => None,
@@ -257,6 +240,7 @@ fn reduce_fold_row(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Element
             range: None,
             probe,
             increment: Some(increment),
+            filter: None,
         },
         construct: None,
         collect: false,
@@ -290,11 +274,6 @@ fn counted_fan_out_row(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Ele
     if source_range.is_some() {
         return None;
     }
-    // Collect of a constructed object (`[limit(k; C[] | {id})]`) is a
-    // second publication law the construct arm does not own.
-    if collect && construct.is_some() {
-        return None;
-    }
     Some(fan_out_plan(path, Some(range), probe, construct, collect))
 }
 
@@ -305,6 +284,17 @@ fn fan_out_plan(
     construct: Option<ConstructFields>,
     collect: bool,
 ) -> ElementPlan {
+    fan_out_plan_filter(path, range, probe, construct, collect, None)
+}
+
+fn fan_out_plan_filter(
+    path: Vec<CountStep>,
+    range: Option<SliceRange>,
+    probe: ElementProbe,
+    construct: Option<ConstructFields>,
+    collect: bool,
+    filter: Option<jqf_data::CountFilter>,
+) -> ElementPlan {
     ElementPlan {
         demand: ElementDemand {
             row: ElementRow::FanOut,
@@ -312,10 +302,116 @@ fn fan_out_plan(
             range,
             probe,
             increment: None,
+            filter,
         },
         construct,
         collect,
     }
+}
+
+/// `.catalog[] | select(P) | .name` and `.catalog[] | select(P)`: a sole `.[]`
+/// whose residual is the closed collect-filter predicate, optionally followed
+/// by a static probe. First-k-matches (`limit`/`first` wrapping select) stay
+/// declined — those are not a prefix range. The count twin
+/// `PATH | map(select(P)) | length` already lives on the count table.
+fn select_fan_out_row(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<ElementPlan> {
+    if count_each_steps(nodes) != 1 {
+        return None;
+    }
+    let (inner, collect) = match &nodes[root.index()] {
+        ProgramNode::CollectArray { body: Some(body) } => (*body, true),
+        _ => (root, false),
+    };
+    // Two-pipe spellings. Pipe is right-associative, so
+    // `.catalog[] | select(P) | .name` is FlatMap { stage, FlatMap { select, probe } }.
+    // The left-associated twin is FlatMap { FlatMap { stage, select }, probe }.
+    if let ProgramNode::FlatMap { upstream, body } = &nodes[inner.index()] {
+        if let ProgramNode::FlatMap {
+            upstream: select_id,
+            body: probe_id,
+        } = &nodes[body.index()]
+        {
+            let filter = select_call_filter(nodes, *select_id)?;
+            let (path, range) = stage_each_path(nodes, *upstream)?;
+            let probe = probe_from_node(nodes, *probe_id)?;
+            return Some(fan_out_plan_filter(path, range, probe, None, collect, Some(filter)));
+        }
+        if let ProgramNode::FlatMap {
+            upstream: stage_id,
+            body: select_body,
+        } = &nodes[upstream.index()]
+        {
+            let filter = select_call_filter(nodes, *select_body)?;
+            let (path, range) = stage_each_path(nodes, *stage_id)?;
+            let probe = probe_from_node(nodes, *body)?;
+            return Some(fan_out_plan_filter(path, range, probe, None, collect, Some(filter)));
+        }
+    }
+    // One-pipe spelling: FlatMap { stage-with-Each, select } — emit the element.
+    let ProgramNode::FlatMap { upstream, body } = &nodes[inner.index()] else {
+        return None;
+    };
+    let filter = select_call_filter(nodes, *body)?;
+    let (path, range) = stage_each_path(nodes, *upstream)?;
+    Some(fan_out_plan_filter(
+        path,
+        range,
+        ElementProbe::Path(Vec::new()),
+        None,
+        collect,
+        Some(filter),
+    ))
+}
+
+fn probe_from_node(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<ElementProbe> {
+    match &nodes[id.index()] {
+        ProgramNode::Stage {
+            start: StageStart::Current,
+            steps,
+        } => Some(ElementProbe::Path(static_path(steps)?)),
+        ProgramNode::Call { overload, args, .. }
+            if args.is_empty() && overload.get() == jqf_builtins::registry::builtins::id::LENGTH =>
+        {
+            Some(ElementProbe::Length)
+        }
+        _ => None,
+    }
+}
+
+fn select_call_filter(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<jqf_data::CountFilter> {
+    let ProgramNode::Call { overload, args, .. } = &nodes[id.index()] else {
+        return None;
+    };
+    if overload.get() != jqf_builtins::registry::builtins::id::SELECT || args.len() != 1 {
+        return None;
+    }
+    let (test, key) = crate::analysis::count::admitted_predicate(nodes, args[0])?;
+    Some(jqf_data::CountFilter {
+        path: alloc::vec![jqf_data::CountStep::ObjectKey(key)],
+        test,
+    })
+}
+
+fn stage_each_path(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<(Vec<CountStep>, Option<SliceRange>)> {
+    let ProgramNode::Stage {
+        start: StageStart::Current,
+        steps,
+    } = &nodes[id.index()]
+    else {
+        return None;
+    };
+    let boundary = steps
+        .iter()
+        .position(|step| matches!(step.access(), StepAccess::Each))?;
+    if steps[boundary].is_optional() {
+        return None;
+    }
+    // Residual steps after Each on the same stage are a fused probe; this row
+    // wants select as a separate Call.
+    if !steps[boundary + 1..].is_empty() {
+        return None;
+    }
+    container_path_and_range(steps, boundary)
 }
 
 /// Unwrap `[…]`, then the `limit`/`nth` Bind+Conditional or the `first`
@@ -492,14 +588,7 @@ fn fan_out_shape(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<FanOutShape
                     }
                     (ElementProbe::Length, None)
                 }
-                ProgramNode::ConstructObject { members } => {
-                    if !trailing.is_empty() {
-                        return None;
-                    }
-                    let fields = static_construct_fields(nodes, members)?;
-                    (ElementProbe::Path(Vec::new()), Some(fields))
-                }
-                _ => return None,
+                _ => construct_plan(nodes, *body, &trailing)?,
             };
             Some((path, range, probe, construct))
         }
@@ -507,10 +596,59 @@ fn fan_out_shape(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<FanOutShape
     }
 }
 
+/// `{static keys}` as a fan-out body, including after construct fusion hoists a
+/// shared member prefix (`{id: .id}` → `.id | {id: .}`). Empty field paths
+/// (the whole element) stay declined unless a hoisted prefix supplies them.
+fn construct_plan(
+    nodes: &[ProgramNode],
+    body: ProgramNodeId,
+    trailing: &[CountStep],
+) -> Option<(ElementProbe, Option<ConstructFields>)> {
+    if !trailing.is_empty() {
+        return None;
+    }
+    let fields = construct_fields_from_body(nodes, body)?;
+    Some((ElementProbe::Path(Vec::new()), Some(fields)))
+}
+
+fn construct_fields_from_body(nodes: &[ProgramNode], mut body: ProgramNodeId) -> Option<ConstructFields> {
+    let mut prefix = Vec::new();
+    loop {
+        match &nodes[body.index()] {
+            ProgramNode::ConstructObject { members } => {
+                let mut fields = static_construct_fields(nodes, members)?;
+                for (_, path) in &mut fields {
+                    let mut full = prefix.clone();
+                    full.extend(path.iter().cloned());
+                    *path = full;
+                    if path.is_empty() {
+                        return None;
+                    }
+                }
+                return Some(fields);
+            }
+            ProgramNode::FlatMap { upstream, body: inner } => {
+                let ProgramNode::Stage {
+                    start: StageStart::Current,
+                    steps,
+                } = &nodes[upstream.index()]
+                else {
+                    return None;
+                };
+                prefix.extend(static_path(steps)?);
+                body = *inner;
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Static-key object construction whose every value is a static field path
-/// over the element. Declines on a dynamic key, an optional (`?`) step, an
-/// empty value path (the whole element), or any value graph that is not one
-/// Current-start stage of Key/Index steps.
+/// over the element. Declines on a dynamic key, an optional (`?`) step, or a
+/// value graph that is not one Current-start stage of Key/Index steps. An
+/// empty value path (identity after a construct-prefix hoist) is allowed
+/// here; [`construct_fields_from_body`] declines if the path is still empty
+/// after prepending the hoist.
 fn static_construct_fields(nodes: &[ProgramNode], members: &[ObjectMemberNode]) -> Option<ConstructFields> {
     if members.is_empty() {
         return None;
@@ -526,9 +664,6 @@ fn static_construct_fields(nodes: &[ProgramNode], members: &[ObjectMemberNode]) 
         else {
             return None;
         };
-        if steps.is_empty() {
-            return None;
-        }
         let path = static_path(steps)?;
         fields.push((key, path));
     }
@@ -813,9 +948,38 @@ mod tests {
         assert_eq!(collected, streaming);
         assert!(collect("[.catalog[] | .id]"));
         assert!(!collect(".catalog[] | .id"));
-        // Collect of a constructed object is a second publication law.
-        assert!(demand("[.catalog[] | {id}]").is_none());
-        assert!(!collect("[.catalog[] | {id}]"));
+        let constructed = demand("[.catalog[] | {id}]").expect("collected construct");
+        assert_eq!(constructed.path, vec![key("catalog")]);
+        assert!(collect("[.catalog[] | {id}]"));
+        let fields = compiled_fields("[.catalog[] | {id}]").expect("construct fields");
+        assert_eq!(fields, vec![(alloc::string::String::from("id"), vec![key("id")])]);
+    }
+
+    #[test]
+    fn prefix_piped_map_is_the_collected_fan_out() {
+        let mapped = demand(".catalog | map(.name)").expect("PATH|map is a collected fan-out");
+        let collected = demand("[.catalog[] | .name]").expect("collected fan-out");
+        assert_eq!(mapped, collected);
+        assert!(collect(".catalog | map(.name)"));
+        assert_eq!(mapped.path, vec![key("catalog")]);
+        assert_eq!(mapped.probe, ElementProbe::Path(vec![key("name")]));
+        assert!(mapped.range.is_none());
+
+        // Nested prefix.
+        let d = demand(".users | map(.profile.department)").expect("nested probe");
+        assert_eq!(d.path, vec![key("users")]);
+        assert_eq!(d.probe, ElementProbe::Path(vec![key("profile"), key("department")]));
+
+        let mapped_obj = demand(".catalog | map({id, name})").expect("PATH|map construct");
+        assert_eq!(mapped_obj.path, vec![key("catalog")]);
+        assert!(collect(".catalog | map({id, name})"));
+        let fields = compiled_fields(".catalog | map({id, name})").expect("map construct fields");
+        assert_eq!(fields.len(), 2);
+        let filtered_map = demand(".catalog | map(select(.id > 1))").expect("map(select) collect");
+        assert!(filtered_map.filter.is_some());
+        assert_eq!(filtered_map.path, vec![key("catalog")]);
+        assert!(demand(".catalog | map(.items[])").is_none());
+        assert!(demand(".catalog? | map(.name)").is_none());
     }
 
     #[test]
@@ -850,8 +1014,20 @@ mod tests {
         assert!(demand("reduce (.catalog[] | .attrs) as $w ({}; .[$w] = 1)").is_none());
         // foreach publishes per iteration; not a row.
         assert!(demand("foreach .catalog[] as $x (0; . + 1)").is_none());
-        // select residuals.
-        assert!(demand(".catalog[] | select(.id > 1) | .name").is_none());
+        // skip is not a prefix cut: the dropped head still has to be
+        // produced, so the floor serves it.
+        assert!(demand("skip(2; .catalog[] | .id)").is_none());
+        // Nested `.[]` is not one output per outer element.
+        assert!(demand(".catalog[] | .items[] | .name").is_none());
+        assert!(demand("[.catalog[] | .tags[]]").is_none());
+        // select residuals that are not the closed predicate.
+        assert!(demand(".catalog[] | select(.a.b) | .name").is_none());
+        let filtered = demand(".catalog[] | select(.id > 1) | .name").expect("select fan-out");
+        assert!(filtered.filter.is_some());
+        assert_eq!(filtered.probe, ElementProbe::Path(vec![key("name")]));
+        let left_nested = demand("(.catalog[] | select(.id > 1)) | .name").expect("left-nested select fan-out");
+        assert!(left_nested.filter.is_some());
+        assert_eq!(left_nested.probe, ElementProbe::Path(vec![key("name")]));
         // Dynamic object keys, optional probes, and values that are not a
         // static field path decline the construct row.
         assert!(demand(".catalog[] | {(.k): .v}").is_none());

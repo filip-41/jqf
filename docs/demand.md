@@ -16,12 +16,13 @@ contract, the detail under
 1. **The projection class** (`Structure < Fields(S) < Subtree`) says how much of
    each streamed element the residual consumes. Compile-time, per element
    boundary.
-2. **The document demands** are the count/element questions a recognizer proved
-   (`[C[]] | length` needs a count, not elements). Derived once at compile,
-   consulted per record.
+2. **The document demands** are the count/element/type questions a recognizer
+   proved (`[C[]] | length` needs a count, not elements; bare `type` is a
+   kind-only read). Derived once at compile, consulted per record.
 3. **The codec demand clauses** are the format-neutral vocabulary a bind carries
-   (semantic root, value shape). A clause no route can serve is a **hard
-   mismatch at bind**, not a silent repair.
+   (semantic root, value shape, catalogued `.@` facts). A clause no route can
+   serve is a **hard mismatch at bind**, not a silent repair. Markup `.&name`
+   attributes bind through absence (JSON) or the whole-document fallback.
 
 ## Filter pushdown
 
@@ -54,13 +55,19 @@ provably never reads, as an omission hint. A codec that honours it skips
 Which codecs can defer is a per-codec fact, owned by the codec's own module:
 
 - **JSON** defers hardest. A lazy frontier leaves containers as validated spans,
-  and counts and element streams come off the
+  and counts, element streams, kind-only `type`, and `keys` come off the
   [span skeleton](document-model.md).
 - **YAML** cannot: aliases need the whole anchor history and merge keys expand
   at container close, so the graph is built eagerly. Prune hints still shrink
-  what the eager build keeps.
+  what the eager build keeps. On Exact, prune omits unread members of the
+  *located* subtree after the full graph is parsed.
+- **CBOR** and **MessagePack** honour prune on eager Whole (after every byte
+  is validated) and on Exact re-decode of the located span. Prune and lazy
+  never compose.
 - **HTML** cannot: WHATWG recovery rewrites the tree, so located authority
-  exists only after the whole recover.
+  exists only after the whole recover. After recover, empty-path `length`
+  and bare `type` may take a measure skeleton; `.[]` does not — HTML
+  measure children are NAME-only stubs.
 
 The engine never branches on which codec honoured the hint — it sees only
 `jqf-codec-core`.

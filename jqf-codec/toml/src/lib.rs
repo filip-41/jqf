@@ -233,7 +233,13 @@ pub(crate) mod tests {
         );
         let parsed = crate::grammar::parse(source, crate::provider::DialectKind::Toml10, &mut resources)?;
         let located = crate::locate::locate(&parsed.root, &[])?;
-        let (builder, root) = crate::materialize::build_located_document(&located, &parsed.names, bytes, &resources)?;
+        let (builder, root) = crate::materialize::build_located_document(
+            &located,
+            &parsed.names,
+            bytes,
+            jqf_data::BuilderCoverage::minimal_semantic(),
+            &resources,
+        )?;
         let document = builder.finish(root, &resources).map_err(crate::parse::map_data)?;
         document
             .materialize_root(&mut resources)

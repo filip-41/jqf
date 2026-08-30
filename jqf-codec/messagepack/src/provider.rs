@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use jqf_codec_core::{
     AccessGuarantees, AccessInput, AccessOutcome, AccessResult, AccessResultKind, AccessSession, CodecError,
     CodecRunContext, DiagnosticPolicy, DocumentProduct, ErasedAccessSession, InputProvider, ProviderInput,
-    RecycledSessionState, RouteDescription, RouteSlot,
+    RecycledSessionState, RouteDescription, RouteSlot, whole_document_open_plan,
 };
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, DocumentFinalizationPoll, DocumentSourceBindingPoll,
@@ -57,16 +57,20 @@ impl InputProvider for MessagepackProvider {
         if slot == DECODE_ROUTE_SLOT {
             requirement.expect_whole(AccessResultKind::CompleteDocument)?;
             let dialect = self.dialect;
-            // Same read as CBOR: a positive frontier is Some(depth), zero is None (eager). Count/element hints stay
-            // monotone and are ignored.
-            let lazy_frontier = (requirement.lazy_frontier() > 0)
-                .then(|| usize::try_from(requirement.lazy_frontier()).unwrap_or(usize::MAX));
-            let state = MessagepackDecodeSession::new(source, dialect, lazy_frontier);
+            let (lazy_frontier, count_only, prune) = whole_document_open_plan(requirement);
+            let state = MessagepackDecodeSession::new(source, dialect, lazy_frontier, prune, count_only);
             return ErasedAccessSession::try_new_source_with_route(source, crate::decode_route_id(), move || Ok(state));
         }
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
-            let session = crate::routes::NativeLocatedSession::try_new(path.steps(), origin, self.dialect)?;
+            let prune = requirement.prune().and_then(materialize::PruneLookup::from_transport);
+            let session = crate::routes::NativeLocatedSession::try_new(
+                path.steps(),
+                origin,
+                self.dialect,
+                prune,
+                requirement.type_demand(),
+            )?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::scoped_route_id(), || Ok(session));
         }
         Err(CodecError::new(jqf_codec_core::CodecFailureKind::ProviderRouteMismatch))
@@ -90,8 +94,10 @@ impl InputProvider for MessagepackProvider {
         let Some(session) = state.downcast_mut::<MessagepackDecodeSession>() else {
             return Ok(false);
         };
-        session.lazy_frontier = (requirement.lazy_frontier() > 0)
-            .then(|| usize::try_from(requirement.lazy_frontier()).unwrap_or(usize::MAX));
+        let (lazy_frontier, count_only, prune) = whole_document_open_plan(requirement);
+        session.lazy_frontier = lazy_frontier;
+        session.count_only = count_only;
+        session.prune = prune;
         session.try_reset();
         Ok(true)
     }
@@ -109,6 +115,10 @@ pub(crate) struct MessagepackDecodeSession {
     dialect: Dialect,
     /// Container-span frontier depth, when the requirement asked for deferral. `None` is the eager build.
     lazy_frontier: Option<usize>,
+    /// Kept-subtree prune on the eager path. `None` when lazy or when the hint keeps everything.
+    prune: Option<materialize::PruneLookup>,
+    /// Empty-path count: the root container is built and member payloads stay unbuilt after every byte is validated.
+    count_only: bool,
     phase: Phase,
     builder: Option<AccountedDocumentBuilder<'static>>,
     root: Option<NodeId>,
@@ -119,10 +129,18 @@ pub(crate) struct MessagepackDecodeSession {
 }
 
 impl MessagepackDecodeSession {
-    pub(crate) fn new(_source: jqf_source::ResolvedSource<'_>, dialect: Dialect, lazy_frontier: Option<usize>) -> Self {
+    pub(crate) fn new(
+        _source: jqf_source::ResolvedSource<'_>,
+        dialect: Dialect,
+        lazy_frontier: Option<usize>,
+        prune: Option<materialize::PruneLookup>,
+        count_only: bool,
+    ) -> Self {
         Self {
             dialect,
             lazy_frontier,
+            prune,
+            count_only,
             phase: Phase::Scan,
             builder: None,
             root: None,
@@ -192,6 +210,8 @@ impl AccessSession for MessagepackDecodeSession {
                         self.dialect,
                         source,
                         self.lazy_frontier,
+                        self.prune.as_ref(),
+                        self.count_only,
                         context.resources(),
                     )?;
                     self.builder = Some(builder);

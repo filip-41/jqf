@@ -6,98 +6,210 @@
   "quick_sizes": [100],
   "widths": ["narrow", "broad"],
   "exclude": [
-    {
-      "id": "users-broad-50k-identity",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-100k-slice-length",
-      "tool": "yq",
-      "why": "yq ~15× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-100k-first-id",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-100k-count",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-25k-identity",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-50k-slice-length",
-      "tool": "yq",
-      "why": "yq ~15× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-50k-count",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-50k-first-id",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-200k-count",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-200k-identity",
-      "tool": "yq",
-      "why": "yq ~10× slower than the rest of the panel on this cell"
-    },
-    {
-      "id": "users-broad-200k-slice-length",
-      "tool": "yq",
-      "why": "yq ~15× slower than the rest of the panel on this cell"
-    }
+    { "id": "users-broad-50k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-slice-length", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-25k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-slice-length", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-slice-length", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-25k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-25k-high-score", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-25k-filter-active", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-high-score", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-50k-filter-active", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-high-score", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-100k-filter-active", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-high-score", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "users-broad-200k-filter-active", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-1k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-5k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-25k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-50k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-broad-100k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-5k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-25k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-50k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-ids", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-nested-dept", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-descent", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-identity", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-exact-name", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-keys-publish", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "toml-narrow-100k-type-path", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-25k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-25k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-25k-high-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-50k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-50k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-50k-high-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-100k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-100k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-100k-high-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-200k-first-id", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-200k-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" },
+    { "id": "csv-broad-200k-high-count", "tool": "yq", "why": "yq is much slower than the rest of the panel on this cell" }
   ],
   "disagree": [
-    {
-      "id": "users-broad-100-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-1k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-5k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-25k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-50k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-100k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    },
-    {
-      "id": "users-broad-200k-identity",
-      "tool": "gojq",
-      "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match"
-    }
+    { "id": "users-broad-100-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-1k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-5k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-25k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-50k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-100k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-200k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-100-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-1k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-5k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-25k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-50k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-100k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-200k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-100-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-1k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-5k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-25k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-50k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-100k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "ndjson-broad-200k-select-score", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-100-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-1k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-5k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-25k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-50k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "yaml-broad-100k-identity", "tool": "gojq", "why": "gojq writes object keys in sorted order; compact bytes differ, JSON values match" },
+    { "id": "users-broad-100-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-1k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-5k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-25k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-50k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-100k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-broad-200k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-100-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-1k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-5k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-25k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-50k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "yaml-broad-100k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-100-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-1k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-5k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-25k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-50k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "toml-broad-100k-keys-publish", "tool": "yq", "why": "yq emits object keys in insertion order; jq/jqf keys are sorted" },
+    { "id": "users-narrow-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-narrow-200k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-narrow-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-narrow-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "users-broad-200k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "yaml-broad-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-100-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-1k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-5k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-25k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-50k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" },
+    { "id": "toml-broad-100k-type-path", "tool": "yq", "why": "yq prints YAML type tags (!!seq) instead of jq kinds (array)" }
   ],
   "pgo_width": "broad",
   "tools": {
@@ -107,10 +219,7 @@
     "jaq": { "compact": ["-c"] },
     "gojq": { "compact": ["-c"] },
     "yq": { "compact": ["-p=json", "-o=json", "-I=0"] },
-    "dasel": {
-      "compact": ["query", "-o", "json", "--compact", "--config", "/dev/null"],
-      "stdin": true
-    },
+    "dasel": { "compact": ["query", "-o", "json", "--compact", "--config", "/dev/null"], "stdin": true },
     "mlr": { "compact": [], "words": true }
   },
   "kinds": {
@@ -121,48 +230,23 @@
         { "id": "first-id", "expr": ".users[0].id", "pgo": true },
         { "id": "slice-length", "expr": ".users[{lo}:{hi}] | length", "yq": ".users.[{lo}:{hi}] | length", "pgo": true },
         { "id": "count", "expr": ".users | length", "pgo": true },
-        {
-          "id": "filter-active",
-          "expr": ".users | map(select(.active == true)) | length",
-          "pgo": true
-        },
+        { "id": "filter-active", "expr": ".users | map(select(.active == true)) | length", "pgo": true },
         { "id": "project-names", "expr": ".users | map(.name)" },
-        {
-          "id": "reduce-score",
-          "expr": "reduce .users[] as $u (0; . + $u.score)",
-          "panel": ["jqf", "jq", "jaq", "gojq"],
-          "pgo": true
-        },
+        { "id": "reduce-score", "expr": "reduce .users[] as $u (0; . + $u.score)", "panel": ["jqf", "jq", "jaq", "gojq"], "pgo": true },
         { "id": "ids", "expr": "[.users[].id]", "pgo": true },
         { "id": "sort-last", "expr": ".users | sort_by(.score) | .[-1].id", "pgo": true },
-        {
-          "id": "any-high",
-          "expr": ".users | any(.score > 200)",
-          "panel": ["jqf", "jq", "jaq", "gojq"],
-          "pgo": true
-        },
-        {
-          "id": "project-pair",
-          "expr": ".users | map({{id, score}})",
-          "yq": ".users | map({{\"id\": .id, \"score\": .score}})"
-        },
-        {
-          "id": "sum-score",
-          "expr": "[.users[].score] | add",
-          "panel": ["jqf", "jq", "jaq", "gojq"],
-          "pgo": true
-        },
+        { "id": "any-high", "expr": ".users | any(.score > 200)", "panel": ["jqf", "jq", "jaq", "gojq"], "pgo": true },
+        { "id": "project-pair", "expr": ".users | map({{id, score}})", "yq": ".users | map({{\"id\": .id, \"score\": .score}})" },
+        { "id": "sum-score", "expr": "[.users[].score] | add", "panel": ["jqf", "jq", "jaq", "gojq"], "pgo": true },
         { "id": "unique-scores", "expr": "[.users[].score] | unique | length" },
         { "id": "group-mod", "expr": "[.users | group_by(.score % 10)[] | length]", "pgo": true },
         { "id": "high-score", "expr": ".users | map(select(.score > 100)) | length" },
+        { "id": "select-id-stream", "expr": ".users[] | select(.active == true) | .id", "panel": ["jqf", "jq", "jaq", "gojq"], "pgo": true },
+        { "id": "keys-publish", "expr": ".users[0] | keys", "pgo": true },
+        { "id": "type-path", "expr": ".users | type", "pgo": true },
         { "id": "reverse-id", "expr": ".users | reverse | .[0].id", "pgo": true },
         { "id": "keys-len", "expr": ".users[0] | keys | length" },
-        {
-          "id": "all-nonneg",
-          "expr": ".users | all(.score >= 0)",
-          "panel": ["jqf", "jq", "jaq", "gojq"],
-          "pgo": true
-        },
+        { "id": "all-nonneg", "expr": ".users | all(.score >= 0)", "panel": ["jqf", "jq", "jaq", "gojq"], "pgo": true },
         { "id": "max-score", "expr": ".users | map(.score) | max" },
         { "id": "nested-dept", "expr": ".users[0].profile.department", "pgo": true },
         { "id": "descent", "expr": "[..] | length", "pgo": true },
@@ -193,19 +277,12 @@
         { "id": "first-id", "expr": ".users[0].id", "dasel": "users[0].id", "pgo": true },
         { "id": "count", "expr": ".users | length", "dasel": "len(users)", "pgo": true },
         { "id": "ids", "expr": "[.users[].id]", "panel": ["jqf", "jaq", "gojq", "yq"] },
-        {
-          "id": "nested-dept",
-          "expr": ".users[0].profile.department",
-          "dasel": "users[0].profile.department",
-          "pgo": true
-        },
-        {
-          "id": "descent",
-          "expr": "[..] | length",
-          "panel": ["jqf", "jaq", "gojq", "yq"],
-          "pgo": true
-        },
-        { "id": "identity", "expr": ".", "dasel": "$this", "pgo": true }
+        { "id": "nested-dept", "expr": ".users[0].profile.department", "dasel": "users[0].profile.department", "pgo": true },
+        { "id": "descent", "expr": "[..] | length", "panel": ["jqf", "jaq", "gojq", "yq"], "pgo": true },
+        { "id": "identity", "expr": ".", "dasel": "$this", "pgo": true },
+        { "id": "exact-name", "expr": ".users[0].name", "dasel": "users[0].name", "pgo": true },
+        { "id": "keys-publish", "expr": ".users[0] | keys", "panel": ["jqf", "jaq", "gojq", "yq"], "pgo": true },
+        { "id": "type-path", "expr": ".users | type", "panel": ["jqf", "jaq", "gojq", "yq"], "pgo": true }
       ]
     },
     "toml": {
@@ -220,19 +297,12 @@
         { "id": "first-id", "expr": ".users[0].id", "dasel": "users[0].id", "pgo": true },
         { "id": "count", "expr": ".users | length", "dasel": "len(users)", "pgo": true },
         { "id": "ids", "expr": "[.users[].id]", "panel": ["jqf", "jaq", "yq"] },
-        {
-          "id": "nested-dept",
-          "expr": ".users[0].profile.department",
-          "dasel": "users[0].profile.department",
-          "pgo": true
-        },
-        {
-          "id": "descent",
-          "expr": "[..] | length",
-          "panel": ["jqf", "jaq", "yq"],
-          "pgo": true
-        },
-        { "id": "identity", "expr": ".", "dasel": "$this", "pgo": true }
+        { "id": "nested-dept", "expr": ".users[0].profile.department", "dasel": "users[0].profile.department", "pgo": true },
+        { "id": "descent", "expr": "[..] | length", "panel": ["jqf", "jaq", "yq"], "pgo": true },
+        { "id": "identity", "expr": ".", "dasel": "$this", "pgo": true },
+        { "id": "exact-name", "expr": ".users[0].name", "dasel": "users[0].name", "pgo": true },
+        { "id": "keys-publish", "expr": ".users[0] | keys", "panel": ["jqf", "jaq", "yq"], "pgo": true },
+        { "id": "type-path", "expr": ".users | type", "panel": ["jqf", "jaq", "yq"], "pgo": true }
       ]
     },
     "csv": {
@@ -241,33 +311,10 @@
       "jqf_extra": ["-n", "--input-format", "csv", "--input-dialect", "csv.utf8-header@1"],
       "yq_compact": ["-p=csv", "-o=json", "-I=0"],
       "queries": [
-        {
-          "id": "first-id",
-          "expr": "input.id | tonumber",
-          "yq": ".[0].id",
-          "mlr": "--icsv --onidx head -n 1 then cut -f id",
-          "pgo": true
-        },
-        {
-          "id": "count",
-          "expr": "reduce inputs as $r (0; . + 1)",
-          "yq": "length",
-          "mlr": "--icsv --onidx count",
-          "pgo": true
-        },
-        {
-          "id": "sum-score",
-          "expr": "reduce inputs as $r (0; . + ($r.score | tonumber))",
-          "panel": ["jqf", "mlr"],
-          "mlr": "--icsv --onidx stats1 -a sum -f score",
-          "pgo": true
-        },
-        {
-          "id": "high-count",
-          "expr": "reduce inputs as $r (0; . + (if ($r.score | tonumber) > 100 then 1 else 0 end))",
-          "yq": "map(select(.score > 100)) | length",
-          "mlr": "--icsv --onidx filter '$score > 100' then count"
-        }
+        { "id": "first-id", "expr": "input.id | tonumber", "yq": ".[0].id", "mlr": "--icsv --onidx head -n 1 then cut -f id", "pgo": true },
+        { "id": "count", "expr": "reduce inputs as $r (0; . + 1)", "yq": "length", "mlr": "--icsv --onidx count", "pgo": true },
+        { "id": "sum-score", "expr": "reduce inputs as $r (0; . + ($r.score | tonumber))", "panel": ["jqf", "mlr"], "mlr": "--icsv --onidx stats1 -a sum -f score", "pgo": true },
+        { "id": "high-count", "expr": "reduce inputs as $r (0; . + (if ($r.score | tonumber) > 100 then 1 else 0 end))", "yq": "map(select(.score > 100)) | length", "mlr": "--icsv --onidx filter '$score > 100' then count" }
       ]
     }
   }

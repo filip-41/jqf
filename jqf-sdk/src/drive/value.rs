@@ -424,6 +424,27 @@ pub(crate) fn execute_value_document<'a, Sink: ItemSink>(
                 access: access_report,
             });
         }
+        if let Some(keys) = keys_answer(&engine, program, resources) {
+            encode_one(
+                &factory,
+                &mut reused_encoder,
+                &EngineResult::owned(keys),
+                0,
+                encoding_policy,
+                framing,
+                resources,
+                sink,
+                &mut publication,
+            )?;
+            return Ok(PipelineReport {
+                publication: PublicationStatus::Complete {
+                    items: 1,
+                    published_bytes: publication.published_bytes,
+                },
+                disposition: PipelineDisposition::Emitted,
+                access: access_report,
+            });
+        }
         // Plan 133 R6's ELEMENT-ITERATION fast-path: a fan-out/fold program's
         // values are served by the document-core consumer iterating the lazy
         // document's span skeleton — no executor run, no whole-tree
@@ -1083,6 +1104,86 @@ pub(crate) fn count_answer(
     }
 }
 
+fn navigate_count_path<'d, 's>(
+    mut view: jqf_data::ValueView<'d, 's>,
+    path: &[jqf_data::CountStep],
+) -> Option<jqf_data::ValueView<'d, 's>> {
+    for step in path {
+        match step {
+            jqf_data::CountStep::ObjectKey(key) => {
+                let object = view.object().ok().flatten()?;
+                view = object.get(key.as_str())?;
+            }
+            jqf_data::CountStep::ArrayIndex(index) => {
+                let array = view.array().ok().flatten()?;
+                let resolved = jqf_data::resolve_index(array.len(), *index)?;
+                view = array.get(resolved)?;
+            }
+        }
+    }
+    Some(view)
+}
+
+/// Keys-publish fast-path: `keys` / `PATH | keys` answered from the document
+/// projection without running the residual. Decline to the floor when the
+/// path is missing or not a container.
+pub(crate) fn keys_answer(
+    outcome: &CodecInputOutcome<'_>,
+    program: &CompiledProgram,
+    resources: &mut ResourceContext<'_>,
+) -> Option<Value> {
+    if resources.mismatch_policy() != jqf_resource::policy::MismatchPolicy::Lenient {
+        return None;
+    }
+    let path = program.keys_demand()?;
+    let CodecInputOutcome::Result(EngineResult::Located(located)) = outcome else {
+        return None;
+    };
+    let document = located.product().document();
+    let Ok(node_view) = document.value_view(located.node()) else {
+        return None;
+    };
+    // Exact already landed on the keys container. Re-walking `path` from the
+    // document root can land on a self-similar nested copy. Navigate only when
+    // the record is still the document root (a whole-document locate).
+    let view = if located.node() == document.root_handle() && !path.is_empty() {
+        navigate_count_path(node_view, path)?
+    } else {
+        node_view
+    };
+    let mut values: Vec<Value> = Vec::new();
+    if let Ok(Some(object)) = view.object() {
+        let mut names: Vec<std::string::String> = Vec::new();
+        for entry in object.iter() {
+            let Ok(entry) = entry else {
+                return None;
+            };
+            names.push(std::string::String::from(entry.key()));
+        }
+        names.sort_unstable();
+        for name in names {
+            let Ok(value) = Value::try_string(&name) else {
+                return None;
+            };
+            values.push(value);
+        }
+    } else if let Ok(Some(array)) = view.array() {
+        for index in 0..array.len() {
+            let Ok(value) = count_value(index as u64) else {
+                return None;
+            };
+            values.push(value);
+        }
+    } else {
+        let _ = resources;
+        return None;
+    }
+    match jqf_data::Array::try_from_vec(values) {
+        Ok(array) => Some(Value::Array(array)),
+        Err(_) => None,
+    }
+}
+
 /// Plan 133 R6's element-iteration fast-path verdict.
 pub(crate) enum ElementAnswer {
     /// A [`jqf_data::ElementRow::FanOut`] demand: every element's probe value
@@ -1146,6 +1247,7 @@ pub(crate) fn element_answer<Sink: ItemSink>(
                     located.product().document(),
                     demand,
                     fields,
+                    program.element_collect(),
                     factory,
                     reused_encoder,
                     encoding_policy,
@@ -1333,12 +1435,14 @@ fn check_only(_value: &Value, _resources: &mut ResourceContext<'_>) -> Result<()
 
 #[allow(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "mirrors element_answer's explicit encoder/sink/publication ownership"
 )]
 fn construct_fan_out<Sink: ItemSink>(
     document: &jqf_data::Document<'_>,
     demand: &jqf_data::ElementDemand,
     fields: &[(std::string::String, Vec<jqf_data::CountStep>)],
+    collect: bool,
     factory: &jqf_codec_core::ErasedEncoderFactory,
     reused_encoder: &mut ReusableEncoderSession,
     encoding_policy: OrderedEncodingPolicy<'_>,
@@ -1347,22 +1451,74 @@ fn construct_fan_out<Sink: ItemSink>(
     sink: &mut Sink,
     publication: &mut Publication,
 ) -> Result<ElementAnswer, PipelineError<Sink::Error>> {
-    // Check pass: probe EVERY field's FULL static path before a byte is
-    // published — the construct walk reads all of them per element, so a
-    // path that fails to resolve on any in-range element (a number element,
-    // a type-mismatched member) must decline here, while nothing is on the
-    // sink yet and the floor rerun stays duplicate-free. A Path probe
-    // navigates spans without materializing them: cheap.
+    // Streaming publishes per element, so a later field-path miss would
+    // already have bytes on the sink; probe every field first. Collect
+    // encodes once after the walk, so a miss declines with an empty sink
+    // and the floor rerun stays duplicate-free. A Path probe navigates
+    // spans without materializing them: cheap.
     if fields.is_empty() {
         return Ok(ElementAnswer::None);
     }
-    let mut check = demand.clone();
-    for (_, path) in fields {
-        check.probe = jqf_data::ElementProbe::Path(path.clone());
-        match document.visit_elements(&check, resources, &mut check_only) {
-            Ok(jqf_data::ElementVerdict::Completed(_)) => {}
-            Ok(jqf_data::ElementVerdict::Decline) | Err(_) => return Ok(ElementAnswer::None),
+    if !collect {
+        let mut check = demand.clone();
+        for (_, path) in fields {
+            check.probe = jqf_data::ElementProbe::Path(path.clone());
+            match document.visit_elements(&check, resources, &mut check_only) {
+                Ok(jqf_data::ElementVerdict::Completed(_)) => {}
+                Ok(jqf_data::ElementVerdict::Decline) | Err(_) => return Ok(ElementAnswer::None),
+            }
         }
+    }
+
+    if collect {
+        if fields
+            .iter()
+            .all(|(_, path)| matches!(path.as_slice(), [jqf_data::CountStep::ObjectKey(_)]))
+        {
+            return collect_construct_columns(
+                document,
+                demand,
+                fields,
+                factory,
+                reused_encoder,
+                encoding_policy,
+                framing,
+                resources,
+                sink,
+                publication,
+            );
+        }
+        let mut values: std::vec::Vec<Value> = std::vec::Vec::new();
+        let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
+            let Some(constructed) = construct_static_object(value, fields) else {
+                return Err(DataError::InvalidDocument);
+            };
+            if values.try_reserve(1).is_err() {
+                return Err(DataError::InvalidDocument);
+            }
+            values.push(constructed);
+            Ok(())
+        };
+        return match document.visit_elements(demand, resources, &mut visitor) {
+            Ok(jqf_data::ElementVerdict::Completed(_)) => {
+                let Ok(array) = jqf_data::Array::try_from_vec(values) else {
+                    return Ok(ElementAnswer::None);
+                };
+                encode_one(
+                    factory,
+                    reused_encoder,
+                    &EngineResult::owned(Value::Array(array)),
+                    0,
+                    encoding_policy,
+                    framing,
+                    resources,
+                    sink,
+                    publication,
+                )?;
+                Ok(ElementAnswer::FanOut { items: 1 })
+            }
+            Ok(jqf_data::ElementVerdict::Decline) | Err(_) => Ok(ElementAnswer::None),
+        };
     }
 
     let mut items = 0u64;
@@ -1412,6 +1568,88 @@ fn construct_fan_out<Sink: ItemSink>(
             },
         )))),
     }
+}
+
+/// Collected `{static: .static_key, …}`: one Path-probe visit per field so the
+/// JSON span leaf extracts those members instead of rebuilding every element.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors construct_fan_out's encoder/sink/publication ownership"
+)]
+fn collect_construct_columns<Sink: ItemSink>(
+    document: &jqf_data::Document<'_>,
+    demand: &jqf_data::ElementDemand,
+    fields: &[(std::string::String, Vec<jqf_data::CountStep>)],
+    factory: &jqf_codec_core::ErasedEncoderFactory,
+    reused_encoder: &mut ReusableEncoderSession,
+    encoding_policy: OrderedEncodingPolicy<'_>,
+    framing: FacadeFraming<'_>,
+    resources: &mut ResourceContext<'_>,
+    sink: &mut Sink,
+    publication: &mut Publication,
+) -> Result<ElementAnswer, PipelineError<Sink::Error>> {
+    let mut columns: std::vec::Vec<std::vec::Vec<Value>> = std::vec::Vec::new();
+    if columns.try_reserve(fields.len()).is_err() {
+        return Ok(ElementAnswer::None);
+    }
+    for (_, path) in fields {
+        let mut field_demand = demand.clone();
+        field_demand.probe = jqf_data::ElementProbe::Path(path.clone());
+        let mut column: std::vec::Vec<Value> = std::vec::Vec::new();
+        let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
+            if column.try_reserve(1).is_err() {
+                return Err(DataError::InvalidDocument);
+            }
+            column.push(value.clone());
+            Ok(())
+        };
+        match document.visit_elements(&field_demand, resources, &mut visitor) {
+            Ok(jqf_data::ElementVerdict::Completed(_)) => columns.push(column),
+            Ok(jqf_data::ElementVerdict::Decline) | Err(_) => return Ok(ElementAnswer::None),
+        }
+    }
+    let Some(width) = columns.first().map(std::vec::Vec::len) else {
+        return Ok(ElementAnswer::None);
+    };
+    if columns.iter().any(|column| column.len() != width) {
+        return Ok(ElementAnswer::None);
+    }
+    let mut values: std::vec::Vec<Value> = std::vec::Vec::new();
+    if values.try_reserve(width).is_err() {
+        return Ok(ElementAnswer::None);
+    }
+    for row in 0..width {
+        let Ok(mut builder) = ObjectBuilder::try_with_capacity(fields.len()) else {
+            return Ok(ElementAnswer::None);
+        };
+        for (column, (key, _)) in columns.iter().zip(fields) {
+            let Ok(key) = ObjectKey::try_from_str(key) else {
+                return Ok(ElementAnswer::None);
+            };
+            if builder.try_insert_or_replace(key, column[row].clone()).is_err() {
+                return Ok(ElementAnswer::None);
+            }
+        }
+        let Ok(object) = builder.try_finish() else {
+            return Ok(ElementAnswer::None);
+        };
+        values.push(Value::Object(object));
+    }
+    let Ok(array) = jqf_data::Array::try_from_vec(values) else {
+        return Ok(ElementAnswer::None);
+    };
+    encode_one(
+        factory,
+        reused_encoder,
+        &EngineResult::owned(Value::Array(array)),
+        0,
+        encoding_policy,
+        framing,
+        resources,
+        sink,
+        publication,
+    )?;
+    Ok(ElementAnswer::FanOut { items: 1 })
 }
 
 fn construct_static_object(

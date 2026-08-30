@@ -17,16 +17,16 @@ use crate::{
 /// A caller-held recycled access session for adjacent-value decoding.
 ///
 /// One instance is carried across a whole adjacent-value sequence (NDJSON and friends). It retains the previous value's
-/// session carrier and the residual requirement derived from the bound handle, so each successive
-/// [`crate::ErasedProvider::open_at_reusing`] resets the retained workspaces instead of allocating and dropping a
-/// session per value.
+/// session carrier so each successive [`crate::ErasedProvider::open_at_reusing`] resets the retained workspaces instead
+/// of allocating and dropping a session per value. The residual requirement is rebuilt from the live handle each open
+/// — count, type, and element hints are not recycle keys, so a cached residual would reopen under the previous value's
+/// profile.
 ///
 /// The retained carrier stays ledger-visible for as long as this slot lives: it is retained capacity, not per-value
 /// working charge, bounded by one session — never by the number of values decoded through the slot.
 #[derive(Debug, Default)]
 pub struct ReusableAccessSession<'source> {
     session: Option<ErasedAccessSession<'source>>,
-    residual: Option<AccessRequirement>,
     key: Option<(u64, RouteSlot, ResidualKey)>,
 }
 
@@ -36,33 +36,14 @@ impl ReusableAccessSession<'_> {
     pub const fn new() -> Self {
         Self {
             session: None,
-            residual: None,
             key: None,
         }
     }
 
-    /// Drops the recycled session and its cached residual requirement, releasing their retained charge before the
-    /// request ends.
+    /// Drops the recycled session, releasing its retained charge before the request ends.
     pub fn release(&mut self) {
         self.session = None;
-        self.residual = None;
         self.key = None;
-    }
-
-    /// Takes the cached residual requirement when it belongs to this exact provider, slot, and requirement identity,
-    /// discarding a stale session otherwise.
-    fn take_matching_residual(
-        &mut self,
-        provider_id: u64,
-        slot: RouteSlot,
-        key: ResidualKey,
-    ) -> Option<AccessRequirement> {
-        if self.key == Some((provider_id, slot, key)) {
-            self.residual.take()
-        } else {
-            self.release();
-            None
-        }
     }
 }
 
@@ -181,13 +162,15 @@ impl<'source> crate::ErasedProvider<'source> {
     ) -> Result<&'reuse mut ErasedAccessSession<'source>, CodecError> {
         let slot = self.validated_slot(handle)?;
         let key = handle.residual_key;
-        let residual = match reuse.take_matching_residual(self.provider_id, slot, key) {
-            Some(cached) => cached,
-            None => residual_requirement(handle.requirement, handle.adapter, resources)?,
-        };
+        // ResidualKey omits count/type/element so the same carrier can be offered across those hints; the residual
+        // itself is always rebuilt from the live handle so try_reopen_route sees the new profile and can decline.
+        if reuse.key != Some((self.provider_id, slot, key)) {
+            reuse.release();
+        }
+        let residual = residual_requirement(handle.requirement, handle.adapter, resources)?;
         // The cached session stops matching until the reopen and the seal below both succeed: a failure between here
         // and the restore at the end must leave nothing half-reopened under a still-matching key.
-        let matched = reuse.key == Some((self.provider_id, slot, key));
+        let matched = reuse.session.is_some();
         reuse.key = None;
         let recycled = match reuse.session.as_mut().filter(|_| matched) {
             Some(session) => self
@@ -212,7 +195,6 @@ impl<'source> crate::ErasedProvider<'source> {
             self.seal_opened(&mut session, handle, slot, resources)?;
             reuse.session.insert(session)
         };
-        reuse.residual = Some(residual);
         reuse.key = Some((self.provider_id, slot, key));
         Ok(session)
     }
@@ -490,18 +472,14 @@ fn plan_compatible(
         AccessAdapter::None => true,
     };
     structural
-        && demand_implies_residual(bundle.demand(), requirement.demand(), absence)
+        && demand_implies_residual(bundle.demand(), requirement.demand())
         && bundle.validation() == requirement.validation()
         && bundle.diagnostics() == requirement.diagnostics()
 }
 
-fn demand_implies_residual(
-    available: &crate::CodecDemand,
-    required: &crate::CodecDemand,
-    omit_attributes: bool,
-) -> bool {
+fn demand_implies_residual(available: &crate::CodecDemand, required: &crate::CodecDemand) -> bool {
     required.clauses().iter().all(|needle| {
-        omit_attributes && matches!(needle, crate::DemandClause::Attribute(_))
+        matches!(needle, crate::DemandClause::Attribute(_))
             || available.clauses().iter().any(|candidate| candidate == needle)
     })
 }
@@ -607,7 +585,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use jqf_data::{
         AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, DiagnosticCoverage,
-        DocumentCapabilityFamily, ExpandedName,
+        DocumentCapabilityFamily, ExpandedName, FactKindId, FactRoleId,
     };
     use jqf_resource::{ResourceContext, WorkAdmission};
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -968,6 +946,7 @@ mod tests {
             range: None,
             probe: jqf_data::ElementProbe::Length,
             increment: None,
+            filter: None,
         };
         let requirement = exact_source_requirement(&resources, false, DiagnosticPolicy::ErrorsOnly, false)
             .with_lazy_frontier(7)
@@ -1328,6 +1307,73 @@ mod tests {
             AccessAdapter::CompleteDocumentExactWithAttributeAbsence,
             false,
         ));
+    }
+
+    #[test]
+    fn production_table_advertises_catalogued_facts_and_falls_back_for_attributes() {
+        let resources = resources();
+        let routes = RouteDescription::try_standard_document_table(
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("table");
+        let path = ExactPath::try_new(&resources);
+        let footprint = AccessFootprint::try_exact(path, &resources);
+        let mut demand = CodecDemand::try_new(&resources);
+        let kind = FactKindId::try_new("comment").expect("kind");
+        let role = FactRoleId::try_new("comment").expect("role");
+        demand
+            .try_insert(&DemandClause::AttachedFact { kind, role })
+            .expect("insert");
+        let requirement = AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        let handle = bind_route(1, &routes, false, &requirement).expect("catalogued fact");
+        assert_eq!(handle.slot, RouteSlot::new(1));
+        assert_eq!(handle.adapter, AccessAdapter::None);
+
+        let path = ExactPath::try_new(&resources);
+        let footprint = AccessFootprint::try_exact(path, &resources);
+        let mut demand = CodecDemand::try_new(&resources);
+        let kind = FactKindId::try_new("not-a-catalog-role").expect("kind");
+        let role = FactRoleId::try_new("not-a-catalog-role").expect("role");
+        demand
+            .try_insert(&DemandClause::AttachedFact { kind, role })
+            .expect("insert");
+        let requirement = AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        assert!(matches!(
+            bind_route(1, &routes, false, &requirement),
+            Err(AccessBindError::HardMismatch { .. })
+        ));
+
+        let path = ExactPath::try_new(&resources);
+        let footprint = AccessFootprint::try_exact(path, &resources);
+        let mut demand = CodecDemand::try_new(&resources);
+        demand
+            .try_insert(&DemandClause::Attribute(
+                ExpandedName::try_new("", "href").expect("attribute"),
+            ))
+            .expect("insert");
+        let requirement = AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        let handle = bind_route(1, &routes, false, &requirement).expect("attribute fallback");
+        assert_eq!(handle.slot, RouteSlot::new(0));
+        assert_eq!(handle.adapter, AccessAdapter::CompleteDocumentExact);
     }
 
     #[test]

@@ -11,8 +11,8 @@ use jqf_codec_core::{
     RecycledSessionState, RouteDescription, RouteSlot,
 };
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedDocumentFinalizer, DocumentFinalizationPoll, DocumentSourceBindingPoll,
-    DocumentSourceBindingStage, NodeId,
+    AccountedDocumentBuilder, AccountedDocumentFinalizer, BuilderCoverage, DocumentFinalizationPoll,
+    DocumentSourceBindingPoll, DocumentSourceBindingStage, NodeId,
 };
 use jqf_resource::ResourceContext;
 
@@ -70,7 +70,8 @@ impl InputProvider for FlatProvider {
         }
         let source = input.source();
         let grammar = self.grammar;
-        let state = FlatDecodeSession::new(source, grammar);
+        let coverage = jqf_codec_core::required_builder_coverage(requirement);
+        let state = FlatDecodeSession::new(source, grammar, coverage);
         ErasedAccessSession::try_new_source_with_route(source, crate::decode_route_id(grammar), move || Ok(state))
     }
 
@@ -92,6 +93,7 @@ impl InputProvider for FlatProvider {
         let Some(session) = state.downcast_mut::<FlatDecodeSession>() else {
             return Ok(false);
         };
+        session.coverage = jqf_codec_core::required_builder_coverage(requirement);
         session.try_reset();
         Ok(true)
     }
@@ -107,6 +109,7 @@ enum Phase {
 /// The flat-config access session: one source, one document.
 pub(crate) struct FlatDecodeSession {
     grammar: Grammar,
+    coverage: BuilderCoverage,
     phase: Phase,
     builder: Option<AccountedDocumentBuilder<'static>>,
     root: Option<NodeId>,
@@ -117,9 +120,10 @@ pub(crate) struct FlatDecodeSession {
 }
 
 impl FlatDecodeSession {
-    pub(crate) fn new(_source: jqf_source::ResolvedSource<'_>, grammar: Grammar) -> Self {
+    pub(crate) fn new(_source: jqf_source::ResolvedSource<'_>, grammar: Grammar, coverage: BuilderCoverage) -> Self {
         Self {
             grammar,
+            coverage,
             phase: Phase::Scan,
             builder: None,
             root: None,
@@ -178,7 +182,8 @@ impl AccessSession for FlatDecodeSession {
                     // build; the document always carries authored spans, so the source must be sealed before it may
                     // finish.
                     let skeleton = scan::scan(source, self.grammar, context)?;
-                    let (builder, root) = materialize::build_document(&skeleton, self.grammar, context.resources())?;
+                    let (builder, root) =
+                        materialize::build_document(&skeleton, self.grammar, self.coverage, context.resources())?;
                     self.builder = Some(builder);
                     self.root = Some(root);
                     self.binding_stage = Some(DocumentSourceBindingStage::new(source).map_err(map_data)?);

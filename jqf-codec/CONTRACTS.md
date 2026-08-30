@@ -53,7 +53,10 @@ newtypes. A wrong concrete type does not compile.
 ## Hints
 
 `CodecDemand` clauses bind. Delivering more than asked is sound. Exact
-demand with no Exact slot still opens Whole.
+demand with no Exact slot still opens Whole. Catalogued `.@` attached-fact
+identities are advertised so bind does not hard-mismatch. `.&name`
+attributes are not advertised; JSON binds them through absence and markup
+formats through the whole-document fallback.
 
 ## Reuse
 

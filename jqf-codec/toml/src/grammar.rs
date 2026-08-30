@@ -21,7 +21,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use jqf_codec_core::byte_scan::{NdjsonFrame, StopSet, TomlBasicString, prefix_len};
-use jqf_codec_core::{CodecError, CodecFailureKind};
+use jqf_codec_core::{CodecError, CodecFailureKind, PRUNE_ALL, PruneLookup};
 use jqf_resource::{ResourceContext, ResourceError, ResourceLimit, WorkAdmission};
 use jqf_source::{ResolvedSource, Span};
 
@@ -245,51 +245,11 @@ pub(crate) struct TableData {
 }
 
 /// Parser-side copy of the kept-subtree prune hint.
-#[derive(Clone)]
-pub(crate) struct GrammarPrune {
-    nodes: Vec<GrammarPruneNode>,
-}
-
-#[derive(Clone)]
-struct GrammarPruneNode {
-    all: bool,
-    element: Option<u32>,
-    keys: Vec<(Box<[u8]>, u32)>,
-}
-
-/// One caller-supplied prune row before it becomes a [`GrammarPruneNode`].
-type GrammarPruneRow = (bool, Option<u32>, Vec<(Box<[u8]>, u32)>);
-
-impl GrammarPrune {
-    pub(crate) fn from_nodes(nodes: Vec<GrammarPruneRow>) -> Self {
-        Self {
-            nodes: nodes
-                .into_iter()
-                .map(|(all, element, keys)| GrammarPruneNode { all, element, keys })
-                .collect(),
-        }
-    }
-
-    fn member(&self, id: u32, name: &[u8]) -> Option<u32> {
-        if id == u32::MAX {
-            return Some(u32::MAX);
-        }
-        let node = self.nodes.get(id as usize)?;
-        if node.all {
-            return Some(u32::MAX);
-        }
-        if let Ok(position) = node.keys.binary_search_by(|(key, _)| key.as_ref().cmp(name)) {
-            Some(node.keys[position].1)
-        } else {
-            node.element.or(Some(u32::MAX))
-        }
-    }
-
-    fn element(&self, id: u32) -> u32 {
-        match self.nodes.get(id as usize) {
-            Some(node) if !node.all => node.element.unwrap_or(u32::MAX),
-            _ => u32::MAX,
-        }
+fn keep_member(lookup: &PruneLookup, id: u32, name: &[u8]) -> Option<u32> {
+    if id == PRUNE_ALL {
+        Some(PRUNE_ALL)
+    } else {
+        lookup.member_prune(id, name).or(Some(PRUNE_ALL))
     }
 }
 
@@ -642,6 +602,8 @@ pub(crate) struct Lexer<'a, 'ctx> {
     /// a String compare against every prior key.
     pub(crate) names: Vec<String>,
     pub(crate) name_ids: BTreeMap<String, u32>,
+    /// When false the walker still skips comment bytes but does not own the text.
+    pub(crate) collect_comments: bool,
 }
 
 /// What the value grammar does with what it parses.
@@ -656,7 +618,7 @@ pub(crate) enum ValueMode {
 struct Parser<'a, 'ctx, 'doc> {
     lex: Lexer<'a, 'ctx>,
     doc: &'doc mut Doc,
-    prune: Option<&'doc GrammarPrune>,
+    prune: Option<&'doc PruneLookup>,
 }
 
 /// A short-token stack buffer: number and temporal tokens are almost always a handful of bytes, so the common case
@@ -720,7 +682,7 @@ pub(crate) struct TomlGrammar {
     direct: bool,
     /// Kept-subtree prune: unread assignment values parse in Skip and are not stored. `None` keeps everything
     /// (edit/lossless and unpruned requests).
-    prune: Option<GrammarPrune>,
+    prune: Option<PruneLookup>,
 }
 
 /// One poll's outcome of the resumable grammar machine.
@@ -759,7 +721,7 @@ impl TomlGrammar {
     }
 
     /// Installs the parser-side prune hint. Edit/lossless requests leave this unset so every assignment is stored.
-    pub(crate) fn with_prune(mut self, prune: Option<GrammarPrune>) -> Self {
+    pub(crate) fn with_prune(mut self, prune: Option<PruneLookup>) -> Self {
         self.prune = prune;
         self
     }
@@ -808,6 +770,7 @@ impl TomlGrammar {
                         comments: Vec::new(),
                         names: Vec::new(),
                         name_ids: BTreeMap::new(),
+                        collect_comments: true,
                     },
                     doc: &mut self.doc,
                     prune: self.prune.as_ref(),
@@ -977,7 +940,9 @@ impl Lexer<'_, '_> {
             Some(rest) => rest,
             None => text,
         };
-        self.comments.push(text.to_owned());
+        if self.collect_comments {
+            self.comments.push(text.to_owned());
+        }
     }
 
     /// Skips whitespace, newlines, and comments between statements.
@@ -2308,10 +2273,10 @@ impl Parser<'_, '_, '_> {
             return;
         }
         let name = self.doc.name_text(key.id);
-        match prune.member(parent_prune_id, name.as_bytes()) {
+        match keep_member(prune, parent_prune_id, name.as_bytes()) {
             None => self.doc.tables[child_id as usize].pruned = true,
             Some(id) => {
-                self.doc.tables[child_id as usize].prune_id = if is_array { prune.element(id) } else { id };
+                self.doc.tables[child_id as usize].prune_id = if is_array { prune.element_prune(id) } else { id };
             }
         }
     }
@@ -2334,7 +2299,7 @@ impl Parser<'_, '_, '_> {
             return true;
         }
         let name = self.doc.name_text(path[0].id);
-        prune.member(table.prune_id, name.as_bytes()).is_some()
+        keep_member(prune, table.prune_id, name.as_bytes()).is_some()
     }
 
     fn parse_assignment(&mut self) -> Result<(), CodecError> {

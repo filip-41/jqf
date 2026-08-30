@@ -5,8 +5,8 @@
 
 use jqf_codec_core::{
     AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecFailureKind,
-    CodecRunContext, DecodeRequest, DiagnosticPolicy, EncodeItem, EncodeRequest, ExactPath, PreservationRequest,
-    ValidationMode,
+    CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, EncodeItem, EncodeRequest, ExactPath, FactIntent,
+    PreservationRequest, ValidationMode,
 };
 use jqf_data::{DialectId, FormatId, Value};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -80,7 +80,8 @@ fn located_encode(
         AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
         &resources,
     )
-    .map_err(|_| CodecFailureKind::Overflow)?;
+    .map_err(|_| CodecFailureKind::Overflow)?
+    .with_fact_intent(FactIntent::Preserve);
     let handle = provider
         .bind(&requirement)
         .map_err(|_| CodecFailureKind::RequirementMismatch)?;
@@ -165,74 +166,16 @@ fn fact_roundtrip_stable(bytes: &[u8]) {
 /// Decodes one document and returns the root's attached facts as sorted `role=payload` strings, so a test can assert
 /// the frozen names directly.
 fn root_facts(bytes: &[u8]) -> Vec<String> {
-    let decoder_registration = registration(jqf_codec_jqft::FORMAT_ID);
     let mut resources = resources();
-    let source = source(bytes);
-    let mut provider = decoder_registration
-        .decoder()
-        .expect("decoder")
-        .create_provider(
-            source,
-            DecodeRequest {
-                validation: ValidationMode::Strict,
-                diagnostics: DiagnosticPolicy::ErrorsOnly,
-                dialect: &DialectId::try_new(jqf_codec_jqft::JQFT_CANONICAL_DIALECT_ID).expect("dialect"),
-                options: None,
-                allow_adjacent_values: false,
-                value_separator: &[],
-            },
-            &mut resources,
-        )
-        .expect("provider");
     let demand = CodecDemand::try_new(&resources);
     let requirement = AccessRequirement::try_whole(
         demand,
         AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
         &resources,
     )
-    .expect("requirement");
-    let handle = provider.bind(&requirement).expect("bind");
-    let mut session = provider.open(&handle, &mut resources).expect("open");
-    let product = {
-        let mut context = CodecRunContext::new(&mut resources);
-        context.set_cooperative_credits(4_096);
-        let result = session.decode(&mut context).expect("decode");
-        let AccessOutcome::FullDocument(product) = result.into_parts().0 else {
-            panic!("not a full document");
-        };
-        product
-    };
-    let document = product.document();
-    let mut out: Vec<String> = Vec::new();
-    let mut reader = document.fact_reader(&mut resources).expect("fact reader");
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
-    let root = document.root();
-    loop {
-        let poll = reader.poll_batch(limit, &mut resources).expect("fact poll");
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    let jqf_data::LocalOwnerRef::Node(node) = fact.owner() else {
-                        continue;
-                    };
-                    if node != root {
-                        continue;
-                    }
-                    out.push(format!(
-                        "{}={}",
-                        fact.role().as_str(),
-                        fact_payload_text(&fact.payload())
-                    ));
-                }
-            }
-            jqf_data::ReaderPoll::Pending => {
-                resources.try_begin_next_cooperative_entry(4_096).expect("resume");
-            }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
-    }
-    out.sort();
-    out
+    .expect("requirement")
+    .with_fact_intent(FactIntent::Preserve);
+    root_facts_for(bytes, &requirement, &mut resources)
 }
 
 /// A compact text render of a fact payload for assertions.
@@ -592,7 +535,8 @@ fn jqfb_provenance_and_source_facts_attach() {
         AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
         &resources,
     )
-    .expect("requirement");
+    .expect("requirement")
+    .with_fact_intent(FactIntent::Preserve);
     let handle = provider.bind(&requirement).expect("bind");
     let mut session = provider.open(&handle, &mut resources).expect("open");
     let product = {
@@ -686,7 +630,8 @@ fn scoped_jqfb_as_jqft(image: &[u8], member: &str) -> Result<Vec<u8>, CodecFailu
         AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
         &resources,
     )
-    .map_err(|_| CodecFailureKind::Overflow)?;
+    .map_err(|_| CodecFailureKind::Overflow)?
+    .with_fact_intent(FactIntent::Preserve);
     let handle = provider
         .bind(&requirement)
         .map_err(|_| CodecFailureKind::RequirementMismatch)?;
@@ -770,4 +715,182 @@ fn scoped_jqfb_preserves_markup_facts_under_jqft_output() {
         scoped_text.contains("<h1 \"Title\">"),
         "scoped .doc must keep the child: {scoped_text}"
     );
+}
+
+fn root_facts_for(bytes: &[u8], requirement: &AccessRequirement, resources: &mut ResourceContext<'_>) -> Vec<String> {
+    let decoder_registration = registration(jqf_codec_jqft::FORMAT_ID);
+    let source = source(bytes);
+    let mut provider = decoder_registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source,
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(jqf_codec_jqft::JQFT_CANONICAL_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            resources,
+        )
+        .expect("provider");
+    let handle = provider.bind(requirement).expect("bind");
+    let mut session = provider.open(&handle, resources).expect("open");
+    let product = {
+        let mut context = CodecRunContext::new(resources);
+        context.set_cooperative_credits(4_096);
+        let result = session.decode(&mut context).expect("decode");
+        let AccessOutcome::FullDocument(product) = result.into_parts().0 else {
+            panic!("not a full document");
+        };
+        product
+    };
+    let document = product.document();
+    let mut out: Vec<String> = Vec::new();
+    let root = document.root();
+    for fact_id in document.owner_fact_ids(root) {
+        let fact = document.fact(*fact_id).expect("fact");
+        out.push(format!(
+            "{}={}",
+            fact.role().as_str(),
+            fact_payload_text(&fact.payload())
+        ));
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn identity_demand_does_not_attach_comment_facts() {
+    let mut resources = resources();
+    let requirement = AccessRequirement::try_whole(
+        CodecDemand::try_new(&resources),
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement");
+    let facts = root_facts_for(b"%jqft 1\n# lead\n{a: 1}\n", &requirement, &mut resources);
+    assert!(
+        !facts.iter().any(|fact| fact.starts_with("jqft.comment")),
+        "identity must skip comment facts, got {facts:?}"
+    );
+}
+
+#[test]
+fn comment_clause_attaches_comment_facts() {
+    let mut resources = resources();
+    let mut demand = CodecDemand::try_new(&resources);
+    let kind = jqf_data::FactKindId::try_new("comment").expect("kind");
+    let role = jqf_data::FactRoleId::try_new("comment").expect("role");
+    demand
+        .try_insert(&DemandClause::AttachedFact { kind, role })
+        .expect("insert");
+    let requirement = AccessRequirement::try_whole(
+        demand,
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement");
+    let facts = root_facts_for(b"%jqft 1\n# lead\n{a: 1}\n", &requirement, &mut resources);
+    assert!(
+        facts.iter().any(|fact| fact.starts_with("jqft.comment@1=")),
+        "comment clause must attach, got {facts:?}"
+    );
+}
+
+#[test]
+fn preserve_attaches_comment_facts() {
+    let mut resources = resources();
+    let requirement = AccessRequirement::try_whole(
+        CodecDemand::try_new(&resources),
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement")
+    .with_fact_intent(FactIntent::Preserve);
+    let facts = root_facts_for(b"%jqft 1\n# lead\n{a: 1}\n", &requirement, &mut resources);
+    assert!(
+        facts.iter().any(|fact| fact.starts_with("jqft.comment@1=")),
+        "Preserve must attach comment facts, got {facts:?}"
+    );
+}
+
+#[test]
+fn identity_demand_does_not_attach_markup_facts() {
+    let mut resources = resources();
+    let requirement = AccessRequirement::try_whole(
+        CodecDemand::try_new(&resources),
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement");
+    let facts = root_facts_for(b"%jqft 1\n<p \"text\">\n", &requirement, &mut resources);
+    assert!(
+        !facts.iter().any(|fact| fact.starts_with("jqft.name")),
+        "identity must skip markup facts, got {facts:?}"
+    );
+}
+
+#[test]
+fn preserve_attaches_markup_facts() {
+    let mut resources = resources();
+    let requirement = AccessRequirement::try_whole(
+        CodecDemand::try_new(&resources),
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .expect("requirement")
+    .with_fact_intent(FactIntent::Preserve);
+    let facts = root_facts_for(b"%jqft 1\n<p \"text\">\n", &requirement, &mut resources);
+    assert!(
+        facts.iter().any(|fact| fact.starts_with("jqft.name@1=")),
+        "Preserve must attach markup name facts, got {facts:?}"
+    );
+}
+
+#[test]
+fn identity_refuses_a_corrupt_fact_chunk_with_a_valid_digest() {
+    let image = located_encode(
+        b"%jqft 1\n# lead\n{a: 1}\n",
+        jqf_codec_jqft::FORMAT_ID,
+        jqf_codec_jqft::FORMAT_ID_JQFB,
+        jqf_codec_jqft::JQFB_CANONICAL_DIALECT_ID,
+        false,
+    )
+    .expect("jqfb encode");
+    let bytes = image.as_slice();
+    let footer_start = usize::try_from(u64::from_le_bytes(bytes[bytes.len() - 8..].try_into().unwrap())).unwrap();
+    let footer = &bytes[bytes.len() - footer_start..];
+    let count = usize::try_from(u64::from_le_bytes(footer[..8].try_into().unwrap())).unwrap();
+    let mut fact_offset = None;
+    let mut fact_len = 0usize;
+    let mut digest_slot = 0usize;
+    for index in 0..count {
+        let entry = &footer[8 + index * 52..8 + (index + 1) * 52];
+        let chunk_type = u32::from_le_bytes(entry[..4].try_into().unwrap());
+        if chunk_type == 0x0000_0004 {
+            fact_offset = Some(usize::try_from(u64::from_le_bytes(entry[4..12].try_into().unwrap())).unwrap());
+            fact_len = usize::try_from(u64::from_le_bytes(entry[12..20].try_into().unwrap())).unwrap();
+            digest_slot = bytes.len() - footer_start + 8 + index * 52 + 20;
+            break;
+        }
+    }
+    let fact_offset = fact_offset.expect("FACT chunk");
+    assert!(fact_len > 0, "FACT chunk must carry records");
+    let mut mutated = image.clone();
+    let at = fact_offset + fact_len - 1;
+    mutated[at] ^= 0xff;
+    let digest = blake3::hash(&mutated[fact_offset..fact_offset + fact_len]);
+    mutated[digest_slot..digest_slot + 32].copy_from_slice(digest.as_bytes());
+    let error = located_encode(
+        &mutated,
+        jqf_codec_jqft::FORMAT_ID_JQFB,
+        jqf_codec_jqft::FORMAT_ID,
+        jqf_codec_jqft::JQFT_CANONICAL_DIALECT_ID,
+        false,
+    )
+    .expect_err("identity must refuse a corrupt FACT chunk");
+    assert_eq!(error, CodecFailureKind::InvalidInput);
 }

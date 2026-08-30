@@ -15,6 +15,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use jqf_codec_core::{CodecError, CodecFailureKind};
+
+pub(crate) use jqf_codec_core::{PRUNE_ALL, PruneLookup, PruneRef};
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode, BuilderCoverage,
     DataError, DocumentSchemaRecipe, FactPayload, LocalOwnerRef, NodeId, PreparedDocumentSchema, ValueKind,
@@ -156,6 +158,10 @@ fn trailing_plain_material(rest: &[u8]) -> bool {
 /// step. `decoded` is the session's decoded-source view: a span may be committed against the SOURCE only when the
 /// decoded text the graph spans address IS the source's own bytes (UTF-8 input); a UTF-16/32 input's decoded buffer is
 /// not the source, so no span is committed and an edit of such a document declines to the whole-document floor.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the walk takes the graph, source, prune, and the two demand flags together"
+)]
 pub(crate) fn build_document(
     graph: &YamlGraph,
     root: GraphNode,
@@ -163,9 +169,11 @@ pub(crate) fn build_document(
     dialect: DialectKind,
     decoded: &crate::scan::DecodedSource,
     prune: Option<&PruneLookup>,
+    coverage: BuilderCoverage,
+    want_tags: bool,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId, bool), CodecError> {
-    let mut walker = Walker::new(graph, source, dialect, decoded, prune, resources)?;
+    let mut walker = Walker::new(graph, source, dialect, decoded, prune, coverage, want_tags, resources)?;
     let root = walker.build_node(
         root,
         walker
@@ -175,42 +183,44 @@ pub(crate) fn build_document(
         resources,
     )?;
     // The whole-document walk attaches comments once, so the index is built here rather than threaded through; only
-    // comment-free graphs skip it.
-    let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
-    attach_comment_facts(
-        walker.builder.as_mut().expect("builder present"),
-        comment_index.as_ref(),
-        &walker.memo,
-        source,
-        decoded.maps_to_source(),
-        resources,
-    )?;
-    attach_alias_refusal_facts(
-        walker.builder.as_mut().expect("builder present"),
-        graph,
-        &walker.memo,
-        resources,
-    )?;
-    attach_anchor_facts(
-        walker.builder.as_mut().expect("builder present"),
-        graph,
-        &walker.memo,
-        source,
-        resources,
-    )?;
-    attach_style_facts(
-        walker.builder.as_mut().expect("builder present"),
-        graph,
-        &walker.memo,
-        source,
-        resources,
-    )?;
-    attach_merge_override_facts(
-        walker.builder.as_mut().expect("builder present"),
-        graph,
-        &walker.memo,
-        resources,
-    )?;
+    // comment-free graphs skip it. Coverage without attached facts skips every fact attacher.
+    if coverage.attached_facts() {
+        let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
+        attach_comment_facts(
+            walker.builder.as_mut().expect("builder present"),
+            comment_index.as_ref(),
+            &walker.memo,
+            source,
+            decoded.maps_to_source(),
+            resources,
+        )?;
+        attach_alias_refusal_facts(
+            walker.builder.as_mut().expect("builder present"),
+            graph,
+            &walker.memo,
+            resources,
+        )?;
+        attach_anchor_facts(
+            walker.builder.as_mut().expect("builder present"),
+            graph,
+            &walker.memo,
+            source,
+            resources,
+        )?;
+        attach_style_facts(
+            walker.builder.as_mut().expect("builder present"),
+            graph,
+            &walker.memo,
+            source,
+            resources,
+        )?;
+        attach_merge_override_facts(
+            walker.builder.as_mut().expect("builder present"),
+            graph,
+            &walker.memo,
+            resources,
+        )?;
+    }
     Ok((
         walker.builder.take().expect("builder present"),
         root,
@@ -218,94 +228,13 @@ pub(crate) fn build_document(
     ))
 }
 
-/// The session-owned copy of the requirement's kept-subtree prune hint, flattened to plain lookup nodes (json's
-/// `PruneMap` shape). `None` when no tree rides the requirement or it keeps everything at the root (nothing to prune).
-///
-/// The hint is MONOTONE: omitting members the tree names unobservable is always sound, and a codec is free to ignore it
-/// entirely.
-#[derive(Clone)]
-pub(crate) struct PruneLookup {
-    nodes: Vec<PruneLookupNode>,
-}
-
-#[derive(Clone)]
-struct PruneLookupNode {
-    all: bool,
-    element: Option<u32>,
-    /// Ascending by key bytes (the transport's push-order contract).
-    keys: Vec<(alloc::boxed::Box<[u8]>, u32)>,
-}
-
-/// Keep-whole sentinel: no pruning below this position.
-pub(crate) const PRUNE_ALL: u32 = u32::MAX;
-
-impl PruneLookup {
-    /// Copies the transported tree; `None` when the hint keeps everything at the root (nothing to prune).
-    pub(crate) fn from_transport(tree: &jqf_codec_core::PruneTree) -> Option<Self> {
-        if tree.root().is_all() {
-            return None;
-        }
-        let mut nodes = Vec::new();
-        for id in 0..u32::MAX {
-            let Some(node) = tree.node(id) else { break };
-            nodes.push(PruneLookupNode {
-                all: node.is_all(),
-                element: node.element(),
-                keys: node
-                    .members()
-                    .map(|(name, child)| (alloc::boxed::Box::from(name.as_bytes()), child))
-                    .collect(),
-            });
-        }
-        Some(Self { nodes })
-    }
-
-    fn node(&self, id: u32) -> Option<&PruneLookupNode> {
-        self.nodes.get(id as usize)
-    }
-
-    /// The member demand at `id`'s position: the child node id when the member is observed (a named key or the shared
-    /// element node), or `None` when the member is unobservable and may be omitted. A node that keeps everything
-    /// delivers `PRUNE_ALL`.
-    ///
-    /// A count demand's element spine (`[C[]] | length` — a node that keeps the element's identity and nothing else)
-    /// has neither a named key nor an element demand. `None` (omit) is the tree's meaning: a `{}` node is produced only
-    /// where the analysis proved the position's members unobservable, matching the strict-JSON prune
-    /// (`unwrap_or(PRUNE_OMIT)`).
-    pub(crate) fn member_prune(&self, id: u32, name: &[u8]) -> Option<u32> {
-        let node = self.node(id)?;
-        if node.all {
-            return Some(PRUNE_ALL);
-        }
-        if let Ok(position) = node.keys.binary_search_by(|(key, _)| key.as_ref().cmp(name)) {
-            Some(node.keys[position].1)
-        } else {
-            node.element
-        }
-    }
-
-    /// The shared every-child demand at `id`'s position: the element node when the tree names one, else keep-whole (a
-    /// position without an element demand never arrives prunable in practice — iteration always contributes an element
-    /// segment).
-    pub(crate) fn element_prune(&self, id: u32) -> u32 {
-        match self.node(id) {
-            Some(node) if !node.all => node.element.unwrap_or(PRUNE_ALL),
-            _ => PRUNE_ALL,
-        }
-    }
-}
-
 fn fresh_builder(
+    coverage: BuilderCoverage,
     _resources: &ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, PreparedDocumentSchema), CodecError> {
     let recipe = yaml_schema_recipe().map_err(map_data)?;
-    let (mut builder, schema) = AccountedDocumentBuilder::try_new_prepared_with_coverage(
-        &recipe,
-        // Attached facts are demanded ONLY for the comment projection: the whole-document route attaches one
-        // `yaml.comment@1` fact per node with leading comments. Topology/provenance stay off (minimal).
-        BuilderCoverage::minimal_semantic().with_attached_facts(true),
-    )
-    .map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
     builder.set_authoritative_empty_families(jqf_data::AuthoritativeEmptyFamilies::from_family(
         jqf_data::DocumentCapabilityFamily::Attributes,
     ));
@@ -340,22 +269,33 @@ struct Walker<'graph> {
     /// so the memo can serve it to every alias site without ever under-delivering a demand: the tree is position-based,
     /// two positions may alias the same node with different demands, and the memo keeps only the first build.
     alias_shared: Vec<bool>,
+    /// See [`demanded_intrinsic`].
+    want_tags: bool,
 }
 
 impl<'graph> Walker<'graph> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the walk takes the graph, source, prune, and the two demand flags together"
+    )]
     fn new(
         graph: &'graph YamlGraph,
         source: ResolvedSource<'graph>,
         dialect: DialectKind,
         decoded: &crate::scan::DecodedSource,
         prune: Option<&PruneLookup>,
+        coverage: BuilderCoverage,
+        want_tags: bool,
         resources: &mut ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
-        let (builder, schema) = fresh_builder(resources)?;
+        let (builder, schema) = fresh_builder(coverage, resources)?;
         let equality = KeyEquality::try_new(graph, source, dialect)?;
         let mut alias_shared = alloc::vec![false; graph.len()];
         for target in graph.alias_targets() {
             alias_shared[target.index()] = true;
+        }
+        for (value, _) in graph.merge_hosts() {
+            alias_shared[value.index()] = true;
         }
         Ok(Self {
             builder: Some(builder),
@@ -372,6 +312,7 @@ impl<'graph> Walker<'graph> {
             equality,
             prune: prune.cloned(),
             alias_shared,
+            want_tags,
         })
     }
 
@@ -622,6 +563,7 @@ impl<'graph> Walker<'graph> {
                 (semantic, intrinsic, None, None)
             }
         };
+        let intrinsic = demanded_intrinsic(self.want_tags, intrinsic);
         let span_commit = span_commit.filter(|_| self.source_mapped);
         let builder = self.builder.as_mut().expect("builder present");
         let id = if let Some(span) = span_commit {
@@ -675,7 +617,7 @@ impl<'graph> Walker<'graph> {
                 contract: "YAML sequence walk over a non-sequence node",
             }));
         };
-        let intrinsic = tag.map(collection_intrinsic);
+        let intrinsic = demanded_intrinsic(self.want_tags, tag.map(collection_intrinsic));
         let builder = self.builder.as_mut().expect("builder present");
         let id = builder
             .add_node(
@@ -691,10 +633,7 @@ impl<'graph> Walker<'graph> {
         self.record_container_span(node, id, resources)?;
         let items: Vec<GraphNode> = items.to_vec();
         // Arrays never omit elements; each item's subtree prunes through the position's shared element node.
-        let item_prune = match self.prune.as_ref() {
-            Some(lookup) if prune != PRUNE_ALL => lookup.element_prune(prune),
-            _ => PRUNE_ALL,
-        };
+        let item_prune = PruneRef::root(self.prune.as_ref()).at(prune).element().id();
         for item in items {
             let child = self.build_node(item, item_prune, resources)?;
             let builder = self.builder.as_mut().expect("builder present");
@@ -716,7 +655,7 @@ impl<'graph> Walker<'graph> {
                 contract: "YAML mapping walk over a non-mapping node",
             }));
         };
-        let intrinsic = tag.map(collection_intrinsic);
+        let intrinsic = demanded_intrinsic(self.want_tags, tag.map(collection_intrinsic));
         let builder = self.builder.as_mut().expect("builder present");
         let id = builder
             .add_node(
@@ -757,10 +696,10 @@ impl<'graph> Walker<'graph> {
             // spine (the yaml-count-gate) the pruned elements' keys are the document's bulk. The key text is graph-only
             // (see [`Self::key_text`]).
             let key_text = self.key_text(*key_node)?;
-            let omitted = match self.prune.as_ref() {
-                Some(lookup) if prune != PRUNE_ALL => lookup.member_prune(prune, key_text.as_bytes()).is_none(),
-                _ => false,
-            };
+            let omitted = PruneRef::root(self.prune.as_ref())
+                .at(prune)
+                .member(key_text.as_bytes())
+                .is_none();
             if !omitted {
                 self.build_node(*key_node, PRUNE_ALL, resources)?;
             }
@@ -787,14 +726,11 @@ impl<'graph> Walker<'graph> {
         // A member the prune hint names unobservable is OMITTED — its key was still validated in phase 1, but its value
         // is never read by the program.
         for (_key_node, value_node, key_text) in keyed {
-            let value_prune = match self.prune.as_ref() {
-                Some(lookup) if prune != PRUNE_ALL => {
-                    let Some(child) = lookup.member_prune(prune, key_text.as_bytes()) else {
-                        continue;
-                    };
-                    child
-                }
-                _ => PRUNE_ALL,
+            let Some(value_prune) = PruneRef::root(self.prune.as_ref())
+                .at(prune)
+                .member(key_text.as_bytes())
+            else {
+                continue;
             };
             let value_id = self.build_node(value_node, value_prune, resources)?;
             let builder = self.builder.as_mut().expect("builder present");
@@ -1355,6 +1291,15 @@ fn container_authored_span(graph: &YamlGraph, node: GraphNode, source: ResolvedS
     }
 }
 
+/// Core tags are `.@tag` observations; skip them unless the program reads tags or preserves facts for re-encode. A
+/// non-core Tagged tag *is* the value (`!money`), so identity still attaches it.
+pub(crate) fn demanded_intrinsic(
+    want_tags: bool,
+    intrinsic: Option<AccountedIntrinsicTag<'_>>,
+) -> Option<AccountedIntrinsicTag<'_>> {
+    intrinsic.filter(|tag| want_tags || matches!(tag, AccountedIntrinsicTag::Tagged(_)))
+}
+
 /// The intrinsic tag for a collection tag: the resolved standard map/seq tags are core; anything else is a non-core tag
 /// around the collection.
 pub(crate) fn collection_intrinsic(tag: &str) -> AccountedIntrinsicTag<'_> {
@@ -1563,10 +1508,10 @@ mod tests {
     }
 
     use jqf_codec_core::{
-        AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
-        DiagnosticPolicy, ErasedProvider, ValidationMode,
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
+        DemandClause, DiagnosticPolicy, ErasedProvider, ExactPath, PruneTree, ValidationMode,
     };
-    use jqf_data::{FactPayloadView, Value};
+    use jqf_data::{FactKindId, FactPayloadView, FactRoleId, Value};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -1619,29 +1564,95 @@ mod tests {
         bytes: &'bytes [u8],
         resources: &mut ResourceContext<'_>,
     ) -> Result<jqf_codec_core::DocumentProduct<'bytes>, CodecError> {
-        let registration = crate::registration().expect("registration");
-        let decoder = registration.decoder().expect("decoder");
-        let mut provider: ErasedProvider = decoder.create_provider(source(bytes), simple_request(), resources)?;
         let demand = CodecDemand::try_new(resources);
         let requirement = AccessRequirement::try_whole(
             demand,
             AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
             resources,
         )
-        .expect("requirement");
-        let handle = provider.bind(&requirement).expect("bind");
+        .expect("requirement")
+        .with_fact_intent(jqf_codec_core::FactIntent::Preserve);
+        decode_requirement_product(bytes, &requirement, resources)
+    }
+
+    fn decode_requirement_product<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<jqf_codec_core::DocumentProduct<'bytes>, CodecError> {
+        let registration = crate::registration().expect("registration");
+        let decoder = registration.decoder().expect("decoder");
+        let mut provider: ErasedProvider = decoder.create_provider(source(bytes), simple_request(), resources)?;
+        let handle = provider.bind(requirement).expect("bind");
         let mut session = provider.open(&handle, resources)?;
         let mut context = jqf_codec_core::CodecRunContext::new(resources);
         context.set_cooperative_credits(4_096);
         let result = session.decode(&mut context)?;
-        let AccessOutcome::FullDocument(product) = result.outcome() else {
-            panic!("expected a full document");
+        let product = match result.outcome() {
+            AccessOutcome::FullDocument(product) => product,
+            AccessOutcome::Located(located) => located.product(),
         };
         product.try_clone().map_err(|_error| {
             CodecError::new(CodecFailureKind::InternalContractViolation {
                 contract: "test product clone",
             })
         })
+    }
+
+    fn whole_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        AccessRequirement::try_whole(
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn exact_member_requirement(
+        member: &str,
+        demand: CodecDemand,
+        resources: &ResourceContext<'_>,
+    ) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        path.try_push_semantic_member(member, resources).expect("member");
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn attached_fact_demand(role: &str, resources: &ResourceContext<'_>) -> CodecDemand {
+        let mut demand = CodecDemand::try_new(resources);
+        let kind = FactKindId::try_new(role).expect("kind");
+        let role = FactRoleId::try_new(role).expect("role");
+        demand
+            .try_insert(&DemandClause::AttachedFact { kind, role })
+            .expect("insert");
+        demand
+    }
+
+    fn tag_demand(resources: &ResourceContext<'_>) -> CodecDemand {
+        let mut demand = CodecDemand::try_new(resources);
+        demand.try_insert(&DemandClause::IntrinsicTag).expect("insert");
+        demand
+    }
+
+    fn keep_member_tree(name: &str, resources: &ResourceContext<'_>) -> PruneTree {
+        let mut tree = PruneTree::try_new(resources).expect("tree");
+        let keep = tree.try_push_node(true).expect("keep");
+        tree.try_push_key(PruneTree::ROOT, name, keep).expect("key");
+        tree
+    }
+
+    fn object_keys(value: &Value) -> Vec<&str> {
+        let Value::Object(object) = value else {
+            panic!("expected object");
+        };
+        object.iter().map(jqf_data::ObjectEntry::key).collect()
     }
 
     /// Two distinct key texts sharing one FNV-1a fingerprint (a verified pair) must not hide an exact duplicate: the
@@ -1945,6 +1956,211 @@ mod tests {
         let source = b"#\ttab\nk: 1\n";
         let span = jqf_source::Span::from_usize(0, 5);
         assert_eq!(comment_text(source, span), "\ttab");
+    }
+
+    #[test]
+    fn identity_demand_does_not_attach_comment_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let product = decode_requirement_product(b"# lead a\na: 1\n", &requirement, &mut resources).expect("decode");
+        assert!(
+            comment_facts(&product, &["a"], COMMENT_FACT).is_empty(),
+            "identity must skip comment facts"
+        );
+    }
+
+    #[test]
+    fn identity_demand_keeps_tagged_values_and_skips_core_tags() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let tagged = decode_requirement_product(b"!money \"10\"\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(
+            tagged
+                .document()
+                .value_view(tagged.document().root_handle())
+                .expect("view")
+                .tag()
+                .expect("tags available")
+                .map(jqf_data::TagId::as_str),
+            Some("!money"),
+            "identity must keep a non-core Tagged value"
+        );
+        let core = decode_requirement_product(b"a: true\n", &requirement, &mut resources).expect("decode");
+        assert!(
+            node_tag(&core, &["a"]).is_none(),
+            "identity must skip core intrinsic tags"
+        );
+    }
+
+    #[test]
+    fn comment_clause_attaches_comment_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(attached_fact_demand("comment", &resources), &resources);
+        let product = decode_requirement_product(b"# lead a\na: 1\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(comment_facts(&product, &["a"], COMMENT_FACT), vec!["lead a"]);
+    }
+
+    #[test]
+    fn tag_clause_attaches_core_tags() {
+        let mut resources = resources();
+        let requirement = whole_requirement(tag_demand(&resources), &resources);
+        let product = decode_requirement_product(b"a: true\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(node_tag(&product, &["a"]).as_deref(), Some(crate::schema::TAG_BOOL));
+    }
+
+    #[test]
+    fn exact_identity_demand_skips_comments_and_keeps_tagged_values() {
+        let mut resources = resources();
+        let empty = CodecDemand::try_new(&resources);
+        let comments = exact_member_requirement("a", empty, &resources);
+        let product = decode_requirement_product(b"# lead a\na: 1\n", &comments, &mut resources).expect("decode");
+        assert!(
+            comment_facts(&product, &[], COMMENT_FACT).is_empty(),
+            "Exact identity must skip comment facts"
+        );
+        let tagged_req = exact_member_requirement("a", CodecDemand::try_new(&resources), &resources);
+        let tagged = decode_requirement_product(b"a: !money \"10\"\n", &tagged_req, &mut resources).expect("decode");
+        assert_eq!(
+            tagged
+                .document()
+                .value_view(tagged.document().root_handle())
+                .expect("view")
+                .tag()
+                .expect("tags available")
+                .map(jqf_data::TagId::as_str),
+            Some("!money"),
+            "Exact identity must keep a non-core Tagged value"
+        );
+    }
+
+    #[test]
+    fn whole_prune_omits_unobservable_members() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources)
+            .with_prune(keep_member_tree("id", &resources));
+        let product = decode_requirement_product(
+            b"id: 1\nname: extra\nnested:\n  deep: 1\n",
+            &requirement,
+            &mut resources,
+        )
+        .expect("decode");
+        let value = product
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize");
+        assert_eq!(object_keys(&value), ["id"]);
+        // Mapping + kept key node + kept value. Omitted siblings are not built.
+        assert_eq!(product.document().node_count(), 3);
+        let error = decode_requirement_product(b"id: 1\nname: [\n", &requirement, &mut resources)
+            .expect_err("omitted members still validate");
+        assert_eq!(error.kind(), CodecFailureKind::InvalidInput);
+    }
+
+    #[test]
+    fn exact_prune_omits_unread_members_of_the_located_object() {
+        let mut resources = resources();
+        let requirement = exact_member_requirement("catalog", CodecDemand::try_new(&resources), &resources)
+            .with_prune(keep_member_tree("id", &resources));
+        let product = decode_requirement_product(
+            b"catalog:\n  id: 1\n  name: extra\n  nested:\n    deep: 1\n",
+            &requirement,
+            &mut resources,
+        )
+        .expect("decode");
+        let value = product
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize");
+        assert_eq!(object_keys(&value), ["id"]);
+        // Located mapping + kept value. The scoped walk never builds key nodes.
+        assert_eq!(product.document().node_count(), 2);
+        let error = decode_requirement_product(b"catalog:\n  id: 1\n  name: [\n", &requirement, &mut resources)
+            .expect_err("omitted members still validate");
+        assert_eq!(error.kind(), CodecFailureKind::InvalidInput);
+    }
+
+    #[test]
+    fn prune_keeps_merge_shared_nodes_whole_for_a_later_alias() {
+        // `<<: *d` reuses `d`'s value nodes. A prune that keeps `.svc.v.p` and
+        // `.zz` (whole) must not memoize the pruned `{p}` and serve it to `zz`.
+        let mut resources = resources();
+        let mut tree = PruneTree::try_new(&resources).expect("tree");
+        let p = tree.try_push_node(true).expect("p");
+        let v = tree.try_push_node(false).expect("v");
+        tree.try_push_key(v, "p", p).expect("p key");
+        let svc = tree.try_push_node(false).expect("svc");
+        tree.try_push_key(svc, "v", v).expect("v key");
+        let zz = tree.try_push_node(true).expect("zz");
+        tree.try_push_key(PruneTree::ROOT, "svc", svc).expect("svc key");
+        tree.try_push_key(PruneTree::ROOT, "zz", zz).expect("zz key");
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources).with_prune(tree);
+        let product = decode_requirement_product(
+            b"defaults: &d\n  v:\n    p: 1\n    q: 2\nsvc:\n  <<: *d\nzz: *d\n",
+            &requirement,
+            &mut resources,
+        )
+        .expect("decode");
+        let value = product
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize");
+        let Value::Object(root) = &value else {
+            panic!("expected object");
+        };
+        let zz = root.iter().find(|entry| entry.key() == "zz").expect("zz").value();
+        let Value::Object(zz) = zz else {
+            panic!("expected zz object");
+        };
+        let v = zz.iter().find(|entry| entry.key() == "v").expect("v").value();
+        let Value::Object(v) = v else {
+            panic!("expected v object");
+        };
+        let keys: Vec<&str> = v.iter().map(jqf_data::ObjectEntry::key).collect();
+        assert_eq!(keys, ["p", "q"], "alias site must keep the whole shared mapping");
+    }
+
+    #[test]
+    fn prune_keeps_alias_shared_nodes_whole_for_a_later_alias() {
+        let mut resources = resources();
+        let mut tree = PruneTree::try_new(&resources).expect("tree");
+        let p = tree.try_push_node(true).expect("p");
+        let pruned = tree.try_push_node(false).expect("pruned");
+        tree.try_push_key(pruned, "p", p).expect("p key");
+        let kept = tree.try_push_node(true).expect("kept");
+        tree.try_push_key(PruneTree::ROOT, "kept", kept).expect("kept key");
+        tree.try_push_key(PruneTree::ROOT, "pruned", pruned)
+            .expect("pruned key");
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources).with_prune(tree);
+        let product = decode_requirement_product(
+            b"base: &d\n  p: 1\n  q: 2\npruned: *d\nkept: *d\n",
+            &requirement,
+            &mut resources,
+        )
+        .expect("decode");
+        let value = product
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize");
+        let Value::Object(root) = &value else {
+            panic!("expected object");
+        };
+        let kept = root.iter().find(|entry| entry.key() == "kept").expect("kept").value();
+        let Value::Object(kept) = kept else {
+            panic!("expected kept object");
+        };
+        let keys: Vec<&str> = kept.iter().map(jqf_data::ObjectEntry::key).collect();
+        assert_eq!(keys, ["p", "q"], "later alias site must keep the whole shared mapping");
+    }
+
+    fn node_tag(product: &jqf_codec_core::DocumentProduct<'_>, path: &[&str]) -> Option<String> {
+        let document = product.document();
+        let handle = document.node_handle(node_at(product, path)).expect("handle");
+        document
+            .value_view(handle)
+            .expect("view")
+            .tag()
+            .expect("tags available")
+            .map(|tag| String::from(tag.as_str()))
     }
 
     /// Collects one comment role's texts attached to one document node.

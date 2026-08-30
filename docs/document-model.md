@@ -57,13 +57,16 @@ the intrinsic tag is authoritative for tag reads.
 
 A codec that can defer hands the engine containers that are still **source
 spans**. Touching one
-materializes it through the retained source. Two consumers exploit the skeleton
+materializes it through the retained source. Four consumers exploit the skeleton
 directly:
 
 - counting a container's elements (`.items | length`) walks span boundaries,
   building nothing
 - streaming elements (`.items[]`) cuts each element's span and materializes one
   at a time
+- kind-only `type` of a located node reads the span's kind, not its children
+- `keys` of a located container publishes member names or array indexes, not
+  values
 
 The floor never moves: the validating scan visited every byte before any node
 was published, so a corrupt byte in a field the program never reads fails the

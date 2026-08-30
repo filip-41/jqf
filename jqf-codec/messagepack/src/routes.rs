@@ -19,6 +19,10 @@ pub(crate) struct NativeLocatedSession {
     steps: Vec<OwnedStep>,
     origin: SelectionOrigin,
     dialect: Dialect,
+    /// Re-anchored kept-subtree prune over the located span. `None` keeps every member.
+    prune: Option<materialize::PruneLookup>,
+    /// Kind-only span: empty container or dummy scalar from the first payload byte.
+    type_demand: bool,
     finished: bool,
 }
 
@@ -27,11 +31,15 @@ impl NativeLocatedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         dialect: Dialect,
+        prune: Option<materialize::PruneLookup>,
+        type_demand: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: own_steps(steps)?,
             origin,
             dialect,
+            prune,
+            type_demand,
             finished: false,
         })
     }
@@ -48,7 +56,11 @@ impl NativeLocatedSession {
         let (located, _item_end) = walk::locate(source, self.dialect, self.steps.as_slice(), resources)?;
         let (product, selection) = match located {
             Located::Value { start, end, .. } => {
-                let product = decode_span(source, start, end, self.dialect, resources)?;
+                let product = if self.type_demand {
+                    kind_only_span(source, start, self.dialect, resources)?
+                } else {
+                    decode_span(source, start, end, self.dialect, self.prune.as_ref(), resources)?
+                };
                 let selection = ExactSelectionRecord::Node {
                     node: product
                         .document()
@@ -86,11 +98,24 @@ impl AccessSession for NativeLocatedSession {
     }
 }
 
+fn kind_only_span(
+    source: ResolvedSource<'_>,
+    start: usize,
+    dialect: Dialect,
+    resources: &mut ResourceContext<'_>,
+) -> Result<DocumentProduct<'static>, CodecError> {
+    let kind = walk::classify_kind(source, dialect, start, resources)?;
+    let (builder, root) = materialize::kind_only_document(dialect, kind, resources)?;
+    let document = builder.finish(root, resources).map_err(map_data)?;
+    DocumentProduct::try_new(document, resources)
+}
+
 fn decode_span(
     source: ResolvedSource<'_>,
     start: usize,
     end: usize,
     dialect: Dialect,
+    prune: Option<&materialize::PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<DocumentProduct<'static>, CodecError> {
     let span_source = ResolvedSource::new(
@@ -105,7 +130,7 @@ fn decode_span(
     run.set_cooperative_credits(4_096);
     let skeleton = scan::scan(span_source, dialect, &mut run)?;
     let (builder, root) =
-        materialize::build_document_with_spans(&skeleton, dialect, span_source, false, None, resources)?;
+        materialize::build_document_with_spans(&skeleton, dialect, span_source, false, None, prune, false, resources)?;
     let document = builder.finish(root, resources).map_err(map_data)?;
     DocumentProduct::try_new(document, resources)
 }

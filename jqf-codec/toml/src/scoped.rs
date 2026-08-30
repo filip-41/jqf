@@ -26,6 +26,7 @@ pub(crate) struct NativeScopedSession {
     steps: Vec<ScopedStep>,
     origin: SelectionOrigin,
     dialect: DialectKind,
+    coverage: jqf_data::BuilderCoverage,
     /// Whether the one-shot locate+materialize poll already ran.
     finished: bool,
 }
@@ -35,11 +36,13 @@ impl NativeScopedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         dialect: DialectKind,
+        coverage: jqf_data::BuilderCoverage,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: locate::own_steps(steps)?,
             origin,
             dialect,
+            coverage,
             finished: false,
         })
     }
@@ -63,14 +66,20 @@ impl NativeScopedSession {
             let root = doc.subtree(&crate::grammar::Path::default());
             let located = locate::locate(&root, self.steps.as_slice())?;
             let (builder, root) =
-                materialize::build_located_document(&located, doc.names(), source.bytes(), resources)?;
+                materialize::build_located_document(&located, doc.names(), source.bytes(), self.coverage, resources)?;
             let document = builder.finish(root, resources).map_err(map_data)?;
             let product = DocumentProduct::try_new(document, resources)?;
             return self.publish(&product, &located);
         }
         // The byte-level validate + navigate walk: validates the whole input to the parser's exact strictness and
         // resolves the target path without building the tree.
-        let walker = crate::walk::Walker::try_new(source, self.dialect, self.steps.as_slice(), resources);
+        let walker = crate::walk::Walker::try_new(
+            source,
+            self.dialect,
+            self.steps.as_slice(),
+            resources,
+            self.coverage.attached_facts(),
+        );
         let located_walk = walker.walk()?;
         let (builder, root) = self.materialize_walk(source, &located_walk, resources)?;
         let document = builder.finish(root, resources).map_err(map_data)?;
@@ -93,9 +102,16 @@ impl NativeScopedSession {
                 end,
                 leading,
                 inline,
-            } => {
-                crate::lazy::build_wrapped_value(source.bytes(), *start, *end, leading, inline, self.dialect, resources)
-            }
+            } => crate::lazy::build_wrapped_value(
+                source.bytes(),
+                *start,
+                *end,
+                leading,
+                inline,
+                self.dialect,
+                self.coverage,
+                resources,
+            ),
             crate::walk::LocatedWalk::Table {
                 spans,
                 foot,
@@ -108,16 +124,23 @@ impl NativeScopedSession {
                 *key_depth,
                 *element,
                 self.dialect,
+                self.coverage,
                 resources,
             ),
             crate::walk::LocatedWalk::ImplicitTable { pieces } => {
-                crate::lazy::build_implicit_table(source.bytes(), pieces, self.dialect, resources)
+                crate::lazy::build_implicit_table(source.bytes(), pieces, self.dialect, self.coverage, resources)
             }
-            crate::walk::LocatedWalk::RangeValue { start, end, empty } => {
-                crate::lazy::build_range_value(source.bytes(), *start, *end, *empty, self.dialect, resources)
-            }
+            crate::walk::LocatedWalk::RangeValue { start, end, empty } => crate::lazy::build_range_value(
+                source.bytes(),
+                *start,
+                *end,
+                *empty,
+                self.dialect,
+                self.coverage,
+                resources,
+            ),
             crate::walk::LocatedWalk::RangeTables { elements } => {
-                crate::lazy::build_range_of_tables(source.bytes(), elements, self.dialect, resources)
+                crate::lazy::build_range_of_tables(source.bytes(), elements, self.dialect, self.coverage, resources)
             }
             crate::walk::LocatedWalk::Missing { .. } | crate::walk::LocatedWalk::TypeMismatch { .. } => {
                 // The negative observations publish the null product, exactly as the tree path does.
@@ -125,6 +148,7 @@ impl NativeScopedSession {
                     &locate::Located::Missing { step: 0 },
                     &[],
                     source.bytes(),
+                    self.coverage,
                     resources,
                 )
             }

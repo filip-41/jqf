@@ -5,7 +5,9 @@
 //! comment facts together. The span receipts assert that every value node's span slices the source to its own authored
 //! bytes.
 
-use jqf_codec_core::{CodecRunContext, DecodeRequest, DiagnosticPolicy, ValidationMode};
+use jqf_codec_core::{
+    CodecDemand, CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, FactIntent, ValidationMode,
+};
 use jqf_data::{DialectId, FactPayloadView, FormatId, ObjectBuilder, ObjectKey, Value};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -416,7 +418,7 @@ fn with_document<R>(
             &mut resources,
         )
         .map_err(|error| format!("provider: {:?}", error.kind()))?;
-    let requirement = whole_requirement(&resources);
+    let requirement = preserve_requirement(&resources);
     let handle = provider.bind(&requirement).map_err(|e| format!("{e:?}"))?;
     let mut session = provider.open(&handle, &mut resources).map_err(|e| format!("{e:?}"))?;
     {
@@ -463,7 +465,7 @@ fn with_product<R>(
             &mut resources,
         )
         .map_err(|error| format!("provider: {:?}", error.kind()))?;
-    let requirement = whole_requirement(&resources);
+    let requirement = preserve_requirement(&resources);
     let handle = provider.bind(&requirement).map_err(|e| format!("{e:?}"))?;
     let mut session = provider.open(&handle, &mut resources).map_err(|e| format!("{e:?}"))?;
     {
@@ -532,13 +534,28 @@ fn encode_document(
 }
 
 fn whole_requirement(resources: &ResourceContext<'_>) -> jqf_codec_core::AccessRequirement {
-    let mut demand = jqf_codec_core::CodecDemand::try_new(resources);
+    let mut demand = CodecDemand::try_new(resources);
+    demand.try_insert(&DemandClause::SemanticRoot).expect("semantic root");
+    demand.try_insert(&DemandClause::ValueShape).expect("value shape");
+    jqf_codec_core::AccessRequirement::try_whole(
+        demand,
+        jqf_codec_core::AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        resources,
+    )
+    .expect("requirement")
+}
+
+fn preserve_requirement(resources: &ResourceContext<'_>) -> jqf_codec_core::AccessRequirement {
+    whole_requirement(resources).with_fact_intent(FactIntent::Preserve)
+}
+
+fn comment_clause_requirement(resources: &ResourceContext<'_>) -> jqf_codec_core::AccessRequirement {
+    let mut demand = CodecDemand::try_new(resources);
+    let kind = jqf_data::FactKindId::try_new("comment").expect("kind");
+    let role = jqf_data::FactRoleId::try_new("comment").expect("role");
     demand
-        .try_insert(&jqf_codec_core::DemandClause::SemanticRoot)
-        .expect("semantic root");
-    demand
-        .try_insert(&jqf_codec_core::DemandClause::ValueShape)
-        .expect("value shape");
+        .try_insert(&DemandClause::AttachedFact { kind, role })
+        .expect("insert");
     jqf_codec_core::AccessRequirement::try_whole(
         demand,
         jqf_codec_core::AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
@@ -1180,4 +1197,70 @@ fn encoder_refuses_a_decimal_whose_scale_is_i64_min() {
     let error =
         encode_owned("properties", jqf_codec_ini::PROPERTIES_JQF_1_0_DIALECT_ID, &root).expect_err("i64::MIN scale");
     assert_eq!(error, jqf_codec_core::CodecFailureKind::UnsupportedRepresentation);
+}
+
+fn last_member_comments_for(
+    make_req: impl FnOnce(&ResourceContext<'_>) -> jqf_codec_core::AccessRequirement,
+) -> Vec<String> {
+    let bytes = b"# hello\na=1\n";
+    let mut resources = resources();
+    let requirement = make_req(&resources);
+    let registration = jqf_codec_ini::registration().expect("properties");
+    let mut provider = registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(jqf_codec_ini::PROPERTIES_JDK_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )
+        .expect("provider");
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, &mut resources).expect("open");
+    let mut run = CodecRunContext::new(&mut resources);
+    run.set_cooperative_credits(4_096);
+    let result = session.decode(&mut run).expect("decode");
+    let jqf_codec_core::AccessOutcome::FullDocument(product) = result.outcome() else {
+        panic!("expected full document");
+    };
+    let document = product.document();
+    let root_view = document
+        .value_view(document.node_handle(document.root()).expect("root handle"))
+        .expect("view");
+    let root_object = root_view.object().expect("object").expect("root is an object");
+    let node = root_object
+        .get_index(root_object.len() - 1)
+        .expect("member")
+        .expect("entry")
+        .value()
+        .node();
+    comment_texts(document, node)
+}
+
+#[test]
+fn identity_demand_does_not_attach_comment_facts() {
+    let comments = last_member_comments_for(whole_requirement);
+    assert!(
+        comments.is_empty(),
+        "identity must skip comment facts, got {comments:?}"
+    );
+}
+
+#[test]
+fn comment_clause_attaches_comment_facts() {
+    let comments = last_member_comments_for(comment_clause_requirement);
+    assert_eq!(comments, ["hello"]);
+}
+
+#[test]
+fn preserve_attaches_comment_facts() {
+    let comments = last_member_comments_for(preserve_requirement);
+    assert_eq!(comments, ["hello"]);
 }

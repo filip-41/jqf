@@ -144,6 +144,10 @@ pub(crate) struct YamlParseState {
     /// The kept-subtree prune hint: which mapping members the requesting program provably reads. `None` keeps
     /// everything.
     prune: Option<crate::document::PruneLookup>,
+    /// Builder coverage the document walk honours: skip attaching comments/anchors/style unless facts are demanded.
+    coverage: jqf_data::BuilderCoverage,
+    /// See [`crate::document::demanded_intrinsic`].
+    want_tags: bool,
 }
 
 enum Phase {
@@ -162,6 +166,8 @@ impl YamlParseState {
         source: ResolvedSource<'_>,
         dialect: crate::provider::DialectKind,
         prune: Option<crate::document::PruneLookup>,
+        coverage: jqf_data::BuilderCoverage,
+        want_tags: bool,
         resources: &ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
         let decoded = crate::scan::DecodedSource::try_new(source, resources)?;
@@ -188,6 +194,8 @@ impl YamlParseState {
             implicit_boundary: false,
             saw_document: false,
             prune,
+            coverage,
+            want_tags,
         })
     }
 
@@ -323,6 +331,8 @@ impl YamlParseState {
                             self.dialect,
                             &self.decoded,
                             self.prune.as_ref(),
+                            self.coverage,
+                            self.want_tags,
                             context.resources(),
                         )?;
                         self.builder = Some(builder);
@@ -2239,8 +2249,15 @@ mod tests {
         // `decode_documents` drives this mode.
         let mut resources = resources();
         let src = source(b"--- foo\n--- bar\n");
-        let mut state =
-            YamlParseState::try_new(src, crate::provider::DialectKind::Core, None, &resources).expect("state");
+        let mut state = YamlParseState::try_new(
+            src,
+            crate::provider::DialectKind::Core,
+            None,
+            jqf_data::BuilderCoverage::minimal_semantic().with_attached_facts(true),
+            true,
+            &resources,
+        )
+        .expect("state");
         let mut docs = 0usize;
         let mut ctx = jqf_codec_core::CodecRunContext::new(&mut resources);
         // Straight-line decode: one `decode` call yields one document; the session resets internally for the next, and
@@ -2269,8 +2286,15 @@ mod tests {
         let bytes: &'static [u8] = b"--- a\n--- b\n";
         let mut resources = resources();
         let src = source(bytes);
-        let mut state =
-            YamlParseState::try_new(src, crate::provider::DialectKind::Core, None, &resources).expect("state");
+        let mut state = YamlParseState::try_new(
+            src,
+            crate::provider::DialectKind::Core,
+            None,
+            jqf_data::BuilderCoverage::minimal_semantic().with_attached_facts(true),
+            true,
+            &resources,
+        )
+        .expect("state");
         let mut ctx = jqf_codec_core::CodecRunContext::new(&mut resources);
         let result = state
             .decode(jqf_codec_core::AccessInput::Source(src), &mut ctx)
@@ -2299,8 +2323,15 @@ mod tests {
         let bytes: &'static [u8] = b"--- a\n...\n....\n";
         let mut resources = resources();
         let src = source(bytes);
-        let mut state =
-            YamlParseState::try_new(src, crate::provider::DialectKind::Core, None, &resources).expect("state");
+        let mut state = YamlParseState::try_new(
+            src,
+            crate::provider::DialectKind::Core,
+            None,
+            jqf_data::BuilderCoverage::minimal_semantic().with_attached_facts(true),
+            true,
+            &resources,
+        )
+        .expect("state");
         let mut ctx = jqf_codec_core::CodecRunContext::new(&mut resources);
         let result = state
             .decode(jqf_codec_core::AccessInput::Source(src), &mut ctx)
@@ -2327,8 +2358,15 @@ mod tests {
         ] {
             let mut resources = resources();
             let src = source(bytes);
-            let mut state =
-                YamlParseState::try_new(src, crate::provider::DialectKind::Core, None, &resources).expect("state");
+            let mut state = YamlParseState::try_new(
+                src,
+                crate::provider::DialectKind::Core,
+                None,
+                jqf_data::BuilderCoverage::minimal_semantic().with_attached_facts(true),
+                true,
+                &resources,
+            )
+            .expect("state");
             let mut ctx = jqf_codec_core::CodecRunContext::new(&mut resources);
             let result = state
                 .decode(jqf_codec_core::AccessInput::Source(src), &mut ctx)
@@ -2342,8 +2380,15 @@ mod tests {
 
     /// Drives one session to completion, collecting each `Ready` result's `consumed_offset`.
     fn collect_consumed_offsets(src: ResolvedSource<'static>, resources: &mut ResourceContext<'_>) -> Vec<u64> {
-        let mut state =
-            YamlParseState::try_new(src, crate::provider::DialectKind::Core, None, resources).expect("state");
+        let mut state = YamlParseState::try_new(
+            src,
+            crate::provider::DialectKind::Core,
+            None,
+            jqf_data::BuilderCoverage::minimal_semantic().with_attached_facts(true),
+            true,
+            resources,
+        )
+        .expect("state");
         let mut offsets = Vec::new();
         let mut guard = 0usize;
         while !state.stream_done {

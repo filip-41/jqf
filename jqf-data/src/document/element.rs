@@ -52,6 +52,10 @@ pub struct ElementDemand {
     /// The [`ElementRow::ReduceFold`] update's increment: the exact integer `LITERAL` of the recognized `.[$x] +=
     /// LITERAL` update. `None` for a [`ElementRow::FanOut`] demand.
     pub increment: Option<i64>,
+    /// The per-element `select(P)` filter of a fan-out row (`.catalog[] | select(.k > LITERAL) | .name`). `None` for
+    /// unfiltered fan-out and for reduce-fold. A filtered-out element is skipped, not declined; a predicate the closed
+    /// law cannot rank declines the whole demand so the floor renders the raise.
+    pub filter: Option<crate::CountFilter>,
 }
 
 /// Element-stream answer, or a decline.
@@ -217,22 +221,42 @@ impl<'document> Document<'document> {
         // The FanOut pre-pass: every element's probe must be provable BEFORE the first visit, so a mid-stream decline
         // can never leave a published prefix a floor rerun would duplicate. A ReduceFold publishes nothing until it
         // completes, so it visits as it goes and a mid-iteration decline stays clean.
+        let filter_probe = demand.filter.as_ref().map(|filter| super::ElementDemand {
+            row: demand.row,
+            path: Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(filter.path.clone()),
+            increment: None,
+            filter: None,
+        });
         if matches!(demand.row, ElementRow::FanOut) {
             for element in elements() {
                 let element = element?;
-                if !self.element_probe_provable(element, demand, resources)? {
-                    return Ok(ElementVerdict::Decline);
+                match self.element_filter_gate(element, demand, filter_probe.as_ref(), resources)? {
+                    FilterGate::Decline => return Ok(ElementVerdict::Decline),
+                    FilterGate::Skip => {}
+                    FilterGate::Keep => {
+                        if !self.element_probe_provable(element, demand, resources)? {
+                            return Ok(ElementVerdict::Decline);
+                        }
+                    }
                 }
             }
         }
         let mut visited = 0u64;
         for element in elements() {
             let element = element?;
-            let Some(value) = self.element_probe_value(element, demand, resources)? else {
-                return Ok(ElementVerdict::Decline);
-            };
-            visit(&value, resources)?;
-            visited = visited.saturating_add(1);
+            match self.element_filter_gate(element, demand, filter_probe.as_ref(), resources)? {
+                FilterGate::Decline => return Ok(ElementVerdict::Decline),
+                FilterGate::Skip => {}
+                FilterGate::Keep => {
+                    let Some(value) = self.element_probe_value(element, demand, resources)? else {
+                        return Ok(ElementVerdict::Decline);
+                    };
+                    visit(&value, resources)?;
+                    visited = visited.saturating_add(1);
+                }
+            }
         }
         Ok(ElementVerdict::Completed(visited))
     }
@@ -293,6 +317,78 @@ impl<'document> Document<'document> {
         }
         probe_provable(element, &demand.probe)
     }
+
+    fn element_filter_gate(
+        &self,
+        element: ValueView<'_, 'document>,
+        demand: &super::ElementDemand,
+        filter_probe: Option<&super::ElementDemand>,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<FilterGate, DataError> {
+        let Some(filter) = demand.filter.as_ref() else {
+            return Ok(FilterGate::Keep);
+        };
+        let Some(filter_demand) = filter_probe else {
+            return Ok(FilterGate::Keep);
+        };
+        if matches!(filter.test, crate::CountTest::Truthy)
+            && let Some(truthy) = truthy_from_view(element, &filter.path)?
+        {
+            return Ok(if truthy { FilterGate::Keep } else { FilterGate::Skip });
+        }
+        let Some(owned) = self.element_probe_value(element, filter_demand, resources)? else {
+            return Ok(FilterGate::Decline);
+        };
+        match filter.test.answer(crate::CountMember::Value(&owned)) {
+            None => Ok(FilterGate::Decline),
+            Some(false) => Ok(FilterGate::Skip),
+            Some(true) => Ok(FilterGate::Keep),
+        }
+    }
+}
+
+enum FilterGate {
+    Keep,
+    Skip,
+    Decline,
+}
+
+/// Truthiness from the landed view's kind: only `null` and `false` are falsy.
+/// Declines when a step is not a key over an object (the floor renders the raise).
+fn truthy_from_view(mut view: ValueView<'_, '_>, path: &[CountStep]) -> Result<Option<bool>, DataError> {
+    if view.is_container_span()? {
+        return Ok(None);
+    }
+    for step in path {
+        match view.kind()? {
+            ValueKind::Null => return Ok(Some(false)),
+            ValueKind::Object => {
+                let CountStep::ObjectKey(key) = step else {
+                    return Ok(None);
+                };
+                let Some(object) = view.object()? else {
+                    return Ok(None);
+                };
+                view = match object.get(key.as_str()) {
+                    Some(child) => child,
+                    None => return Ok(Some(false)),
+                };
+                if view.is_container_span()? {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(match view.kind()? {
+        ValueKind::Null => false,
+        ValueKind::Bool => match view.scalar()? {
+            Some(crate::ScalarView::Bool(true)) => true,
+            Some(crate::ScalarView::Bool(false)) => false,
+            _ => return Ok(None),
+        },
+        _ => true,
+    }))
 }
 
 /// `length`'s owned value: the container's element/member count as an integer, saturating at `i64::MAX`.
@@ -512,8 +608,14 @@ where
             let Some(element) = owned(index) else {
                 return Ok(ElementVerdict::Decline);
             };
-            if !owned_probe_provable(element, &demand.probe) {
-                return Ok(ElementVerdict::Decline);
+            match owned_filter_gate(element, demand.filter.as_ref()) {
+                FilterGate::Decline => return Ok(ElementVerdict::Decline),
+                FilterGate::Skip => {}
+                FilterGate::Keep => {
+                    if !owned_probe_provable(element, &demand.probe) {
+                        return Ok(ElementVerdict::Decline);
+                    }
+                }
             }
         }
     }
@@ -522,13 +624,30 @@ where
         let Some(element) = owned(index) else {
             return Ok(ElementVerdict::Decline);
         };
-        let Some(probe_value) = owned_probe_value(element, &demand.probe) else {
-            return Ok(ElementVerdict::Decline);
-        };
-        visit(&probe_value, resources)?;
-        visited = visited.saturating_add(1);
+        match owned_filter_gate(element, demand.filter.as_ref()) {
+            FilterGate::Decline => return Ok(ElementVerdict::Decline),
+            FilterGate::Skip => {}
+            FilterGate::Keep => {
+                let Some(probe_value) = owned_probe_value(element, &demand.probe) else {
+                    return Ok(ElementVerdict::Decline);
+                };
+                visit(&probe_value, resources)?;
+                visited = visited.saturating_add(1);
+            }
+        }
     }
     Ok(ElementVerdict::Completed(visited))
+}
+
+fn owned_filter_gate(element: &Value, filter: Option<&crate::CountFilter>) -> FilterGate {
+    let Some(filter) = filter else {
+        return FilterGate::Keep;
+    };
+    match filter.contributes(element) {
+        None => FilterGate::Decline,
+        Some(0) => FilterGate::Skip,
+        Some(_) => FilterGate::Keep,
+    }
 }
 
 #[cfg(test)]
@@ -648,6 +767,7 @@ mod tests {
             range: None,
             probe: name_probe(),
             increment: None,
+            filter: None,
         };
         let mut resources = unlimited_resources();
         let mut visited = 0u64;
@@ -692,6 +812,7 @@ mod tests {
             range: Some((Some(1), Some(4))),
             probe: ElementProbe::Path(Vec::new()),
             increment: None,
+            filter: None,
         };
         let mut resources = unlimited_resources();
         let mut visited = Vec::new();
@@ -713,6 +834,7 @@ mod tests {
             range: Some((Some(3), Some(99))),
             probe: ElementProbe::Path(Vec::new()),
             increment: None,
+            filter: None,
         };
         let mut resources = unlimited_resources();
         let mut visited = 0u64;
@@ -731,6 +853,7 @@ mod tests {
             range: Some((Some(5), None)),
             probe: ElementProbe::Path(Vec::new()),
             increment: None,
+            filter: None,
         };
         let mut resources = unlimited_resources();
         let verdict = visit_owned_container(&array, &demand, &mut resources, |_, _| {

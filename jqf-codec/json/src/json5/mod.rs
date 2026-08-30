@@ -28,8 +28,8 @@
 //!
 //! ## Ceiling
 //!
-//! JSON5 serves the whole-document route only, exactly like JSONC: no scoped exact-path route, no lazy frontier.
-//! `Located` is answered identically through core's `ExactFallbackState`.
+//! JSON5 advertises Whole and Exact, sharing JSONC's commented scoped session with the JSON5 grammar armed. Exact
+//! still validates the whole input; leading comments on a located member survive Preserve / `.@comment`.
 //!
 //! ## Comment facts
 //!

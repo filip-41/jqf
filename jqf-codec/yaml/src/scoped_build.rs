@@ -1,7 +1,9 @@
 //! Subtree document construction for the scoped route.
 //!
-//! Builds a fresh demand-scoped document from a located graph subtree instead of the whole document: aliases resolve to
-//! their shared node, and the memo keeps sharing intact.
+//! Builds a fresh demand-scoped document from a located graph subtree instead of the whole document. Aliases and
+//! merge-spliced nodes build whole on first reach so the memo never under-delivers a later kept-whole path. Exact
+//! prune omits unread members of the located subtree only; the graph is already fully parsed. Coverage gating and
+//! kind-only documents follow the same laws as the whole-document walker.
 //!
 //! The builders are the same `AccountedDocumentBuilder` the whole-document route uses, with the same schema recipe, so
 //! the products carry the same format identity.
@@ -19,24 +21,33 @@ use jqf_resource::ResourceContext;
 use jqf_source::ResolvedSource;
 
 use crate::document::{
-    CommentIndex, ITEM_ROLE, MAP_KIND, MEMBER_ROLE, SCALAR_KIND, SEQ_KIND, collection_intrinsic, map_data,
+    CommentIndex, ITEM_ROLE, MAP_KIND, MEMBER_ROLE, PRUNE_ALL, PruneLookup, PruneRef, SCALAR_KIND, SEQ_KIND,
+    collection_intrinsic, demanded_intrinsic, map_data,
 };
 use crate::graph::{NodeId as GraphNode, YamlGraph, YamlNode};
 use crate::provider::DialectKind;
 use crate::schema::{self, ScalarCategory, TAG_STR};
 
 /// Builds a fresh document from one located graph subtree.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the subtree walk takes the graph, source, coverage, tag-skip, and prune together"
+)]
 pub(crate) fn build_subtree_document(
     graph: &YamlGraph,
     root: GraphNode,
     source: ResolvedSource<'_>,
     dialect: DialectKind,
     source_mapped: bool,
+    coverage: BuilderCoverage,
+    want_tags: bool,
+    prune: Option<&PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_subtree_builder(resources)?;
+    let mut builder = fresh_subtree_builder(coverage, resources)?;
     let mut memo: Vec<Option<NodeId>> = Vec::new();
     let mut in_progress: Vec<GraphNode> = Vec::new();
+    let alias_shared = alias_shared_marks(graph, prune.is_some());
     let built = build_subtree(
         &mut builder,
         graph,
@@ -45,21 +56,27 @@ pub(crate) fn build_subtree_document(
         dialect,
         &mut memo,
         &mut in_progress,
+        want_tags,
+        prune,
+        prune.map_or(PRUNE_ALL, |_| jqf_codec_core::PruneTree::ROOT),
+        &alias_shared,
         resources,
     )?;
     // A scoped build attaches comments once per located subtree; the index is graph-derived, so only comment-free
     // graphs skip it.
-    let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
-    crate::document::attach_comment_facts(
-        &mut builder,
-        comment_index.as_ref(),
-        &memo,
-        source,
-        source_mapped,
-        resources,
-    )?;
-    crate::document::attach_anchor_facts(&mut builder, graph, &memo, source, resources)?;
-    crate::document::attach_style_facts(&mut builder, graph, &memo, source, resources)?;
+    if coverage.attached_facts() {
+        let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
+        crate::document::attach_comment_facts(
+            &mut builder,
+            comment_index.as_ref(),
+            &memo,
+            source,
+            source_mapped,
+            resources,
+        )?;
+        crate::document::attach_anchor_facts(&mut builder, graph, &memo, source, resources)?;
+        crate::document::attach_style_facts(&mut builder, graph, &memo, source, resources)?;
+    }
     Ok((builder, built))
 }
 
@@ -67,14 +84,132 @@ pub(crate) fn build_subtree_document(
 pub(crate) fn build_null_document(
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_subtree_builder(resources)?;
+    let mut builder = fresh_subtree_builder(BuilderCoverage::minimal_semantic(), resources)?;
     let root = builder
         .add_node(SCALAR_KIND, AccountedSemanticNode::Null, None, resources)
         .map_err(map_data)?;
     Ok((builder, root))
 }
 
-fn fresh_subtree_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
+/// Kind-only located document: empty sequence/mapping, or a dummy scalar of the resolved tag/category. Children are
+/// not built. The graph was already fully parsed.
+pub(crate) fn build_kind_only_document(
+    graph: &YamlGraph,
+    root: GraphNode,
+    source: ResolvedSource<'_>,
+    dialect: DialectKind,
+    coverage: BuilderCoverage,
+    want_tags: bool,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    let mut builder = fresh_subtree_builder(coverage, resources)?;
+    let built = kind_only_node(&mut builder, graph, root, source, dialect, want_tags, 0, resources)?;
+    Ok((builder, built))
+}
+
+/// Empty array used when `PATH | type` locates a range.
+pub(crate) fn build_empty_array_document(
+    coverage: BuilderCoverage,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    let mut builder = fresh_subtree_builder(coverage, resources)?;
+    let root = builder
+        .add_node(
+            SEQ_KIND,
+            AccountedSemanticNode::Array { item_role: ITEM_ROLE },
+            None,
+            resources,
+        )
+        .map_err(map_data)?;
+    Ok((builder, root))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn kind_only_node(
+    builder: &mut AccountedDocumentBuilder<'static>,
+    graph: &YamlGraph,
+    node: GraphNode,
+    source: ResolvedSource<'_>,
+    dialect: DialectKind,
+    want_tags: bool,
+    hops: usize,
+    resources: &mut ResourceContext<'_>,
+) -> Result<NodeId, CodecError> {
+    if hops > graph.len() {
+        return Err(CodecError::new(CodecFailureKind::UnsupportedRepresentation));
+    }
+    let yaml_node = graph.node_opt(node, source).ok_or_else(|| {
+        CodecError::new(CodecFailureKind::InternalContractViolation {
+            contract: "YAML kind-only walk over a missing node",
+        })
+    })?;
+    match yaml_node {
+        YamlNode::Alias(target) => {
+            kind_only_node(builder, graph, target, source, dialect, want_tags, hops + 1, resources)
+        }
+        YamlNode::Sequence { tag, .. } => {
+            let intrinsic = demanded_intrinsic(want_tags, tag.map(collection_intrinsic));
+            builder
+                .add_node(
+                    SEQ_KIND,
+                    AccountedSemanticNode::Array { item_role: ITEM_ROLE },
+                    intrinsic,
+                    resources,
+                )
+                .map_err(map_data)
+        }
+        YamlNode::Mapping { tag, .. } => {
+            let intrinsic = demanded_intrinsic(want_tags, tag.map(collection_intrinsic));
+            builder
+                .add_node(
+                    MAP_KIND,
+                    AccountedSemanticNode::Object {
+                        member_role: MEMBER_ROLE,
+                    },
+                    intrinsic,
+                    resources,
+                )
+                .map_err(map_data)
+        }
+        YamlNode::Scalar { .. } => {
+            let resolved = schema::resolve_scalar(graph, node, dialect, source)?;
+            let semantic = match &resolved {
+                schema::ResolvedScalar::Core { category, .. } => dummy_scalar(*category),
+                schema::ResolvedScalar::Tagged { payload, .. } => dummy_scalar(*payload),
+            };
+            let intrinsic = match &resolved {
+                schema::ResolvedScalar::Core { category, tag } => demanded_intrinsic(
+                    want_tags,
+                    Some(AccountedIntrinsicTag::Core {
+                        tag,
+                        kind: ValueKind::from(*category),
+                    }),
+                ),
+                schema::ResolvedScalar::Tagged { tag, .. } => {
+                    demanded_intrinsic(want_tags, Some(AccountedIntrinsicTag::Tagged(tag)))
+                }
+            };
+            builder
+                .add_node(SCALAR_KIND, semantic, intrinsic, resources)
+                .map_err(map_data)
+        }
+    }
+}
+
+fn dummy_scalar(category: ScalarCategory) -> AccountedSemanticNode<'static> {
+    match category {
+        ScalarCategory::String => AccountedSemanticNode::String(""),
+        ScalarCategory::Null => AccountedSemanticNode::Null,
+        ScalarCategory::Bool(value) => AccountedSemanticNode::Bool(value),
+        ScalarCategory::Integer => AccountedSemanticNode::Integer("0"),
+        ScalarCategory::Float => AccountedSemanticNode::Float(jqf_data::Float::new(0.0)),
+    }
+}
+
+fn fresh_subtree_builder(
+    coverage: BuilderCoverage,
+    _resources: &ResourceContext<'_>,
+) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = DocumentSchemaRecipe::try_new(
         "yaml",
         Some("yaml"),
@@ -84,14 +219,21 @@ fn fresh_subtree_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDo
         &[],
     )
     .map_err(map_data)?;
-    AccountedDocumentBuilder::try_new_with_coverage(
-        recipe.format(),
-        recipe.dialect(),
-        // Attached facts are demanded ONLY for the comment projection, shared with the whole-document route so
-        // `.key.@comment` serves on the scoped route too.
-        BuilderCoverage::minimal_semantic().with_attached_facts(true),
-    )
-    .map_err(map_data)
+    AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), coverage).map_err(map_data)
+}
+
+fn alias_shared_marks(graph: &YamlGraph, pruning: bool) -> Vec<bool> {
+    if !pruning {
+        return Vec::new();
+    }
+    let mut alias_shared = alloc::vec![false; graph.len()];
+    for target in graph.alias_targets() {
+        alias_shared[target.index()] = true;
+    }
+    for (value, _) in graph.merge_hosts() {
+        alias_shared[value.index()] = true;
+    }
+    alias_shared
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,6 +245,10 @@ pub(crate) fn build_subtree(
     dialect: DialectKind,
     memo: &mut Vec<Option<NodeId>>,
     in_progress: &mut Vec<GraphNode>,
+    want_tags: bool,
+    prune: Option<&PruneLookup>,
+    prune_id: u32,
+    alias_shared: &[bool],
     resources: &mut ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
     if let Some(id) = memo.get(node.index()).copied().flatten() {
@@ -112,7 +258,25 @@ pub(crate) fn build_subtree(
         return Err(CodecError::new(CodecFailureKind::UnsupportedRepresentation));
     }
     in_progress.push(node);
-    let result = build_subtree_inner(builder, graph, node, source, dialect, memo, in_progress, resources);
+    let prune_id = if alias_shared.get(node.index()).copied().unwrap_or(false) {
+        PRUNE_ALL
+    } else {
+        prune_id
+    };
+    let result = build_subtree_inner(
+        builder,
+        graph,
+        node,
+        source,
+        dialect,
+        memo,
+        in_progress,
+        want_tags,
+        prune,
+        prune_id,
+        alias_shared,
+        resources,
+    );
     in_progress.pop();
     let id = result?;
     let index = node.index();
@@ -132,6 +296,10 @@ fn build_subtree_inner(
     dialect: DialectKind,
     memo: &mut Vec<Option<NodeId>>,
     in_progress: &mut Vec<GraphNode>,
+    want_tags: bool,
+    prune: Option<&PruneLookup>,
+    prune_id: u32,
+    alias_shared: &[bool],
     resources: &mut ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
     let yaml_node = graph.node_opt(node, source).ok_or_else(|| {
@@ -140,7 +308,20 @@ fn build_subtree_inner(
         })
     })?;
     match yaml_node {
-        YamlNode::Alias(target) => build_subtree(builder, graph, target, source, dialect, memo, in_progress, resources),
+        YamlNode::Alias(target) => build_subtree(
+            builder,
+            graph,
+            target,
+            source,
+            dialect,
+            memo,
+            in_progress,
+            want_tags,
+            prune,
+            prune_id,
+            alias_shared,
+            resources,
+        ),
         YamlNode::Scalar { .. } => {
             let resolved = schema::resolve_scalar(graph, node, dialect, source)?;
             let text = scalar_text(graph, node, source).to_owned();
@@ -212,12 +393,13 @@ fn build_subtree_inner(
                     (semantic, intrinsic)
                 }
             };
+            let intrinsic = demanded_intrinsic(want_tags, intrinsic);
             builder
                 .add_node(SCALAR_KIND, semantic, intrinsic, resources)
                 .map_err(map_data)
         }
         YamlNode::Sequence { items, tag, .. } => {
-            let intrinsic = tag.map(collection_intrinsic);
+            let intrinsic = demanded_intrinsic(want_tags, tag.map(collection_intrinsic));
             let id = builder
                 .add_node(
                     SEQ_KIND,
@@ -227,8 +409,22 @@ fn build_subtree_inner(
                 )
                 .map_err(map_data)?;
             let items: Vec<GraphNode> = items.to_vec();
+            let item_prune = PruneRef::root(prune).at(prune_id).element().id();
             for item in items {
-                let child = build_subtree(builder, graph, item, source, dialect, memo, in_progress, resources)?;
+                let child = build_subtree(
+                    builder,
+                    graph,
+                    item,
+                    source,
+                    dialect,
+                    memo,
+                    in_progress,
+                    want_tags,
+                    prune,
+                    item_prune,
+                    alias_shared,
+                    resources,
+                )?;
                 builder
                     .add_occurrence(LocalOwnerRef::Node(id), ITEM_ROLE, None, child, resources)
                     .map_err(map_data)?;
@@ -236,7 +432,7 @@ fn build_subtree_inner(
             Ok(id)
         }
         YamlNode::Mapping { entries, tag, .. } => {
-            let intrinsic = tag.map(collection_intrinsic);
+            let intrinsic = demanded_intrinsic(want_tags, tag.map(collection_intrinsic));
             let id = builder
                 .add_node(
                     MAP_KIND,
@@ -251,6 +447,9 @@ fn build_subtree_inner(
             for (key_node, value_node) in entries {
                 let key_text = key_text_of(graph, key_node, source, dialect)?
                     .ok_or_else(|| crate::locate::non_string_key_error(graph, key_node, source))?;
+                let Some(value_prune) = PruneRef::root(prune).at(prune_id).member(key_text.as_bytes()) else {
+                    continue;
+                };
                 let value = build_subtree(
                     builder,
                     graph,
@@ -259,13 +458,17 @@ fn build_subtree_inner(
                     dialect,
                     memo,
                     in_progress,
+                    want_tags,
+                    prune,
+                    value_prune,
+                    alias_shared,
                     resources,
                 )?;
                 builder
                     .add_occurrence(
                         LocalOwnerRef::Node(id),
                         MEMBER_ROLE,
-                        Some(AccountedOccurrenceKey::Text(&key_text)),
+                        Some(AccountedOccurrenceKey::Text(key_text)),
                         value,
                         resources,
                     )
@@ -288,12 +491,12 @@ fn scalar_text<'a>(graph: &'a YamlGraph, node: GraphNode, source: ResolvedSource
 /// under the schema becomes a key; anything else (a complex or non-core-tagged key) is never coerced. A
 /// schema-resolution ERROR propagates instead of collapsing into "not a string": the identical input fails the
 /// whole-document build with that same diagnostic.
-fn key_text_of(
-    graph: &YamlGraph,
+fn key_text_of<'graph>(
+    graph: &'graph YamlGraph,
     key: GraphNode,
-    source: ResolvedSource<'_>,
+    source: ResolvedSource<'graph>,
     dialect: DialectKind,
-) -> Result<Option<String>, CodecError> {
+) -> Result<Option<&'graph str>, CodecError> {
     let node = graph.node(key, source);
     match node {
         YamlNode::Scalar { text, tag, style, .. } => {
@@ -312,7 +515,7 @@ fn key_text_of(
             if !quoted && !explicit_str && !empty_key_str && !resolved_str {
                 return Ok(None);
             }
-            Ok(Some(text.to_owned()))
+            Ok(Some(text))
         }
         _ => Ok(None),
     }
@@ -320,15 +523,22 @@ fn key_text_of(
 
 /// Builds a fresh document whose root sequence holds the given elements — the SLICE-materialization law for a
 /// `Located::Range`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the range walk takes the graph, source, coverage, tag-skip, and prune together"
+)]
 pub(crate) fn build_range_document(
     graph: &YamlGraph,
     elements: &[GraphNode],
     source: ResolvedSource<'_>,
     dialect: DialectKind,
     source_mapped: bool,
+    coverage: BuilderCoverage,
+    want_tags: bool,
+    prune: Option<&PruneLookup>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_subtree_builder(resources)?;
+    let mut builder = fresh_subtree_builder(coverage, resources)?;
     let root = builder
         .add_node(
             SEQ_KIND,
@@ -339,6 +549,8 @@ pub(crate) fn build_range_document(
         .map_err(map_data)?;
     let mut memo: Vec<Option<NodeId>> = Vec::new();
     let mut in_progress: Vec<GraphNode> = Vec::new();
+    let alias_shared = alias_shared_marks(graph, prune.is_some());
+    let item_prune = PruneRef::root(prune).element().id();
     for element in elements {
         let child = build_subtree(
             &mut builder,
@@ -348,23 +560,29 @@ pub(crate) fn build_range_document(
             dialect,
             &mut memo,
             &mut in_progress,
+            want_tags,
+            prune,
+            item_prune,
+            &alias_shared,
             resources,
         )?;
         builder
             .add_occurrence(LocalOwnerRef::Node(root), ITEM_ROLE, None, child, resources)
             .map_err(map_data)?;
     }
-    let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
-    crate::document::attach_comment_facts(
-        &mut builder,
-        comment_index.as_ref(),
-        &memo,
-        source,
-        source_mapped,
-        resources,
-    )?;
-    crate::document::attach_anchor_facts(&mut builder, graph, &memo, source, resources)?;
-    crate::document::attach_style_facts(&mut builder, graph, &memo, source, resources)?;
+    if coverage.attached_facts() {
+        let comment_index = (!graph.comments().is_empty()).then(|| CommentIndex::from_graph(graph));
+        crate::document::attach_comment_facts(
+            &mut builder,
+            comment_index.as_ref(),
+            &memo,
+            source,
+            source_mapped,
+            resources,
+        )?;
+        crate::document::attach_anchor_facts(&mut builder, graph, &memo, source, resources)?;
+        crate::document::attach_style_facts(&mut builder, graph, &memo, source, resources)?;
+    }
     Ok((builder, root))
 }
 

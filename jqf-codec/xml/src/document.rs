@@ -127,7 +127,7 @@ pub(crate) fn build_document(
     resources: &mut ResourceContext<'_>,
     bind_spans: bool,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    build_document_with_content(tree, resources, bind_spans, true)
+    build_document_with_content(tree, resources, bind_spans, true, BuilderCoverage::complete())
 }
 
 pub(crate) fn build_document_with_content(
@@ -135,8 +135,14 @@ pub(crate) fn build_document_with_content(
     resources: &mut ResourceContext<'_>,
     bind_spans: bool,
     attach_content: bool,
+    coverage: BuilderCoverage,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_builder(resources)?;
+    // Names, content, and occurrence topology are the XML value model (the
+    // encoder reads topology). Attribute and comment facts skip when the
+    // demand named neither (checked before attached_facts is forced). NAME_FACT
+    // writes need attached_facts; topology follows the requirement.
+    let attach_attrs = coverage.attached_facts();
+    let mut builder = fresh_builder(coverage.with_attached_facts(true), resources)?;
     let mut flat = String::new();
     let (root, _) = build_node(
         &mut builder,
@@ -145,6 +151,7 @@ pub(crate) fn build_document_with_content(
         resources,
         bind_spans,
         attach_content,
+        attach_attrs,
         &mut flat,
     )?;
     if tree.had_doctype {
@@ -165,21 +172,20 @@ pub(crate) fn build_document_with_content(
     Ok((builder, root))
 }
 
-pub(crate) fn fresh_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
+pub(crate) fn fresh_builder(
+    coverage: BuilderCoverage,
+    _resources: &ResourceContext<'_>,
+) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = xml_schema_recipe().map_err(map_data)?;
-    let builder = AccountedDocumentBuilder::try_new_with_coverage(
-        recipe.format(),
-        recipe.dialect(),
-        // The projection always attaches facts (name/attrs/content) and the
-        // whole-document route retains the source snapshot (the source-echo
-        // encoder reads it back), so complete coverage is demanded even under
-        // a minimal semantic request.
-        BuilderCoverage::complete(),
-    )
-    .map_err(map_data)?;
+    let builder = AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), coverage)
+        .map_err(map_data)?;
     Ok(builder)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one element walk: builder, tree, coverage flags, and the flat-text buffer are the whole shape"
+)]
 fn build_node(
     builder: &mut AccountedDocumentBuilder<'static>,
     tree: &Tree,
@@ -187,16 +193,12 @@ fn build_node(
     resources: &mut ResourceContext<'_>,
     bind_spans: bool,
     attach_content: bool,
+    attach_attrs: bool,
     flat: &mut String,
 ) -> Result<(NodeId, (usize, usize)), CodecError> {
     let _depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
     let element = &tree.elements[index];
     let name_text = element.name.clark(&tree.intern);
-    let attr_clarks: Vec<String> = element
-        .attributes
-        .iter()
-        .map(|(expanded, _)| expanded.clark(&tree.intern))
-        .collect();
     let id = builder
         .add_node(
             ELEMENT_KIND,
@@ -223,48 +225,55 @@ fn build_node(
             resources,
         )
         .map_err(map_data)?;
-    // One per-attribute fact so `.&name` can serve each expanded-name
-    // attribute directly: the role is the engine's exact `.&` contract and
-    // the kind is the attribute's clark name. The quoted-value authored span
-    // lives on this fact (not a minted Null node): `--edit` splices those
-    // bytes, and `.@attrs` is the map projection of the same table.
-    for (index, ((_, value), clark)) in element.attributes.iter().zip(attr_clarks.iter()).enumerate() {
-        let fact = builder
-            .add_fact(
-                LocalOwnerRef::Node(id),
-                ATTRIBUTE_FACT,
-                clark,
-                1,
-                &FactPayload::Text(value.clone()),
-                resources,
-            )
-            .map_err(map_data)?;
-        if bind_spans && let Some(&(start, end)) = element.attribute_spans.get(index) {
-            record_fact_span(builder, fact, start, end, resources)?;
+    if attach_attrs {
+        let attr_clarks: Vec<String> = element
+            .attributes
+            .iter()
+            .map(|(expanded, _)| expanded.clark(&tree.intern))
+            .collect();
+        // One per-attribute fact so `.&name` can serve each expanded-name
+        // attribute directly: the role is the engine's exact `.&` contract and
+        // the kind is the attribute's clark name. The quoted-value authored span
+        // lives on this fact (not a minted Null node): `--edit` splices those
+        // bytes, and `.@attrs` is the map projection of the same table.
+        for (index, ((_, value), clark)) in element.attributes.iter().zip(attr_clarks.iter()).enumerate() {
+            let fact = builder
+                .add_fact(
+                    LocalOwnerRef::Node(id),
+                    ATTRIBUTE_FACT,
+                    clark,
+                    1,
+                    &FactPayload::Text(value.clone()),
+                    resources,
+                )
+                .map_err(map_data)?;
+            if bind_spans && let Some(&(start, end)) = element.attribute_spans.get(index) {
+                record_fact_span(builder, fact, start, end, resources)?;
+            }
         }
-    }
-    // The element's direct comment children, in order — the `.@comment` fact.
-    // The comments remain ordinary array children (byte identity owns the
-    // mixed-content array); the fact is the cross-format comment projection.
-    let comments: Vec<FactPayload> = element
-        .content
-        .iter()
-        .filter_map(|event| match event {
-            ContentEvent::Comment(text) => Some(FactPayload::Text(text.clone())),
-            _ => None,
-        })
-        .collect();
-    if !comments.is_empty() {
-        builder
-            .add_fact(
-                LocalOwnerRef::Node(id),
-                COMMENT_FACT,
-                COMMENT_FACT,
-                1,
-                &FactPayload::List(comments),
-                resources,
-            )
-            .map_err(map_data)?;
+        // The element's direct comment children, in order — the `.@comment` fact.
+        // The comments remain ordinary array children (byte identity owns the
+        // mixed-content array); the fact is the cross-format comment projection.
+        let comments: Vec<FactPayload> = element
+            .content
+            .iter()
+            .filter_map(|event| match event {
+                ContentEvent::Comment(text) => Some(FactPayload::Text(text.clone())),
+                _ => None,
+            })
+            .collect();
+        if !comments.is_empty() {
+            builder
+                .add_fact(
+                    LocalOwnerRef::Node(id),
+                    COMMENT_FACT,
+                    COMMENT_FACT,
+                    1,
+                    &FactPayload::List(comments),
+                    resources,
+                )
+                .map_err(map_data)?;
+        }
     }
     // Descendant text is appended once into `flat` in document order. Each
     // element's content is the slice it covered; a parent does not copy a
@@ -305,8 +314,16 @@ fn build_node(
                 add_leaf(builder, PI_KIND, AccountedSemanticNode::String(&spelling), resources)?
             }
             ContentEvent::Element(child_index) => {
-                let (child_id, _) =
-                    build_node(builder, tree, *child_index, resources, bind_spans, attach_content, flat)?;
+                let (child_id, _) = build_node(
+                    builder,
+                    tree,
+                    *child_index,
+                    resources,
+                    bind_spans,
+                    attach_content,
+                    attach_attrs,
+                    flat,
+                )?;
                 child_id
             }
         };
@@ -440,7 +457,7 @@ pub(crate) fn build_subtree_document(
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let mut builder = fresh_route_builder(resources)?;
     let mut flat = String::new();
-    let root = build_node(&mut builder, tree, element, resources, false, true, &mut flat)?.0;
+    let root = build_node(&mut builder, tree, element, resources, false, true, true, &mut flat)?.0;
     Ok((builder, root))
 }
 
@@ -619,5 +636,192 @@ mod measure_build_tests {
         // bound seal (the spans reference the source) which the session's Seal
         // phase provides — the session test covers the full flow.
         let _ = build_measure_document(children, &mut resources).expect("build");
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::{ATTRIBUTE_FACT, NAME_FACT};
+    use jqf_codec_core::{
+        AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext, DecodeRequest, DemandClause,
+        DiagnosticPolicy, FactIntent, TopologyDemand, ValidationMode,
+    };
+    use jqf_data::{DialectId, DocumentCapability, ExpandedName, NodeId};
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    static CONTROL: ContinueControl = ContinueControl;
+    const INPUT: &[u8] = b"<a href=\"https://ex\">hi</a>";
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &CONTROL,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.xml",
+            bytes,
+            0,
+        )
+    }
+
+    fn whole_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        AccessRequirement::try_whole(
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn decode_requirement<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> jqf_codec_core::DocumentProduct<'bytes> {
+        let dialect = DialectId::try_new(crate::XML_DOCUMENT_DIALECT_ID).expect("dialect");
+        let mut provider = crate::registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &dialect,
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                resources,
+            )
+            .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources).expect("open");
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run).expect("decode");
+        let AccessOutcome::FullDocument(product) = result.outcome() else {
+            panic!("expected full document");
+        };
+        product.try_clone().expect("clone")
+    }
+
+    fn attribute_pairs(
+        product: &jqf_codec_core::DocumentProduct<'_>,
+    ) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String)> {
+        let document = product.document();
+        let mut out = alloc::vec::Vec::new();
+        for index in 0..document.node_count() {
+            let Some(node) = NodeId::try_from_index(index) else {
+                break;
+            };
+            for fact_id in document.owner_fact_ids(node) {
+                let fact = document.fact(*fact_id).expect("fact");
+                if fact.role().as_str() != ATTRIBUTE_FACT {
+                    continue;
+                }
+                if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                    out.push((
+                        alloc::string::String::from(fact.kind().as_str()),
+                        alloc::string::String::from(text),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    fn has_name_fact(product: &jqf_codec_core::DocumentProduct<'_>) -> bool {
+        let document = product.document();
+        (0..document.node_count()).any(|index| {
+            let Some(node) = NodeId::try_from_index(index) else {
+                return false;
+            };
+            document.owner_fact_ids(node).iter().any(|fact_id| {
+                document
+                    .fact(*fact_id)
+                    .is_ok_and(|fact| fact.role().as_str() == NAME_FACT)
+            })
+        })
+    }
+
+    #[test]
+    fn identity_skips_attribute_facts_and_keeps_names() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "identity must skip attribute facts"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the XML value model");
+        assert!(
+            !product.document().coverage().contains(DocumentCapability::Topology),
+            "identity JSON projection omits occurrence topology"
+        );
+    }
+
+    #[test]
+    fn preserve_attaches_attribute_facts() {
+        let mut resources = resources();
+        let requirement =
+            whole_requirement(CodecDemand::try_new(&resources), &resources).with_fact_intent(FactIntent::Preserve);
+        let product = decode_requirement(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product)
+                .iter()
+                .any(|(name, value)| name == "href" && value == "https://ex"),
+            "Preserve must keep @attr"
+        );
+        assert!(
+            product.document().coverage().contains(DocumentCapability::Topology),
+            "Preserve is identity re-encode; encode reads occurrence topology"
+        );
+    }
+
+    #[test]
+    fn topology_clause_keeps_occurrence_topology() {
+        let mut resources = resources();
+        let mut demand = CodecDemand::try_new(&resources);
+        demand
+            .try_insert(&DemandClause::Topology(TopologyDemand::Children))
+            .expect("insert");
+        let product = decode_requirement(INPUT, &whole_requirement(demand, &resources), &mut resources);
+        assert!(
+            product.document().coverage().contains(DocumentCapability::Topology),
+            "xpath/css Topology clause retains occurrence topology"
+        );
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "Topology without Preserve still skips attribute facts"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the XML value model");
+    }
+
+    #[test]
+    fn attribute_clause_attaches_attribute_facts() {
+        let mut resources = resources();
+        let mut demand = CodecDemand::try_new(&resources);
+        demand
+            .try_insert(&DemandClause::Attribute(
+                ExpandedName::try_new("", "href").expect("href"),
+            ))
+            .expect("insert");
+        let product = decode_requirement(INPUT, &whole_requirement(demand, &resources), &mut resources);
+        assert!(
+            attribute_pairs(&product)
+                .iter()
+                .any(|(name, value)| name == "href" && value == "https://ex"),
+            ".&href must keep attrs"
+        );
     }
 }

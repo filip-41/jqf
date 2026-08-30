@@ -59,12 +59,14 @@ impl InputProvider for TomlProvider {
             // The prune hint rides the whole-document requirement: the build omits members the program provably cannot
             // read. `None` when no tree rides the requirement or it keeps everything.
             let prune = requirement.prune().and_then(crate::parse::PruneLookup::from_transport);
-            let state = crate::parse::TomlParseState::try_new(dialect, lazy_frontier, prune);
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let state = crate::parse::TomlParseState::try_new(dialect, lazy_frontier, prune, coverage);
             return ErasedAccessSession::try_new_source_with_route(source, crate::FULL_PHYSICAL_ROUTE_ID, || Ok(state));
         }
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
-            let session = crate::scoped::NativeScopedSession::try_new(path.steps(), origin, dialect)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let session = crate::scoped::NativeScopedSession::try_new(path.steps(), origin, dialect, coverage)?;
             ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || Ok(session))
         } else {
             Err(CodecError::new(jqf_codec_core::CodecFailureKind::ProviderRouteMismatch))

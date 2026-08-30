@@ -123,9 +123,10 @@ fn attach_comments(
     role: &str,
     comments: &[String],
     owner: NodeId,
+    attach_facts: bool,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(), CodecError> {
-    if comments.is_empty() {
+    if !attach_facts || comments.is_empty() {
         return Ok(());
     }
     let payload = FactPayload::List(comments.iter().map(|text| FactPayload::Text(text.clone())).collect());
@@ -142,16 +143,12 @@ fn attach_comments(
 pub(crate) fn build_document(
     skeleton: &Skeleton,
     grammar: Grammar,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let recipe = schema_recipe(grammar).map_err(map_data)?;
-    let (mut builder, schema) = AccountedDocumentBuilder::try_new_prepared_with_coverage(
-        &recipe,
-        // Attached facts are demanded for the comment projection; the source binding and span recording are
-        // unconditional, because the span receipts require every document to retain its source authority.
-        BuilderCoverage::minimal_semantic().with_attached_facts(true),
-    )
-    .map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
     builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
         DocumentCapabilityFamily::Attributes,
     ));
@@ -200,6 +197,7 @@ pub(crate) fn build_document(
             comment_facts(grammar)[0],
             &entry.leading_comments,
             value_node,
+            coverage.attached_facts(),
             resources,
         )?;
         builder
@@ -221,6 +219,7 @@ pub(crate) fn build_document(
         comment_foot_kind(grammar),
         &skeleton.trailing_comments,
         root,
+        coverage.attached_facts(),
         resources,
     )?;
     Ok((builder, root))

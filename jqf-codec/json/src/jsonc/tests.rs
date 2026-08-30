@@ -7,19 +7,23 @@
 //! comments whose text crosses one or several work-admission boundaries yet decode complete.
 //!
 //! Facts: where a comment attaches — the leading edge of the member's VALUE node it precedes, a trailer on the root
-//! — and that `FactIntent::None` attaches none. CRLF files end a line comment's fact at the carriage return.
+//! — and that `FactIntent::None` attaches none. CRLF files end a line comment's fact at the carriage return. Lazy
+//! materialize of a commented object with Preserve/facts attaches the same leading `jsonc.comment@1` list-of-texts.
 //!
 //! Edits: an object-append splice lands new members BEFORE a trailing comment block (comma-and-comment shapes included)
 //! and re-emits a multi-line comment payload line by line.
 //!
 //! Tags: validation per JSONC target dialect answers the `NoTags` law (the empty set valid, any tag invalid).
 
-use jqf_codec_core::{AccessOutcome, CodecRunContext, DecodeRequest, DiagnosticPolicy, FactIntent, ValidationMode};
+use jqf_codec_core::{
+    AccessAdapter, AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecRunContext, DecodeRequest,
+    DiagnosticPolicy, ExactPath, ExactSelectionRecord, FactIntent, ValidationMode,
+};
 use jqf_data::{DialectId, LocalOwnerRef, ReaderPoll};
 use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
-use crate::test_support::{self, requirement, requirement_preserving_facts};
+use crate::test_support::{self, demand, requirement, requirement_preserving_facts};
 
 use super::{
     DEFAULT_DIALECT_ID, DEFAULT_JQF_DIALECT_ID, FORMAT_ID, JQF_1_0_DIALECT_ID, TRAILING_DIALECT_ID,
@@ -82,6 +86,50 @@ fn decode_product_with(
         panic!("expected full document")
     };
     product
+}
+
+fn exact_preserving(members: &[&str], resources: &ResourceContext<'_>) -> AccessRequirement {
+    let guarantees = AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly);
+    let mut exact = ExactPath::try_new(resources);
+    for member in members {
+        exact.try_push_semantic_member(member, resources).expect("member");
+    }
+    let footprint = AccessFootprint::try_exact(exact, resources);
+    AccessRequirement::try_exact(footprint, demand(resources), guarantees, resources)
+        .expect("exact requirement")
+        .with_fact_intent(FactIntent::Preserve)
+}
+
+fn decode_located(
+    bytes: &'static [u8],
+    dialect: &'static str,
+    members: &[&str],
+    resources: &mut ResourceContext<'static>,
+) -> jqf_codec_core::AccessResult<'static> {
+    let dialect = DialectId::try_new(dialect).expect("dialect");
+    let mut provider = registration()
+        .expect("registration")
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            resources,
+        )
+        .expect("provider");
+    let requirement = exact_preserving(members, resources);
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, resources).expect("open");
+    let mut run = CodecRunContext::new(resources);
+    run.set_cooperative_credits(4_096);
+    session.decode(&mut run).expect("decode")
 }
 
 fn collect_comment_facts(
@@ -237,6 +285,26 @@ fn lazy_frontier_materializes_a_comment_bearing_span() {
         panic!("expected array .a, got {a:?}")
     };
     assert_eq!(items.len(), 3);
+}
+
+/// Lazy materialize of a commented JSONC object with Preserve/facts attaches the leading comment as
+/// `jsonc.comment@1` list-of-texts on the member's value node — the same ownership [`crate::parse::JsonParseState`]
+/// uses. Exact does not take this path.
+#[test]
+fn lazy_materialize_of_a_commented_jsonc_object_attaches_the_leading_comment() {
+    let text = "{ // leading\n  \"a\": 1 }";
+    let mut resources = test_support::resources();
+    let product = crate::lazy::JSONC_TRAILING_SPAN_MATERIALIZER_FACTS
+        .parse_document(text, &mut resources)
+        .expect("JSONC facts materializer must re-read a commented object");
+    let facts = collect_comment_facts(&product, &mut resources);
+    assert_eq!(facts.len(), 1, "facts: {facts:?}");
+    assert_eq!(facts[0].1, alloc::vec![alloc::string::String::from("leading")]);
+    assert_ne!(
+        facts[0].0,
+        product.document().root(),
+        "a comment inside the object leads the member value, not the object root"
+    );
 }
 
 /// Strict JSON documents decode through BOTH JSONC dialects to exactly the value the strict JSON codec reads (JSONC ⊇
@@ -658,6 +726,136 @@ fn crlf_line_comment_fact_has_no_trailing_carriage_return() {
     let facts = collect_comment_facts(&product, &mut resources);
     assert_eq!(facts.len(), 1, "facts: {facts:?}");
     assert_eq!(facts[0].1, alloc::vec![alloc::string::String::from("compiler options")]);
+}
+
+/// Exact Direct-binds slot 1, and a member's leading comment survives as `.@comment` on the located subtree root.
+#[test]
+fn exact_preserves_leading_comment_on_the_located_member() {
+    let bytes =
+        b"{\n  // compiler options\n  \"compilerOptions\": {\n    \"target\": \"ES2020\"\n  },\n  // the trailer\n}\n";
+    let mut resources = test_support::resources();
+    assert_eq!(
+        registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(TRAILING_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: crate::VALUE_SEPARATORS,
+                },
+                &mut resources,
+            )
+            .expect("provider")
+            .route_descriptions()
+            .len(),
+        2
+    );
+    let result = decode_located(bytes, TRAILING_DIALECT_ID, &["compilerOptions"], &mut resources);
+    assert_eq!(result.report().adapter(), AccessAdapter::None);
+    assert_eq!(
+        result.report().route().expect("receipt").route(),
+        super::provider::SCOPED_PHYSICAL_ROUTE_ID
+    );
+    assert_eq!(result.report().route().expect("receipt").slot().get(), 1);
+    let (outcome, _) = result.into_parts();
+    let AccessOutcome::Located(located) = outcome else {
+        panic!("expected located")
+    };
+    let ExactSelectionRecord::Node { node, .. } = located.result() else {
+        panic!("node")
+    };
+    assert_eq!(*node, located.product().document().root_handle());
+    let facts = collect_comment_facts(located.product(), &mut resources);
+    assert_eq!(facts.len(), 1, "facts: {facts:?}");
+    assert_eq!(facts[0].0, located.product().document().root());
+    assert_eq!(facts[0].1, alloc::vec![alloc::string::String::from("compiler options")]);
+}
+
+/// A trailing-comma document locates through Exact; the strict-comma dialect still rejects the same bytes.
+#[test]
+fn exact_honours_the_trailing_comma_dialect() {
+    let bytes = b"{\"a\": 1,}";
+    let mut resources = test_support::resources();
+    let located = decode_located(bytes, TRAILING_DIALECT_ID, &["a"], &mut resources);
+    let AccessOutcome::Located(selected) = located.into_parts().0 else {
+        panic!("trailing dialect Exact must accept a trailing comma")
+    };
+    let ExactSelectionRecord::Node { .. } = selected.result() else {
+        panic!("node")
+    };
+
+    let dialect = DialectId::try_new(DEFAULT_DIALECT_ID).expect("dialect");
+    let mut provider = registration()
+        .expect("registration")
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )
+        .expect("provider");
+    let requirement = exact_preserving(&["a"], &resources);
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, &mut resources).expect("open");
+    let mut run = CodecRunContext::new(&mut resources);
+    run.set_cooperative_credits(4_096);
+    assert!(
+        session.decode(&mut run).is_err(),
+        "the strict-comma dialect must reject a trailing comma on Exact"
+    );
+}
+
+/// Identity Exact still rejects unread non-trivia; trailing comments are trivia and must not fail validation.
+#[test]
+fn identity_exact_validates_unread_bytes() {
+    let mut resources = test_support::resources();
+    let commented = decode_located(b"{\"a\": 1}\n// trailer\n", TRAILING_DIALECT_ID, &[], &mut resources);
+    assert_eq!(commented.report().adapter(), AccessAdapter::None);
+    let AccessOutcome::Located(_) = commented.into_parts().0 else {
+        panic!("trailing comment is trivia")
+    };
+
+    let dialect = DialectId::try_new(TRAILING_DIALECT_ID).expect("dialect");
+    let mut provider = registration()
+        .expect("registration")
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(b"{\"a\": 1} garbage"),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )
+        .expect("provider");
+    let requirement = exact_preserving(&[], &resources);
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, &mut resources).expect("open");
+    let mut run = CodecRunContext::new(&mut resources);
+    run.set_cooperative_credits(4_096);
+    assert!(
+        session.decode(&mut run).is_err(),
+        "unread trailing value must fail Exact validation"
+    );
 }
 
 /// Encodes one owned array through the registered factory path with an OPTIONS-LESS request, so the request DIALECT

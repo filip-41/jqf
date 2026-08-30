@@ -26,15 +26,24 @@
 //!
 //! A [`Value`] is built from MANDATORY semantics only: the semantic relationship arenas and the core/non-core tag
 //! wrappers are always present, and topology, attached facts, and provenance are optional side data no materialization
-//! reads. The nested parse therefore demands [`BuilderCoverage::minimal_semantic`] — the cheapest shape that produces
-//! the same value, and the reason a touched subtree does not pay for arenas the toucher would throw away.
+//! reads. The nested parse therefore demands [`BuilderCoverage::minimal_semantic`] by default — the cheapest shape that
+//! produces the same value. A commented dialect whose coverage (or Preserve) demands
+//! [`BuilderCoverage::attached_facts`] re-parses with that family on so leading comments collected in the span attach as
+//! `jsonc.comment@1` / `json5.comment@1` list-of-texts on the materialized nodes, matching [`JsonParseState`]. Exact
+//! does not take this path (it re-parses the located span through `JsonParseState` directly); lazy element/count walks
+//! do.
 
-use jqf_codec_core::{CodecError, CodecRunContext, map_span_materialization_error};
-use jqf_data::{BuilderCoverage, DataError, DiagnosticCoverage, LazySpanMaterializer, Value};
+use jqf_codec_core::{CodecError, CodecRunContext, DocumentProduct, map_span_materialization_error};
+use jqf_data::{
+    BuilderCoverage, DataError, Decimal, DiagnosticCoverage, DocumentSchemaRecipe, Integer, LazySpanMaterializer,
+    Number, Shared, Value,
+};
 use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
-use crate::parse::{JsonParseState, OwnedRunPoll};
+use crate::parse::{
+    COMMENT_FACT, JSON_NODE_KINDS, JSON_OCCURRENCE_ROLES, JSON5_COMMENT_FACT, JsonParseState, OwnedRunPoll,
+};
 use crate::scoped::skip_ws;
 use crate::storage::{JsonGrammar, ParseMode};
 
@@ -556,6 +565,241 @@ fn span_limits(range: Option<jqf_data::SliceRange>) -> (u64, Option<u64>) {
     }
 }
 
+/// A one-key Path probe, optionally with a one-key select filter. The span walk
+/// extracts those members without re-parsing the rest of each object.
+struct MemberProject<'a> {
+    filter: Option<(&'a str, &'a jqf_data::CountTest)>,
+    probe_key: &'a str,
+}
+
+fn member_project(demand: &jqf_data::ElementDemand) -> Option<MemberProject<'_>> {
+    let filter = match &demand.filter {
+        None => None,
+        Some(filter) => match filter.path.as_slice() {
+            [jqf_data::CountStep::ObjectKey(key)] => Some((key.as_str(), &filter.test)),
+            _ => return None,
+        },
+    };
+    match &demand.probe {
+        jqf_data::ElementProbe::Path(path) => match path.as_slice() {
+            [jqf_data::CountStep::ObjectKey(key)] => Some(MemberProject {
+                filter,
+                probe_key: key.as_str(),
+            }),
+            _ => None,
+        },
+        jqf_data::ElementProbe::Length => None,
+    }
+}
+
+/// One walk extracting `project`'s members into a buffer, then visit. A late
+/// decline still publishes nothing.
+fn gather_array_span_members(
+    bytes: &[u8],
+    mut pos: usize,
+    demand: &jqf_data::ElementDemand,
+    project: &MemberProject<'_>,
+    resources: &mut ResourceContext<'_>,
+    visit: &mut dyn FnMut(&Value, &mut ResourceContext<'_>) -> Result<(), DataError>,
+) -> Result<jqf_data::ElementVerdict, DataError> {
+    let (skip, limit) = span_limits(demand.range);
+    let mut gathered: alloc::vec::Vec<Value> = alloc::vec::Vec::new();
+    let mut index = 0u64;
+    let mut scratch = alloc::string::String::new();
+    loop {
+        if pos >= bytes.len() {
+            return Ok(jqf_data::ElementVerdict::Decline);
+        }
+        if bytes[pos] == b']' {
+            break;
+        }
+        if limit.is_some_and(|end| index >= end) {
+            break;
+        }
+        let in_range = index >= skip && limit.is_none_or(|end| index < end);
+        if in_range {
+            match bytes.get(pos).copied() {
+                Some(b'{') => {
+                    let Some((filter_span, probe_span, end)) =
+                        object_member_spans(bytes, pos, project.filter.map(|(key, _)| key), project.probe_key)
+                    else {
+                        return Ok(jqf_data::ElementVerdict::Decline);
+                    };
+                    pos = end;
+                    let keep = if let Some((_, test)) = project.filter {
+                        let member = match filter_span {
+                            None => jqf_data::CountMember::Null,
+                            Some((at, _)) => match classify_member(bytes, at, &mut scratch) {
+                                Some(member) => member,
+                                None => return Ok(jqf_data::ElementVerdict::Decline),
+                            },
+                        };
+                        match test.answer(member) {
+                            None => return Ok(jqf_data::ElementVerdict::Decline),
+                            Some(keep) => keep,
+                        }
+                    } else {
+                        true
+                    };
+                    if keep {
+                        let value = match probe_span {
+                            None => Value::Null,
+                            Some((at, end)) => match owned_from_json_atom(bytes, at, end, resources)? {
+                                Some(value) => value,
+                                None => return Ok(jqf_data::ElementVerdict::Decline),
+                            },
+                        };
+                        if gathered.try_reserve(1).is_err() {
+                            return Err(DataError::Allocation);
+                        }
+                        gathered.push(value);
+                    }
+                }
+                Some(b'n') if bytes[pos..].starts_with(b"null") => {
+                    pos = skip_value(bytes, pos);
+                    let keep = match project.filter {
+                        None => true,
+                        Some((_, test)) => match test.answer(jqf_data::CountMember::Null) {
+                            None => return Ok(jqf_data::ElementVerdict::Decline),
+                            Some(keep) => keep,
+                        },
+                    };
+                    if keep {
+                        if gathered.try_reserve(1).is_err() {
+                            return Err(DataError::Allocation);
+                        }
+                        gathered.push(Value::Null);
+                    }
+                }
+                _ => return Ok(jqf_data::ElementVerdict::Decline),
+            }
+        } else {
+            pos = skip_value(bytes, pos);
+        }
+        index = index.saturating_add(1);
+        pos = skip_ws(bytes, pos);
+        if pos >= bytes.len() {
+            return Ok(jqf_data::ElementVerdict::Decline);
+        }
+        match bytes[pos] {
+            b',' => {
+                pos = skip_ws(bytes, pos + 1);
+                if pos >= bytes.len() {
+                    return Ok(jqf_data::ElementVerdict::Decline);
+                }
+            }
+            b']' => break,
+            _ => return Ok(jqf_data::ElementVerdict::Decline),
+        }
+    }
+    let visited = u64::try_from(gathered.len()).unwrap_or(u64::MAX);
+    for value in &gathered {
+        visit(value, resources)?;
+    }
+    Ok(jqf_data::ElementVerdict::Completed(visited))
+}
+
+/// Last-value-wins spans of `key_a` (optional) and `key_b` over one object,
+/// plus the position one past the closing brace.
+type ObjectMemberSpans = (Option<(usize, usize)>, Option<(usize, usize)>, usize);
+
+fn object_member_spans(
+    bytes: &[u8],
+    object_start: usize,
+    key_a: Option<&str>,
+    key_b: &str,
+) -> Option<ObjectMemberSpans> {
+    let mut cursor = skip_ws(bytes, object_start + 1);
+    let mut span_a = None;
+    let mut span_b = None;
+    loop {
+        if cursor >= bytes.len() {
+            return None;
+        }
+        match bytes[cursor] {
+            b'}' => break,
+            b'"' => {
+                let (after_key, raw_key) = read_string_content(bytes, cursor)?;
+                cursor = skip_ws(bytes, after_key);
+                if cursor >= bytes.len() || bytes[cursor] != b':' {
+                    return None;
+                }
+                cursor = skip_ws(bytes, cursor + 1);
+                if cursor >= bytes.len() {
+                    return None;
+                }
+                let value_end = skip_value(bytes, cursor);
+                if key_a.is_some_and(|key| decoded_is(raw_key, key)) {
+                    span_a = Some((cursor, value_end));
+                }
+                if decoded_is(raw_key, key_b) {
+                    span_b = Some((cursor, value_end));
+                }
+                cursor = value_end;
+            }
+            _ => return None,
+        }
+        cursor = skip_ws(bytes, cursor);
+        if cursor >= bytes.len() {
+            return None;
+        }
+        match bytes[cursor] {
+            b',' => cursor = skip_ws(bytes, cursor + 1),
+            b'}' => break,
+            _ => return None,
+        }
+    }
+    Some((span_a, span_b, cursor + 1))
+}
+
+/// An owned value from one validated JSON atom (null/bool/string/number), or a
+/// nested parse for an array/object member. `None` declines so a lenient-dial
+/// atom (`inf`, `nan`, `+1`, `.5`) takes the batch walk that carries the dial.
+fn owned_from_json_atom(
+    bytes: &[u8],
+    at: usize,
+    end: usize,
+    resources: &mut ResourceContext<'_>,
+) -> Result<Option<Value>, DataError> {
+    match bytes.get(at).copied() {
+        Some(b'n') if bytes[at..].starts_with(b"null") => Ok(Some(Value::Null)),
+        Some(b't') => Ok(Some(Value::Bool(true))),
+        Some(b'f') => Ok(Some(Value::Bool(false))),
+        Some(b'"') => {
+            let (_, raw) = read_string_content(bytes, at).ok_or(DataError::InvalidDocument)?;
+            let text = if raw.contains(&b'\\') {
+                unescape_string(raw).ok_or(DataError::InvalidDocument)?
+            } else {
+                alloc::string::String::from(core::str::from_utf8(raw).map_err(|_| DataError::InvalidDocument)?)
+            };
+            Ok(Some(Value::String(
+                Shared::<str>::try_from_str(&text).map_err(|_| DataError::Allocation)?,
+            )))
+        }
+        Some(b'-' | b'0'..=b'9') => {
+            let literal = core::str::from_utf8(&bytes[at..end]).map_err(|_| DataError::InvalidDocument)?;
+            if literal.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                let Ok(decimal) = Decimal::parse(literal) else {
+                    return Ok(None);
+                };
+                Ok(Some(Value::Number(Number::decimal(decimal))))
+            } else {
+                let Ok(integer) = Integer::parse(literal) else {
+                    return Ok(None);
+                };
+                Ok(Some(Value::Number(Number::integer(integer))))
+            }
+        }
+        Some(b'{' | b'[') => {
+            let text = core::str::from_utf8(&bytes[at..end]).map_err(|_| DataError::InvalidDocument)?;
+            materialize(text, session_grammar(resources), resources)
+                .map(Some)
+                .map_err(|error| map_span_materialization_error(&error))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// The element-iteration leaf over an ARRAY span: iterate the span's top-level elements in bounded batches — each
 /// batch re-parsed as one bracketed array (one parse session per batch, never one per element) — navigating the
 /// demand's probe per built element, and never building the whole container's tree.
@@ -579,6 +823,14 @@ fn visit_array_span(
         return Ok(jqf_data::ElementVerdict::Completed(0));
     }
     let (skip, limit) = span_limits(demand.range);
+    if matches!(demand.row, jqf_data::ElementRow::FanOut)
+        && let Some(project) = member_project(demand)
+    {
+        // One walk: gather probe values, then visit. Buffering until the span
+        // is proven keeps FanOut prefix-free without a second skip of the
+        // unread members.
+        return gather_array_span_members(bytes, pos, demand, &project, resources, visit);
+    }
     // The FanOut pre-pass: every in-range element's probe must be provable BEFORE the first visit (the
     // visit-all-or-none contract). A one-step probe's provability is its element's first byte — a cheap scan over the
     // in-range elements. A DEEPER probe (the first byte cannot prove the deeper steps) falls back to a full
@@ -725,6 +977,13 @@ fn run_batches(
             return Ok(jqf_data::ElementVerdict::Decline);
         };
         for element in batch {
+            if let Some(filter) = demand.filter.as_ref() {
+                match filter.contributes(element) {
+                    None => return Ok(jqf_data::ElementVerdict::Decline),
+                    Some(0) => continue,
+                    Some(_) => {}
+                }
+            }
             let Some(probe_value) = jqf_data::owned_probe_value(element, &demand.probe) else {
                 return Ok(jqf_data::ElementVerdict::Decline);
             };
@@ -836,62 +1095,160 @@ fn skip_value(bytes: &[u8], pos: usize) -> usize {
 }
 
 /// JSONC/JSON5 deferred-span reader: the STRICT materializer rejects `//` inside a deferred container. Each dialect
-/// holds its trailing-comma / JSON5 grammar; comments are always trivia here. Count and element walks use the trait
-/// default (materialize, then walk the owned value) so a comment inside the span cannot take the STRICT byte skip.
+/// holds its trailing-comma / JSON5 grammar; comments are always trivia for the STRICT byte skip. Count and element
+/// walks use the trait default (materialize, then walk the owned value) so a comment inside the span cannot take the
+/// STRICT byte skip. When [`BuilderCoverage::attached_facts`] is on, the nested parse attaches leading comments as
+/// `jsonc.comment@1` / `json5.comment@1` list-of-texts, matching [`JsonParseState`].
 pub(crate) struct CommentedSpanMaterializer {
     trailing_commas: bool,
     json5: bool,
+    attach_facts: bool,
 }
 
 /// JSONC `jsonc.trailing@1` (comments and trailing commas).
 pub(crate) static JSONC_TRAILING_SPAN_MATERIALIZER: CommentedSpanMaterializer = CommentedSpanMaterializer {
     trailing_commas: true,
     json5: false,
+    attach_facts: false,
+};
+/// JSONC `jsonc.trailing@1` with comment facts on the nested document.
+pub(crate) static JSONC_TRAILING_SPAN_MATERIALIZER_FACTS: CommentedSpanMaterializer = CommentedSpanMaterializer {
+    trailing_commas: true,
+    json5: false,
+    attach_facts: true,
 };
 /// JSONC `jsonc.default@1` (comments, strict comma law).
 pub(crate) static JSONC_DEFAULT_SPAN_MATERIALIZER: CommentedSpanMaterializer = CommentedSpanMaterializer {
     trailing_commas: false,
     json5: false,
+    attach_facts: false,
+};
+/// JSONC `jsonc.default@1` with comment facts on the nested document.
+pub(crate) static JSONC_DEFAULT_SPAN_MATERIALIZER_FACTS: CommentedSpanMaterializer = CommentedSpanMaterializer {
+    trailing_commas: false,
+    json5: false,
+    attach_facts: true,
 };
 /// JSON5 document grammar (comments, trailing commas, JSON5 syntax).
 pub(crate) static JSON5_SPAN_MATERIALIZER: CommentedSpanMaterializer = CommentedSpanMaterializer {
     trailing_commas: true,
     json5: true,
+    attach_facts: false,
 };
+/// JSON5 document grammar with comment facts on the nested document.
+pub(crate) static JSON5_SPAN_MATERIALIZER_FACTS: CommentedSpanMaterializer = CommentedSpanMaterializer {
+    trailing_commas: true,
+    json5: true,
+    attach_facts: true,
+};
+
+/// Comment-fact extras a nested span parse needs when coverage demands attached facts.
+struct SpanFacts {
+    role: &'static str,
+    recipe: DocumentSchemaRecipe<'static>,
+}
+
+impl CommentedSpanMaterializer {
+    fn grammar(&self, resources: &ResourceContext<'_>) -> JsonGrammar {
+        JsonGrammar {
+            comments: true,
+            trailing_commas: self.trailing_commas,
+            lenient: resources.decode_lenient(),
+            json5: self.json5,
+        }
+    }
+
+    fn facts_config(&self) -> Result<Option<SpanFacts>, DataError> {
+        if !self.attach_facts {
+            return Ok(None);
+        }
+        Ok(Some(SpanFacts {
+            role: if self.json5 { JSON5_COMMENT_FACT } else { COMMENT_FACT },
+            recipe: self.facts_recipe()?,
+        }))
+    }
+
+    fn facts_recipe(&self) -> Result<DocumentSchemaRecipe<'static>, DataError> {
+        if self.json5 {
+            DocumentSchemaRecipe::try_new(
+                crate::json5::FORMAT_ID,
+                Some(crate::json5::DOCUMENT_DIALECT_ID),
+                JSON_NODE_KINDS,
+                JSON_OCCURRENCE_ROLES,
+                &[JSON5_COMMENT_FACT],
+                &[JSON5_COMMENT_FACT],
+            )
+        } else {
+            let dialect = if self.trailing_commas {
+                crate::jsonc::TRAILING_DIALECT_ID
+            } else {
+                crate::jsonc::DEFAULT_DIALECT_ID
+            };
+            DocumentSchemaRecipe::try_new(
+                crate::jsonc::FORMAT_ID,
+                Some(dialect),
+                JSON_NODE_KINDS,
+                JSON_OCCURRENCE_ROLES,
+                &[COMMENT_FACT],
+                &[COMMENT_FACT],
+            )
+        }
+    }
+
+    /// Re-parses one commented span as a document. Leading comments attach when this reader was built with facts.
+    pub(crate) fn parse_document(
+        &self,
+        text: &str,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<DocumentProduct<'static>, DataError> {
+        parse_span(text, self.grammar(resources), self.facts_config()?, resources)
+            .map_err(|error| map_span_materialization_error(&error))
+    }
+}
 
 impl LazySpanMaterializer for CommentedSpanMaterializer {
     fn materialize_span(&self, text: &str, resources: &mut ResourceContext<'_>) -> Result<Value, DataError> {
-        materialize(
-            text,
-            JsonGrammar {
-                comments: true,
-                trailing_commas: self.trailing_commas,
-                lenient: resources.decode_lenient(),
-                json5: self.json5,
-            },
-            resources,
-        )
-        .map_err(|error| map_span_materialization_error(&error))
+        let product = self.parse_document(text, resources)?;
+        product.document().materialize_root(resources)
     }
 }
 
 fn materialize(text: &str, grammar: JsonGrammar, resources: &mut ResourceContext<'_>) -> Result<Value, CodecError> {
-    let source = ResolvedSource::new(SPAN_SOURCE, "container-span", text.as_bytes(), 0);
-    let mut state = JsonParseState::new(
-        DiagnosticCoverage::NotRequested,
-        BuilderCoverage::minimal_semantic(),
-        ParseMode::OwnedRun,
-    );
+    let product = parse_span(text, grammar, None, resources)?;
+    product
+        .document()
+        .materialize_root(resources)
+        .map_err(crate::lex::map_data)
+}
+
+fn parse_span(
+    text: &str,
+    grammar: JsonGrammar,
+    facts: Option<SpanFacts>,
+    resources: &mut ResourceContext<'_>,
+) -> Result<DocumentProduct<'static>, CodecError> {
+    let coverage = if facts.is_some() {
+        BuilderCoverage::minimal_semantic().with_attached_facts(true)
+    } else {
+        BuilderCoverage::minimal_semantic()
+    };
+    let mut state = JsonParseState::new(DiagnosticCoverage::NotRequested, coverage, ParseMode::OwnedRun);
     // The span materializer must accept exactly what the validating scan accepted under the resource dial: the lazy
     // route validates leniently and then re-materializes the deferred span, so the materializer carries the same
     // grammar.
     state.set_grammar(grammar);
     // The span is a `&str`; UTF-8 is already proved.
     state.set_utf8_proved();
-    let product = loop {
+    if let Some(facts) = facts {
+        // Dynamic schema so `add_fact` is legal; the prototype path refuses it.
+        state.with_dynamic_recipe(facts.recipe);
+        state.set_comment_fact_role(facts.role);
+    }
+    let source = ResolvedSource::new(SPAN_SOURCE, "container-span", text.as_bytes(), 0);
+    loop {
         let mut run = CodecRunContext::new(resources);
         match state.poll_owned(source, &mut run)? {
-            OwnedRunPoll::Ready(product) => break product,
+            OwnedRunPoll::Ready(product) => return Ok(product),
             OwnedRunPoll::Pending => {
                 // The control check inside the replenish is what keeps a large subtree cancellable and
                 // deadline-bounded: the loop cannot run past a cancellation, it can only run without yielding to the
@@ -899,12 +1256,7 @@ fn materialize(text: &str, grammar: JsonGrammar, resources: &mut ResourceContext
                 resources.try_begin_next_cooperative_entry(SPAN_PARSE_CREDITS)?;
             }
         }
-    };
-    let value = product
-        .document()
-        .materialize_root(resources)
-        .map_err(crate::lex::map_data)?;
-    Ok(value)
+    }
 }
 
 #[cfg(test)]
@@ -1017,6 +1369,59 @@ mod tests {
             panic!("expected array, got {value:?}")
         };
         assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn lazy_materialize_of_a_commented_jsonc_object_attaches_the_leading_comment() {
+        let text = "{ // leading\n  \"a\": 1 }";
+        let mut resources = crate::test_support::resources();
+        let product = JSONC_TRAILING_SPAN_MATERIALIZER_FACTS
+            .parse_document(text, &mut resources)
+            .expect("JSONC facts materializer must re-read a commented object");
+        assert!(
+            product
+                .document()
+                .coverage()
+                .contains(jqf_data::DocumentCapability::AttachedFacts),
+            "Preserve/facts must retain attached-fact coverage"
+        );
+        let document = product.document();
+        let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+        let mut reader = document.fact_reader(&mut resources).expect("reader");
+        let mut lines = alloc::vec::Vec::new();
+        loop {
+            match reader.poll_batch(limit, &mut resources).expect("poll") {
+                jqf_data::ReaderPoll::Batch(batch) => {
+                    for fact in batch.iter() {
+                        if fact.role().as_str() != COMMENT_FACT {
+                            continue;
+                        }
+                        let jqf_data::FactPayloadView::List(texts) = fact.payload() else {
+                            continue;
+                        };
+                        for entry in texts.iter() {
+                            if let jqf_data::FactPayloadView::Text(text) = entry {
+                                lines.push(alloc::string::String::from(text));
+                            }
+                        }
+                    }
+                }
+                jqf_data::ReaderPoll::Pending => {
+                    resources
+                        .try_begin_next_cooperative_entry(SPAN_PARSE_CREDITS)
+                        .expect("resume");
+                }
+                jqf_data::ReaderPoll::End(_) => break,
+            }
+        }
+        assert_eq!(lines, alloc::vec![alloc::string::String::from("leading")]);
+        let value = JSONC_TRAILING_SPAN_MATERIALIZER_FACTS
+            .materialize_span(text, &mut resources)
+            .expect("facts path still yields the object value");
+        let Value::Object(object) = value else {
+            panic!("expected object, got {value:?}")
+        };
+        assert!(object.get("a").is_some());
     }
 }
 
@@ -1184,7 +1589,9 @@ mod count_filter_tests {
 #[cfg(test)]
 mod element_batch_tests {
     use super::*;
-    use jqf_data::{CountStep, ElementDemand, ElementProbe, ElementRow};
+    use jqf_data::{
+        CountCompare, CountFilter, CountLiteral, CountStep, CountTest, ElementDemand, ElementProbe, ElementRow,
+    };
 
     /// What one drive collected: integral numeric probe values exactly, string probe values as text.
     #[derive(Default)]
@@ -1220,6 +1627,7 @@ mod element_batch_tests {
             range,
             probe,
             increment: None,
+            filter: None,
         }
     }
 
@@ -1396,5 +1804,35 @@ mod element_batch_tests {
         assert_eq!(span_limits(Some((Some(2), Some(5)))), (2, Some(5)));
         // Bounds arrive non-negative-or-open; a defensive negative normalizes to the window start rather than wrapping.
         assert_eq!(span_limits(Some((Some(-3), Some(4)))), (0, Some(4)));
+    }
+
+    #[test]
+    fn one_key_probe_extracts_members_without_the_batch_path() {
+        let mut seen = Seen::default();
+        let verdict = seen.drive(
+            r#"[{"id":1,"name":"a"},{"name":"b","id":2},{"id":3}]"#,
+            &demand(ElementRow::FanOut, None, path_probe(&["id"])),
+        );
+        assert_eq!(verdict, jqf_data::ElementVerdict::Completed(3));
+        assert_eq!(seen.numbers, alloc::vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn select_filter_skips_non_matching_elements() {
+        let mut demand = demand(ElementRow::FanOut, None, path_probe(&["id"]));
+        demand.filter = Some(CountFilter {
+            path: alloc::vec![key("active")],
+            test: CountTest::Compare {
+                op: CountCompare::Equal,
+                rhs: CountLiteral::Bool(true),
+            },
+        });
+        let mut seen = Seen::default();
+        let verdict = seen.drive(
+            r#"[{"active":true,"id":1},{"active":false,"id":2},{"active":true,"id":3}]"#,
+            &demand,
+        );
+        assert_eq!(verdict, jqf_data::ElementVerdict::Completed(2));
+        assert_eq!(seen.numbers, alloc::vec![1, 3]);
     }
 }

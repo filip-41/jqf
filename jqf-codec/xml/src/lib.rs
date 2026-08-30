@@ -142,7 +142,7 @@ pub fn decode_document(
     source: jqf_source::ResolvedSource<'_>,
     resources: &mut jqf_resource::ResourceContext<'_>,
 ) -> Result<jqf_data::Value, jqf_codec_core::CodecError> {
-    let mut state = session::XmlSession::new(source, false, true)?;
+    let mut state = session::XmlSession::new(source, false, true, jqf_data::BuilderCoverage::complete())?;
     let mut context = jqf_codec_core::CodecRunContext::new(resources);
     let result = state.decode(AccessInput::Source(source), &mut context)?;
     let AccessOutcome::FullDocument(product) = result.outcome() else {
@@ -243,7 +243,8 @@ mod tests {
             bytes,
             0,
         );
-        let mut state = crate::session::XmlSession::new(source, false, true).expect("session");
+        let mut state = crate::session::XmlSession::new(source, false, true, jqf_data::BuilderCoverage::complete())
+            .expect("session");
         let mut context = jqf_codec_core::CodecRunContext::new(&mut resources);
         let result = state.decode(AccessInput::Source(source), &mut context).expect("decode");
         let product = match result.outcome() {
@@ -316,7 +317,8 @@ mod tests {
             bytes,
             0,
         );
-        let mut state = crate::session::XmlSession::new(source, false, true).expect("session");
+        let mut state = crate::session::XmlSession::new(source, false, true, jqf_data::BuilderCoverage::complete())
+            .expect("session");
         let mut context = jqf_codec_core::CodecRunContext::new(&mut resources);
         let result = state.decode(AccessInput::Source(source), &mut context).expect("decode");
         let product = match result.outcome() {

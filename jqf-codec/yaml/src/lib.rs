@@ -182,7 +182,14 @@ pub fn decode_documents(
     source: jqf_source::ResolvedSource<'_>,
     resources: &mut jqf_resource::ResourceContext<'_>,
 ) -> Result<alloc::vec::Vec<jqf_data::Value>, jqf_codec_core::CodecError> {
-    let mut state = parse::YamlParseState::try_new(source, provider::DialectKind::Core, None, resources)?;
+    let mut state = parse::YamlParseState::try_new(
+        source,
+        provider::DialectKind::Core,
+        None,
+        jqf_data::BuilderCoverage::minimal_semantic(),
+        false,
+        resources,
+    )?;
     let mut values = alloc::vec::Vec::new();
     while !state.stream_done() {
         let mut context = jqf_codec_core::CodecRunContext::new(resources);

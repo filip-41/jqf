@@ -39,13 +39,20 @@ pub(crate) struct XmlSession {
     /// the json/toml/yaml sessions keep).
     binding_stage: Option<jqf_data::DocumentSourceBindingStage>,
     finalizer: Option<AccountedDocumentFinalizer<'static>>,
-    /// CONTENT facts are format facts the encoder does not read; skip them
-    /// when the demand names no attached-fact clause.
+    /// Always true on the whole-document route (xpath `string(.)` reads
+    /// `xml.content@1` after decode). False only on the measure route, which
+    /// builds no tree.
     attach_content: bool,
+    coverage: jqf_data::BuilderCoverage,
 }
 
 impl XmlSession {
-    pub(crate) fn new(source: ResolvedSource<'_>, measure: bool, attach_content: bool) -> Result<Self, CodecError> {
+    pub(crate) fn new(
+        source: ResolvedSource<'_>,
+        measure: bool,
+        attach_content: bool,
+        coverage: jqf_data::BuilderCoverage,
+    ) -> Result<Self, CodecError> {
         // The count skeleton: validate everything, record the document
         // element's direct children, build no tree.
         let parse = if measure {
@@ -61,6 +68,7 @@ impl XmlSession {
             binding_stage: None,
             finalizer: None,
             attach_content,
+            coverage,
         })
     }
 }
@@ -109,6 +117,7 @@ impl AccessSession for XmlSession {
                             context.resources(),
                             true,
                             self.attach_content,
+                            self.coverage,
                         )?,
                         ParseOutput::Located(_) => {
                             return Err(jqf_codec_core::data_contract(
@@ -228,7 +237,7 @@ mod measure_session_tests {
             probe: Vec::new(),
             filter: None,
         };
-        let mut session = XmlSession::new(source, true, false).expect("session");
+        let mut session = XmlSession::new(source, true, false, jqf_data::BuilderCoverage::complete()).expect("session");
         let mut context = CodecRunContext::new(&mut resources);
         let outcome = session
             .decode(AccessInput::Source(source), &mut context)

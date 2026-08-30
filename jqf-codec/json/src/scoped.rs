@@ -1,5 +1,12 @@
-//! Scoped strict-JSON access: validate the whole input to the full parser's exact strictness, then materialize only the
+//! Scoped exact-path access: validate the whole input to the full parser's exact strictness, then materialize only the
 //! selected exact-path subtree.
+//!
+//! Strict JSON, JSONC, and JSON5 share this session. The grammar field is `STRICT` plus the leniency dial for RFC 8259;
+//! JSONC/JSON5 arm comments (and JSON5 the rest of its grammar) so the validate walk accepts the same bytes as
+//! [`crate::parse::JsonParseState`]. Comment facts that sit outside the located value span — a member's leading
+//! comment before its key — are collected during validate and seeded onto the materializer when
+//! [`jqf_data::BuilderCoverage::attached_facts`] is on. Identity Exact still validates every unread byte; trailing
+//! trivia is skipped, trailing values are not.
 //!
 //! The scoped route exists so an engine-authored `Located` requirement with an exact-path footprint stops paying
 //! whole-document materialization. It runs in two cooperative phases:
@@ -11,6 +18,10 @@
 //!    Publishing still waits for validation `Done`.
 //! 2. **Materialize** — a fresh [`JsonParseState`] re-parse of just the selected span into a demand-scoped
 //!    [`DocumentProduct`]; retained memory is therefore proportional to the selected subtree, not the whole input.
+//!    When the bound requirement carries [`jqf_codec_core::AccessRequirement::type_demand`], this phase skips the
+//!    payload and builds a kind-only document (empty array/object, or a dummy scalar) from the located value's first
+//!    payload byte. `PATH | type` answers array/object/string/number/boolean/null without retaining members. The
+//!    validate walk still visits every unread byte.
 //!
 //! The published [`AccessOutcome::Located`] carries the identical [`ExactSelectionRecord`] the
 //! whole-decode-then-navigate path publishes, so the SDK/CLI behaviour (located value / `null` / typed error) is
@@ -29,9 +40,13 @@ use core::mem;
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, SelectionOrigin,
+    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, PruneTree, SelectionOrigin,
 };
-use jqf_data::{BuilderCoverage, DiagnosticCoverage, DocumentSchemaPrototype, ValueKind};
+use jqf_data::{
+    AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError,
+    DiagnosticCoverage, DocumentCapabilityFamily, DocumentSchemaPrototype, DocumentSchemaRecipe, LazySpanMaterializer,
+    ValueKind,
+};
 use jqf_resource::{OwnedDepthGuard, ResourceContext};
 use jqf_source::ResolvedSource;
 
@@ -39,11 +54,11 @@ use crate::byte_scan::Utf8Carry;
 use crate::error::diag;
 use crate::error::{data_contract, invalid, unsupported_number};
 use crate::lex::{
-    admit_bytes, advance_number, consume_digit_run, hex, is_value_boundary, number_finish_plan, number_lex_complete,
-    plain_string_run_end, scalar_width_from_lead,
+    BYTE_ORDER_MARK, admit_bytes, advance_number, consume_digit_run, hex, is_value_boundary, number_finish_plan,
+    number_lex_complete, plain_string_run_end, scalar_width_from_lead, single_quoted_run_end,
 };
 use crate::parse::{JsonParseState, OwnedRunPoll, reset_reusable_frames};
-use crate::storage::{EscapeState, NumberLex, NumberState, ParseMode};
+use crate::storage::{EscapeState, JsonGrammar, NumberLex, NumberState, ParseMode};
 
 /// One owned exact-path step, decoupled from the requirement's lifetime so the scoped session can live in the
 /// core-owned carrier.
@@ -109,6 +124,8 @@ struct VString {
     escape: EscapeState,
     /// The opening quote's offset, for the key-text capture at key close.
     start: usize,
+    /// `b'"'` or, under JSON5, `b'\''`.
+    quote: u8,
 }
 
 /// One step of the frontier path being validated: an object key or an array position. Maintained additively for the
@@ -250,6 +267,7 @@ fn escape_step(
     byte: u8,
     source: ResolvedSource<'_>,
     at: usize,
+    json5: bool,
 ) -> Result<EscapeState, CodecError> {
     match escape {
         EscapeState::Escape => match byte {
@@ -257,9 +275,20 @@ fn escape_step(
             b'u' => Ok(EscapeState::Unicode { value: 0, digits: 0 }),
             _ => Err(invalid(source, at, diag::INVALID_ESCAPE, diag::MSG_INVALID_ESCAPE)),
         },
-        // The scoped validator is strict JSON's route: it never carries the json5 grammar, so a JSON5 `\x` escape can
-        // never reach it. The arm exists for match exhaustiveness and fails closed.
-        EscapeState::Hex { .. } => Err(invalid(source, at, diag::INVALID_ESCAPE, diag::MSG_INVALID_ESCAPE)),
+        EscapeState::Hex { mut value, mut digits } => {
+            if !json5 {
+                return Err(invalid(source, at, diag::INVALID_ESCAPE, diag::MSG_INVALID_ESCAPE));
+            }
+            let digit =
+                hex(byte).ok_or_else(|| invalid(source, at, diag::INVALID_ESCAPE, diag::MSG_INVALID_ESCAPE_JSON5))?;
+            value = (value << 4) | digit;
+            digits += 1;
+            if digits == 2 {
+                Ok(EscapeState::Plain)
+            } else {
+                Ok(EscapeState::Hex { value, digits })
+            }
+        }
         EscapeState::Unicode { mut value, mut digits } => {
             let digit =
                 hex(byte).ok_or_else(|| invalid(source, at, "invalid-unicode-escape", "invalid Unicode escape"))?;
@@ -352,6 +381,12 @@ pub(crate) struct ScopedSession {
     origin: SelectionOrigin,
     diagnostics: DiagnosticCoverage,
     coverage: BuilderCoverage,
+    /// Kept-subtree hint for the materialize pass. Validation still visits every
+    /// byte; prune only changes what the re-parse of the located span builds.
+    prune: Option<PruneTree>,
+    /// Kind-only materialize: after locate, emit an empty-of-children node from the first payload byte. Validation is
+    /// unchanged.
+    type_demand: bool,
     phase: SessionPhase,
     // Validate-phase state.
     validate: ValidatePhase,
@@ -393,11 +428,40 @@ pub(crate) struct ScopedSession {
     /// whole-document route consumes it. The flag makes the skip idempotent across cooperative resumption and is reset
     /// per value in [`Self::try_reset`].
     bom_handled: bool,
-    /// The grammar this scoped session validates: the strict session's `STRICT` plus the leniency dial copied from the
-    /// resource dial at construction. The scoped and lazy routes serve strict JSON only (ceiling 1 — JSONC uses the
-    /// whole-document route), so the grammar's comment and trailing-comma bits stay `false` here; only the lenient bit
-    /// can differ from `STRICT`.
-    grammar: crate::storage::JsonGrammar,
+    /// The grammar this scoped session validates: strict JSON copies `STRICT` plus the leniency dial; JSONC/JSON5 arm
+    /// comments (and JSON5 the rest) so the walk matches [`JsonParseState`].
+    grammar: JsonGrammar,
+    /// Comment-fact materialize extras when this session serves JSONC/JSON5. Strict JSON leaves this unset.
+    commented: Option<CommentedScope>,
+    /// Leading comment texts awaiting the next value, collected only when the grammar arms comments and coverage
+    /// demands attached facts.
+    pending_comments: Vec<String>,
+    /// Leading comments that belong to the located node (last-value-wins), captured at the winner's start.
+    located_comments: Vec<String>,
+    /// Bytes already granted toward a trivia run at the cursor, matching [`JsonParseState`]'s window law so a comment
+    /// longer than one admission is not truncated.
+    trivia_window: usize,
+}
+
+/// JSONC/JSON5 extras the scoped Exact materializer needs: dynamic schema (so `add_fact` is legal), the comment role,
+/// and the dialect's lazy span reader. When coverage demands attached facts, the lazy reader attaches leading comments
+/// on the nested document; Exact never takes that path and re-parses the located span through [`JsonParseState`].
+#[derive(Clone, Copy)]
+pub(crate) struct CommentedScope {
+    /// Grammar this dialect accepts (comments always on; trailing commas and json5 per spec).
+    pub grammar: JsonGrammar,
+    /// `jsonc.comment@1` or `json5.comment@1`.
+    pub comment_role: &'static str,
+    /// Schema recipe that declares the comment fact role.
+    pub recipe: fn(&'static str) -> Result<DocumentSchemaRecipe<'static>, DataError>,
+    /// Dialect text the recipe binds.
+    pub dialect: &'static str,
+    /// Bound onto the Exact re-parse as unreachable insurance: the scoped
+    /// materializer never commits a `ContainerSpan` child, so this reader is
+    /// not invoked on this route.
+    pub span_materializer: &'static dyn LazySpanMaterializer,
+    /// JSONC consumes a leading BOM as a source prefix; JSON5 treats U+FEFF as whitespace instead.
+    pub consume_bom: bool,
 }
 
 #[allow(
@@ -408,6 +472,13 @@ enum SessionPhase {
     Validate,
     Materialize,
     Finished,
+}
+
+enum TriviaSkip {
+    Skipped(usize),
+    Content,
+    Yield,
+    Cut,
 }
 
 impl ScopedSession {
@@ -429,6 +500,22 @@ impl ScopedSession {
             Some(schema_prototype),
             resources,
         )
+    }
+
+    /// JSONC/JSON5 Exact session: the same two-phase walk, with this dialect's grammar and a dynamic schema so comment
+    /// facts can attach.
+    pub(crate) fn try_new_commented(
+        steps: &[PortableStep],
+        origin: SelectionOrigin,
+        diagnostics: DiagnosticCoverage,
+        coverage: BuilderCoverage,
+        scope: CommentedScope,
+        resources: &ResourceContext<'_>,
+    ) -> Result<Self, CodecError> {
+        let mut session = Self::try_new_inner(steps, origin, diagnostics, coverage, false, None, resources)?;
+        session.grammar = scope.grammar;
+        session.commented = Some(scope);
+        Ok(session)
     }
 
     #[allow(
@@ -474,6 +561,8 @@ impl ScopedSession {
             origin,
             diagnostics,
             coverage,
+            prune: None,
+            type_demand: false,
             phase: SessionPhase::Validate,
             validate: if allow_adjacent_values {
                 ValidatePhase::Value
@@ -501,12 +590,57 @@ impl ScopedSession {
             open_ended: false,
             bom_handled: false,
             // The scoped validator must accept exactly what the whole parser accepts under the resource dial, so the
-            // same grammar carries the same leniency — read once at construction.
-            grammar: crate::storage::JsonGrammar {
+            // same grammar carries the same leniency — read once at construction. JSONC/JSON5 overwrite this in
+            // [`Self::try_new_commented`].
+            grammar: JsonGrammar {
                 lenient: resources.decode_lenient(),
-                ..crate::storage::JsonGrammar::STRICT
+                ..JsonGrammar::STRICT
             },
+            commented: None,
+            pending_comments: Vec::new(),
+            located_comments: Vec::new(),
+            trivia_window: 0,
         })
+    }
+
+    /// Arms the kept-subtree prune on the materialize pass. Validation is
+    /// unchanged. The provider copies the requirement's hint here at open.
+    pub(crate) fn arm_prune(&mut self, tree: PruneTree) {
+        self.prune = Some(tree);
+    }
+
+    /// Arms kind-only materialize from the bound requirement's type hint.
+    pub(crate) fn set_type_demand(&mut self, demand: bool) {
+        self.type_demand = demand;
+    }
+
+    fn new_materializer(
+        &mut self,
+        mode: ParseMode,
+        resources: &ResourceContext<'_>,
+    ) -> Result<JsonParseState, CodecError> {
+        let mut state = if let Some(scope) = self.commented {
+            let mut state = JsonParseState::new(self.diagnostics, self.coverage, mode);
+            let recipe = (scope.recipe)(scope.dialect).map_err(|_| data_contract())?;
+            state.with_dynamic_recipe(recipe);
+            state.set_comment_fact_role(scope.comment_role);
+            state.set_span_materializer(scope.span_materializer);
+            state
+        } else {
+            if self.schema_prototype.is_none() {
+                self.schema_prototype = Some(crate::parse::try_schema_prototype(resources)?);
+            }
+            let prototype = self.schema_prototype.take().ok_or_else(data_contract)?;
+            JsonParseState::with_schema_prototype(prototype, self.diagnostics, self.coverage, mode)
+        };
+        state.set_grammar(self.grammar);
+        if self.utf8_pre_scan {
+            state.set_utf8_proved();
+        }
+        if let Some(tree) = &self.prune {
+            state.enable_prune(tree);
+        }
+        Ok(state)
     }
 
     /// Reinitializes this session for one more adjacent value over the same exact path, keeping the retained step
@@ -532,6 +666,7 @@ impl ScopedSession {
         self.diagnostics = diagnostics;
         self.coverage = coverage;
         self.phase = SessionPhase::Validate;
+        self.type_demand = false;
         self.validate = if allow_adjacent_values {
             ValidatePhase::Value
         } else {
@@ -561,12 +696,18 @@ impl ScopedSession {
         };
         if let Some(materializer) = &mut self.materializer {
             materializer.reset(diagnostics, coverage, materializer_mode);
+            if let Some(tree) = &self.prune {
+                materializer.enable_prune(tree);
+            }
         }
         self.range_buffer = None;
         self.allow_adjacent_values = allow_adjacent_values;
         self.consumed_offset = None;
         self.open_ended = false;
         self.bom_handled = false;
+        self.pending_comments.clear();
+        self.located_comments.clear();
+        self.trivia_window = 0;
         true
     }
 
@@ -664,6 +805,9 @@ impl ScopedSession {
         context: &mut CodecRunContext<'_, '_>,
     ) -> Result<AccessResult<'source>, CodecError> {
         let record = *self.located.as_ref().ok_or_else(data_contract)?;
+        if self.type_demand && matches!(record, Located::Node { .. } | Located::Range { .. }) {
+            return self.materialize_kind_only(source, record, context.resources());
+        }
         // A RANGE span is `e,e,e` — not standalone JSON — so it materializes through a BRACKET-WRAPPING re-parse
         // out of a session-owned buffer. The buffer cannot be borrowed by the published product, so the range arm
         // parses in COPY mode and yields a self-contained `'static` product; the ordinary arm keeps its zero-copy
@@ -672,7 +816,17 @@ impl ScopedSession {
             return self.materialize_range(source, record, start, end, context);
         }
         let span = match record {
-            Located::Node { start, end } => Some((start, end)),
+            Located::Node { start, end } => {
+                // Identity Exact with comment facts re-parses the whole source so file-level leading/trailing comments
+                // attach. A subtree Exact keeps the located value span and seeds comments collected outside it.
+                if self.steps.is_empty() && self.coverage.attached_facts() && self.grammar.comments {
+                    let bom = self.commented.is_some_and(|scope| scope.consume_bom)
+                        && source.bytes().starts_with(&BYTE_ORDER_MARK);
+                    Some((if bom { BYTE_ORDER_MARK.len() } else { 0 }, source.bytes().len()))
+                } else {
+                    Some((start, end))
+                }
+            }
             Located::Missing { .. } | Located::TypeMismatch { .. } => None,
             // Handled above; the range arm never reaches the borrowed path.
             Located::Range { .. } => return Err(data_contract()),
@@ -689,27 +843,12 @@ impl ScopedSession {
         if self.materializer.is_none() {
             // The located span is exactly one bounded value with nothing after it; adjacent-value trailing tolerance is
             // never relevant here regardless of the outer session's own opt-in.
-            if self.schema_prototype.is_none() {
-                self.schema_prototype = Some(crate::parse::try_schema_prototype(context.resources())?);
-            }
-            let prototype = self.schema_prototype.take().ok_or_else(data_contract)?;
-            self.materializer = Some({
-                let mut state = JsonParseState::with_schema_prototype(
-                    prototype,
-                    self.diagnostics,
-                    self.coverage,
-                    ParseMode::Document,
-                );
-                // The located span re-parses bytes the scoped validator already accepted under the resource dial, so
-                // the materializer carries the same grammar.
-                state.set_grammar(self.grammar);
-                if self.utf8_pre_scan {
-                    state.set_utf8_proved();
-                }
-                state
-            });
+            self.materializer = Some(self.new_materializer(ParseMode::Document, context.resources())?);
         }
         let materializer = self.materializer.as_mut().ok_or_else(data_contract)?;
+        if !self.located_comments.is_empty() {
+            materializer.seed_pending_comments(mem::take(&mut self.located_comments));
+        }
         let result = materializer.decode(AccessInput::Source(sub), context)?;
         let product = match result.into_parts().0 {
             AccessOutcome::FullDocument(product) => product,
@@ -747,21 +886,17 @@ impl ScopedSession {
             buffer.extend_from_slice(b"]");
             self.range_buffer = Some(buffer);
             // Copy mode: the product must outlive this session-owned buffer.
-            self.materializer = Some({
-                let mut state = JsonParseState::new(self.diagnostics, self.coverage, ParseMode::OwnedRun);
-                // The range materializer re-parses bytes the scoped validator already accepted under the resource dial,
-                // so it carries the same grammar.
-                state.set_grammar(self.grammar);
-                if self.utf8_pre_scan {
-                    state.set_utf8_proved();
-                }
-                state
-            });
+            self.materializer = Some(self.new_materializer(ParseMode::OwnedRun, context.resources())?);
         }
         let buffer = self.range_buffer.as_ref().ok_or_else(data_contract)?;
         // The wrapped bytes are valid by construction (the whole input already passed the complete validator and the
         // region is a structural cut), so no diagnostic ever renders this synthetic label or offset.
         let synthetic = ResolvedSource::new(source.source(), "range", buffer.as_slice(), 0);
+        if !self.located_comments.is_empty()
+            && let Some(materializer) = self.materializer.as_mut()
+        {
+            materializer.seed_pending_comments(mem::take(&mut self.located_comments));
+        }
         // A LOOP, not recursion: one stack frame per Pending would scale with range_bytes / per-entry credits and
         // exhaust the stack on a large range selection. The lazy route's span materializer drives the same poll with a
         // loop (`lazy.rs`), which also keeps the walk cancellable — the replenish inside carries the control checks.
@@ -774,6 +909,74 @@ impl ScopedSession {
         };
         self.phase = SessionPhase::Finished;
         self.publish(&product, record)
+    }
+
+    /// Builds a kind-only document from the located node's first payload byte. Validation already proved the span.
+    fn materialize_kind_only<'source>(
+        &mut self,
+        source: ResolvedSource<'source>,
+        record: Located,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<AccessResult<'source>, CodecError> {
+        let kind = match record {
+            Located::Node { start, .. } => {
+                // `Located::Node.start` is the value's first payload byte.
+                element_kind(source.bytes(), start)
+            }
+            Located::Range { .. } => ValueKind::Array,
+            Located::Missing { .. } | Located::TypeMismatch { .. } => return Err(data_contract()),
+        };
+        let product = self.kind_only_product(kind, resources)?;
+        self.phase = SessionPhase::Finished;
+        self.publish(&product, record)
+    }
+
+    fn kind_only_product(
+        &self,
+        kind: ValueKind,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<DocumentProduct<'static>, CodecError> {
+        let mut builder = match self.commented {
+            Some(scope) => {
+                let recipe = (scope.recipe)(scope.dialect).map_err(|_| data_contract())?;
+                AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), self.coverage)
+                    .map_err(crate::lex::map_data)?
+            }
+            None => AccountedDocumentBuilder::try_new_with_coverage(
+                crate::FORMAT_ID,
+                Some(crate::RFC8259_DIALECT_ID),
+                self.coverage,
+            )
+            .map_err(crate::lex::map_data)?,
+        };
+        builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+            DocumentCapabilityFamily::Attributes,
+        ));
+        builder.set_diagnostic_coverage(self.diagnostics);
+        let (node_kind, semantic) = match kind {
+            ValueKind::Null => (crate::parse::JSON_NODE_KINDS[0], AccountedSemanticNode::Null),
+            ValueKind::Bool => (crate::parse::JSON_NODE_KINDS[1], AccountedSemanticNode::Bool(false)),
+            ValueKind::Number => (crate::parse::JSON_NODE_KINDS[2], AccountedSemanticNode::Integer("0")),
+            ValueKind::String => (crate::parse::JSON_NODE_KINDS[3], AccountedSemanticNode::String("")),
+            ValueKind::Array => (
+                crate::parse::JSON_NODE_KINDS[4],
+                AccountedSemanticNode::Array {
+                    item_role: crate::parse::JSON_OCCURRENCE_ROLES[0],
+                },
+            ),
+            ValueKind::Object => (
+                crate::parse::JSON_NODE_KINDS[5],
+                AccountedSemanticNode::Object {
+                    member_role: crate::parse::JSON_OCCURRENCE_ROLES[1],
+                },
+            ),
+            _ => return Err(data_contract()),
+        };
+        let root = builder
+            .add_node(node_kind, semantic, None, resources)
+            .map_err(crate::lex::map_data)?;
+        let document = builder.finish(root, resources).map_err(crate::lex::map_data)?;
+        DocumentProduct::try_new(document, resources)
     }
 
     fn publish<'source>(
@@ -861,7 +1064,8 @@ impl ScopedSession {
         // consumed extent includes the mark exactly as the whole route's does. The whole-document route enforces the
         // same law in its own session; this one sits in `poll_source`, the single entry every scoped-route value passes
         // through, so the mark cannot slip past it.
-        if !self.bom_handled && self.allow_adjacent_values && source.base_offset() == 0 {
+        let consume_bom = self.allow_adjacent_values || self.commented.is_some_and(|scope| scope.consume_bom);
+        if !self.bom_handled && consume_bom && source.base_offset() == 0 {
             // A mark SPLIT by a read boundary is an INCOMPLETE mark, not a wrong byte: label the cut so the drive
             // refills, exactly as a token cut by the window is labelled. The latch stays open here so the refilled
             // window re-runs the law from the start.
@@ -994,16 +1198,36 @@ impl ScopedSession {
         let mut top_state = self.frames.as_slice().last().map(|frame| frame.state);
         let mut dirty = false;
         let outcome = 'batch: loop {
-            if bytes
-                .get(cursor)
-                .is_some_and(|byte| crate::byte_scan::is_json_ws(*byte))
-            {
-                let Some(granted) = admit_bytes(resources, bytes.len() - cursor)? else {
-                    break 'batch Ok(false);
-                };
-                let limit = cursor + granted;
-                cursor += crate::byte_scan::ws_prefix_len(&bytes[cursor..limit]);
-                continue;
+            if bytes.get(cursor).is_some_and(|byte| {
+                crate::byte_scan::is_json_ws(*byte)
+                    || (self.grammar.comments && *byte == b'/')
+                    || (self.grammar.json5 && matches!(*byte, 0xe2 | 0xef))
+            }) {
+                if self.grammar.comments || self.grammar.json5 {
+                    match self.skip_trivia(source, resources, cursor)? {
+                        TriviaSkip::Skipped(consumed) => {
+                            cursor += consumed;
+                            continue;
+                        }
+                        TriviaSkip::Yield => break 'batch Ok(false),
+                        TriviaSkip::Cut => {
+                            break 'batch Err(invalid(
+                                source,
+                                bytes.len(),
+                                diag::EXPECTED_VALUE,
+                                diag::MSG_EXPECTED_VALUE,
+                            ));
+                        }
+                        TriviaSkip::Content => {}
+                    }
+                } else {
+                    let Some(granted) = admit_bytes(resources, bytes.len() - cursor)? else {
+                        break 'batch Ok(false);
+                    };
+                    let limit = cursor + granted;
+                    cursor += crate::byte_scan::ws_prefix_len(&bytes[cursor..limit]);
+                    continue;
+                }
             }
             if resources.admit_work_transition()? == jqf_resource::WorkAdmission::Pending {
                 break 'batch Ok(false);
@@ -1013,7 +1237,9 @@ impl ScopedSession {
                 Some(VState::ArrayCommaOrEnd) => match byte {
                     Some(b',') => {
                         cursor += 1;
-                        top_state = Some(VState::ArrayValueOrEnd { may_end: false });
+                        top_state = Some(VState::ArrayValueOrEnd {
+                            may_end: self.grammar.trailing_commas,
+                        });
                         dirty = true;
                         let active = self.frontier_active;
                         let frame = self.frame_last()?;
@@ -1038,7 +1264,9 @@ impl ScopedSession {
                 Some(VState::ObjectCommaOrEnd) => match byte {
                     Some(b',') => {
                         cursor += 1;
-                        top_state = Some(VState::ObjectKeyOrEnd { may_end: false });
+                        top_state = Some(VState::ObjectKeyOrEnd {
+                            may_end: self.grammar.trailing_commas,
+                        });
                         dirty = true;
                         continue;
                     }
@@ -1073,6 +1301,43 @@ impl ScopedSession {
                         dirty = false;
                         break 'batch result;
                     }
+                    if self.grammar.json5 && matches!(byte, Some(b'\'')) {
+                        self.sync_validate_hoist(cursor, top_state, dirty)?;
+                        self.validate = ValidatePhase::String(VString {
+                            target: StrTarget::Key,
+                            cursor: cursor + 1,
+                            escape: EscapeState::Plain,
+                            start: cursor,
+                            quote: b'\'',
+                        });
+                        break 'batch Ok(true);
+                    }
+                    if self.grammar.json5 && matches!(byte, Some(b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z')) {
+                        let start = cursor;
+                        let mut end = cursor + 1;
+                        while matches!(
+                            bytes.get(end),
+                            Some(b'$' | b'_' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
+                        ) {
+                            end += 1;
+                        }
+                        self.locator
+                            .on_key(bytes, start, end, self.steps.as_slice(), self.frames.len());
+                        if self.frontier_active {
+                            let raw = bytes.get(start..end).unwrap_or_default();
+                            let lossy = alloc::string::String::from_utf8_lossy(raw);
+                            let mut text = alloc::string::String::new();
+                            text.try_reserve_exact(lossy.len())
+                                .map_err(jqf_resource::ResourceError::from)?;
+                            text.push_str(&lossy);
+                            let depth = self.frame_last()?.path_depth;
+                            self.frontier.as_mut_slice()[depth] = PathComponent::Key(text);
+                        }
+                        top_state = Some(VState::ObjectColon);
+                        dirty = true;
+                        cursor = end;
+                        continue;
+                    }
                     if byte != Some(b'"') {
                         // Same code at the same offset as the whole-document route's key refusal, so the text matches
                         // too — the JSONC hint included.
@@ -1089,6 +1354,7 @@ impl ScopedSession {
                         cursor: cursor + 1,
                         escape: EscapeState::Plain,
                         start: cursor,
+                        quote: b'"',
                     });
                     break 'batch Ok(true);
                 }
@@ -1224,7 +1490,9 @@ impl ScopedSession {
                             diag::INVALID_LITERAL,
                             diag::MSG_INVALID_LITERAL,
                         ));
-                    } else if self.grammar.lenient && matches!(bytes.get(cursor + 1), Some(b'0'..=b'9' | b'.')) {
+                    } else if (self.grammar.lenient || self.grammar.json5)
+                        && matches!(bytes.get(cursor + 1), Some(b'0'..=b'9' | b'.'))
+                    {
                         self.sync_validate_hoist(cursor, top_state, dirty)?;
                         self.pending_value_start = cursor;
                         self.validate = ValidatePhase::Number(NumberState::start_at(cursor + 1, true)?);
@@ -1233,7 +1501,7 @@ impl ScopedSession {
                         break 'batch Err(invalid(source, cursor, diag::EXPECTED_VALUE, diag::MSG_EXPECTED_VALUE));
                     }
                 }
-                Some(b'.') if self.grammar.lenient => {
+                Some(b'.') if self.grammar.lenient || self.grammar.json5 => {
                     if matches!(bytes.get(cursor + 1), Some(b'0'..=b'9')) {
                         self.sync_validate_hoist(cursor, top_state, dirty)?;
                         self.pending_value_start = cursor;
@@ -1272,6 +1540,19 @@ impl ScopedSession {
                         cursor: cursor + 1,
                         escape: EscapeState::Plain,
                         start: cursor,
+                        quote: b'"',
+                    });
+                    break 'batch Ok(true);
+                }
+                Some(b'\'') if self.grammar.json5 => {
+                    self.sync_validate_hoist(cursor, top_state, dirty)?;
+                    self.pending_value_start = cursor;
+                    self.validate = ValidatePhase::String(VString {
+                        target: StrTarget::Value,
+                        cursor: cursor + 1,
+                        escape: EscapeState::Plain,
+                        start: cursor,
+                        quote: b'\'',
                     });
                     break 'batch Ok(true);
                 }
@@ -1373,16 +1654,21 @@ impl ScopedSession {
             ));
         }
         let limit = state.cursor + granted;
+        let quote = state.quote;
         while state.cursor < limit {
             let byte = bytes[state.cursor];
             if let EscapeState::Plain = state.escape {
-                let run_end = plain_string_run_end(bytes, state.cursor, limit);
+                let run_end = if quote == b'\'' {
+                    single_quoted_run_end(bytes, state.cursor, limit)
+                } else {
+                    plain_string_run_end(bytes, state.cursor, limit)
+                };
                 if run_end != state.cursor {
                     state.cursor = run_end;
                     continue;
                 }
                 match byte {
-                    b'"' => {
+                    b if b == quote => {
                         state.cursor += 1;
                         self.cursor = state.cursor;
                         if state.target == StrTarget::Key {
@@ -1463,9 +1749,51 @@ impl ScopedSession {
                         state.cursor += width;
                     }
                 }
+            } else if matches!(state.escape, EscapeState::Escape) && self.grammar.json5 {
+                match byte {
+                    b'\'' | b'\n' => {
+                        state.cursor += 1;
+                        state.escape = EscapeState::Plain;
+                    }
+                    b'\r' => {
+                        state.cursor += 1;
+                        if bytes.get(state.cursor) == Some(&b'\n') {
+                            state.cursor += 1;
+                        }
+                        state.escape = EscapeState::Plain;
+                    }
+                    b'x' => {
+                        state.cursor += 1;
+                        state.escape = EscapeState::Hex { value: 0, digits: 0 };
+                    }
+                    b'0' => {
+                        if matches!(bytes.get(state.cursor + 1), Some(b'0'..=b'9')) {
+                            return Err(invalid(
+                                source,
+                                state.cursor,
+                                diag::INVALID_ESCAPE,
+                                diag::MSG_INVALID_ESCAPE_JSON5,
+                            ));
+                        }
+                        state.cursor += 1;
+                        state.escape = EscapeState::Plain;
+                    }
+                    0xe2 if matches!(
+                        bytes.get(state.cursor + 1..state.cursor + 3),
+                        Some(&[0x80, 0xa8 | 0xa9])
+                    ) =>
+                    {
+                        state.cursor += 3;
+                        state.escape = EscapeState::Plain;
+                    }
+                    _ => {
+                        state.cursor += 1;
+                        state.escape = escape_step(state.escape, byte, source, state.cursor - 1, true)?;
+                    }
+                }
             } else {
                 state.cursor += 1;
-                state.escape = escape_step(state.escape, byte, source, state.cursor - 1)?;
+                state.escape = escape_step(state.escape, byte, source, state.cursor - 1, self.grammar.json5)?;
             }
         }
         self.validate = ValidatePhase::String(state);
@@ -1510,7 +1838,7 @@ impl ScopedSession {
                 }
             }
             let byte = bytes[state.cursor_usize()];
-            let consumed = match advance_number(&mut state, byte, lenient, false) {
+            let consumed = match advance_number(&mut state, byte, lenient, self.grammar.json5) {
                 Ok(consumed) => consumed,
                 Err(error) if error.kind() == CodecFailureKind::InvalidInput => {
                     // The one number shape with a dedicated message, mirroring the whole parser byte for byte: a digit
@@ -1574,7 +1902,7 @@ impl ScopedSession {
         // The caller already moved the state out of `self.validate`; the phase is back to Value before the completion
         // checks, exactly as the pre-hoist `mem::replace` at the top of this function did.
         self.validate = ValidatePhase::Value;
-        if !number_lex_complete(state.lex, lenient, false, state.digit_count as usize) {
+        if !number_lex_complete(state.lex, lenient, self.grammar.json5, state.digit_count as usize) {
             return Err(invalid(
                 source,
                 state.cursor_usize(),
@@ -1591,9 +1919,6 @@ impl ScopedSession {
         // dial, so the validator refuses it here too — a scoped validation of bytes the whole route would reject
         // would be an accepted-surface divergence.
         //
-        // Unreachable today: this session's grammar never sets `json5`, and the number automaton enters its Hex lexeme
-        // only under that bit, so no scoped walk can carry a hex literal here. The guard exists so a future grammar
-        // widening cannot silently skip the cap.
         if matches!(state.lex, NumberLex::Hex)
             && (state.digit_count as usize).saturating_sub(1) > crate::lex::MAX_HEX_DIGITS
         {
@@ -1671,6 +1996,7 @@ impl ScopedSession {
         container: Container,
         resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
+        self.flush_pending_comments();
         // Mirror the whole parser: the container value is "attached" to its parent before its own frame is pushed.
         self.attach_to_parent()?;
         let depth = resources.enter_nesting_owned()?;
@@ -1758,6 +2084,7 @@ impl ScopedSession {
     /// Handles a completed scalar/string/number value: attach to parent, and move to trailing when the root value is
     /// complete.
     fn value_produced(&mut self, kind: ValueKind) -> Result<bool, CodecError> {
+        self.flush_pending_comments();
         self.locator.finish_scalar(
             self.pending_value_start,
             self.cursor,
@@ -1786,18 +2113,38 @@ impl ScopedSession {
             self.validate = ValidatePhase::Done;
             return Ok(true);
         }
-        if source
-            .bytes()
-            .get(offset)
-            .is_some_and(|byte| crate::byte_scan::is_json_ws(*byte))
-        {
-            let Some(granted) = admit_bytes(resources, source.bytes().len() - offset)? else {
-                return Ok(false);
-            };
-            let limit = offset + granted;
-            let cursor = offset + crate::byte_scan::ws_prefix_len(&source.bytes()[offset..limit]);
-            self.cursor = cursor;
-            return Ok(true);
+        let lead = source.bytes().get(offset);
+        if lead.is_some_and(|byte| {
+            crate::byte_scan::is_json_ws(*byte)
+                || (self.grammar.comments && *byte == b'/')
+                || (self.grammar.json5 && matches!(*byte, 0xe2 | 0xef))
+        }) {
+            if self.grammar.comments || self.grammar.json5 {
+                match self.skip_trivia(source, resources, offset)? {
+                    TriviaSkip::Skipped(consumed) => {
+                        self.cursor = offset + consumed;
+                        return Ok(true);
+                    }
+                    TriviaSkip::Yield => return Ok(false),
+                    TriviaSkip::Cut => {
+                        return Err(invalid(
+                            source,
+                            source.bytes().len(),
+                            diag::TRAILING_CONTENT,
+                            diag::MSG_TRAILING_CONTENT,
+                        ));
+                    }
+                    TriviaSkip::Content => {}
+                }
+            } else {
+                let Some(granted) = admit_bytes(resources, source.bytes().len() - offset)? else {
+                    return Ok(false);
+                };
+                let limit = offset + granted;
+                let cursor = offset + crate::byte_scan::ws_prefix_len(&source.bytes()[offset..limit]);
+                self.cursor = cursor;
+                return Ok(true);
+            }
         }
         if offset != source.bytes().len() {
             return Err(invalid(
@@ -1809,6 +2156,91 @@ impl ScopedSession {
         }
         self.validate = ValidatePhase::Done;
         Ok(true)
+    }
+
+    fn last_step_candidate(&self) -> bool {
+        let Some(frame) = self.locator.stack.last() else {
+            return false;
+        };
+        if self.frames.len() != self.locator.stack.len() || frame.step + 1 != self.steps.len() {
+            return false;
+        }
+        match self.steps.get(frame.step) {
+            Some(ScopedStep::Member(_)) => frame.key_matches,
+            Some(ScopedStep::Index(index)) if *index >= 0 => {
+                usize::try_from(*index).is_ok_and(|target| frame.count == target)
+            }
+            // Negative-index and range winners resolve after the array closes.
+            // Seeding here would attach the last element's comments.
+            Some(ScopedStep::Index(_) | ScopedStep::Range { .. }) | None => false,
+        }
+    }
+
+    fn flush_pending_comments(&mut self) {
+        if self.last_step_candidate() {
+            self.located_comments = mem::take(&mut self.pending_comments);
+        } else {
+            self.pending_comments.clear();
+        }
+    }
+
+    fn skip_trivia(
+        &mut self,
+        source: ResolvedSource<'_>,
+        resources: &mut ResourceContext<'_>,
+        at: usize,
+    ) -> Result<TriviaSkip, CodecError> {
+        let bytes = source.bytes();
+        if at >= bytes.len() {
+            return Ok(TriviaSkip::Content);
+        }
+        let mut window = mem::take(&mut self.trivia_window);
+        loop {
+            let Some(granted) = admit_bytes(resources, bytes.len() - at)? else {
+                self.trivia_window = window;
+                return Ok(TriviaSkip::Yield);
+            };
+            window += granted;
+            let limit = (at + window).min(bytes.len());
+            let collect = self.grammar.comments && self.coverage.attached_facts();
+            let mut comments = collect.then(Vec::new);
+            let pending_base = self.pending_comments.len();
+            let (consumed, open_comment) =
+                crate::byte_scan::trivia_prefix_len(&bytes[at..limit], self.grammar, comments.as_mut())?;
+            if let Some(comments) = comments {
+                self.pending_comments
+                    .try_reserve(comments.len())
+                    .map_err(jqf_resource::ResourceError::from)?;
+                self.pending_comments.extend(comments);
+            }
+            if open_comment && limit < bytes.len() {
+                self.pending_comments.truncate(pending_base);
+                continue;
+            }
+            self.trivia_window = 0;
+            if consumed > 0 {
+                return Ok(TriviaSkip::Skipped(consumed));
+            }
+            let retry =
+                matches!(bytes[at], b'/' if self.grammar.comments) && matches!(bytes.get(at + 1), Some(b'/' | b'*'));
+            if retry {
+                continue;
+            }
+            match bytes.get(at).copied() {
+                Some(b'/') if self.grammar.comments => match bytes.get(at + 1) {
+                    None => return Ok(TriviaSkip::Cut),
+                    Some(b'/' | b'*') => {}
+                    Some(_) => return Ok(TriviaSkip::Content),
+                },
+                Some(b'\xe2' | b'\xef') if self.grammar.json5 => {
+                    if bytes.len() - at < 3 {
+                        return Ok(TriviaSkip::Cut);
+                    }
+                    return Ok(TriviaSkip::Content);
+                }
+                _ => return Ok(TriviaSkip::Content),
+            }
+        }
     }
 
     fn frame_last(&mut self) -> Result<&mut VFrame, CodecError> {
@@ -2329,7 +2761,8 @@ fn resolve_against_count(bound: Option<i64>, count: usize) -> Option<usize> {
     }
 }
 
-#[cfg(test)]
+/// Semantic kind of a validated JSON value from its first payload byte. Post-validation the lead is unambiguous except
+/// `n` (`null` vs `nan`).
 pub(crate) fn element_kind(bytes: &[u8], start: usize) -> ValueKind {
     match bytes.get(start).copied().unwrap_or(0) {
         b'n' => {
@@ -2343,7 +2776,7 @@ pub(crate) fn element_kind(bytes: &[u8], start: usize) -> ValueKind {
             }
         }
         b't' | b'f' => ValueKind::Bool,
-        b'"' => ValueKind::String,
+        b'"' | b'\'' => ValueKind::String,
         b'[' => ValueKind::Array,
         b'{' => ValueKind::Object,
         // A number, a non-finite spelling (`inf`, `NaN`, `-inf`), and the fail-closed arm all classify as numbers.
@@ -3289,6 +3722,7 @@ mod tests {
         assert_eq!(element_kind(b"true", 0), ValueKind::Bool);
         assert_eq!(element_kind(b"7", 0), ValueKind::Number);
         assert_eq!(element_kind(b"\"s\"", 0), ValueKind::String);
+        assert_eq!(element_kind(b"'s'", 0), ValueKind::String);
         assert_eq!(element_kind(b"[1]", 0), ValueKind::Array);
         assert_eq!(element_kind(b"{\"a\":1}", 0), ValueKind::Object);
         assert_eq!(element_kind(b"", 0), ValueKind::Number);

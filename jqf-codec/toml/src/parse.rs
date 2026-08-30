@@ -22,12 +22,13 @@
 //! unbounded.
 
 use alloc::string::String;
-use alloc::vec::Vec;
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct,
+    DocumentProduct, PRUNE_ALL, PruneRef,
 };
+
+pub(crate) use jqf_codec_core::PruneLookup;
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedOccurrenceKey, AccountedSemanticNode,
     AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage, DocumentCapabilityFamily,
@@ -93,6 +94,8 @@ pub(crate) struct TomlParseState {
     lazy_frontier: Option<usize>,
     /// The kept-subtree prune hint: which members the requesting program provably reads. `None` keeps everything.
     prune: Option<PruneLookup>,
+    /// Builder coverage the document walk honours: skip attaching comments unless facts are demanded.
+    coverage: BuilderCoverage,
     phase: Phase,
     /// The resumable grammar machine while the document is being parsed.
     grammar: Option<crate::grammar::TomlGrammar>,
@@ -124,14 +127,19 @@ enum Phase {
 }
 
 impl TomlParseState {
-    pub(crate) fn try_new(dialect: DialectKind, lazy_frontier: Option<usize>, prune: Option<PruneLookup>) -> Self {
-        let grammar_prune = prune.as_ref().map(PruneLookup::to_grammar);
+    pub(crate) fn try_new(
+        dialect: DialectKind,
+        lazy_frontier: Option<usize>,
+        prune: Option<PruneLookup>,
+        coverage: BuilderCoverage,
+    ) -> Self {
         Self {
             dialect,
             lazy_frontier,
-            prune,
+            prune: prune.clone(),
+            coverage,
             phase: Phase::Parse,
-            grammar: Some(crate::grammar::TomlGrammar::try_new_direct(dialect).with_prune(grammar_prune)),
+            grammar: Some(crate::grammar::TomlGrammar::try_new_direct(dialect).with_prune(prune)),
             builder: None,
             root: None,
             binding_stage: None,
@@ -181,6 +189,7 @@ impl AccessSession for TomlParseState {
                                 self.lazy_frontier,
                                 self.dialect,
                                 self.prune.as_ref(),
+                                self.coverage,
                                 context.resources(),
                             )?;
                             self.builder = Some(builder);
@@ -373,6 +382,7 @@ pub(crate) fn build_located_from_doc(
     doc: &mut crate::grammar::Doc,
     target: &WalkTarget,
     bytes: &[u8],
+    coverage: BuilderCoverage,
     resources: &ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     match target {
@@ -392,10 +402,24 @@ pub(crate) fn build_located_from_doc(
                 &crate::locate::Located::Table(&table),
                 doc.names(),
                 bytes,
+                coverage,
                 resources,
             )?;
-            crate::parse::attach_comments(&mut builder, &header_comments, &[], root, resources)?;
-            crate::parse::attach_foot_comments(&mut builder, &foot_comments, root, resources)?;
+            crate::parse::attach_comments(
+                &mut builder,
+                &header_comments,
+                &[],
+                root,
+                coverage.attached_facts(),
+                resources,
+            )?;
+            crate::parse::attach_foot_comments(
+                &mut builder,
+                &foot_comments,
+                root,
+                coverage.attached_facts(),
+                resources,
+            )?;
             Ok((builder, root))
         }
         WalkTarget::ArrayOfTables(ids) => {
@@ -407,6 +431,7 @@ pub(crate) fn build_located_from_doc(
                 &crate::locate::Located::ArrayOfTables(&tables),
                 doc.names(),
                 bytes,
+                coverage,
                 resources,
             )
         }
@@ -450,9 +475,10 @@ fn build_document_from_doc(
     frontier: Option<usize>,
     dialect: DialectKind,
     prune: Option<&PruneLookup>,
+    coverage: BuilderCoverage,
     resources: &ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId, bool), CodecError> {
-    let (mut builder, schema) = fresh_builder(resources)?;
+    let (mut builder, schema) = fresh_builder(coverage, resources)?;
     // The container-span frontier: a forced frontier binds the dialect's span materializer, so a deferred value region
     // re-parses under the SAME grammar that validated it.
     if frontier.is_some() {
@@ -469,10 +495,7 @@ fn build_document_from_doc(
     // The prune hint rides the root: which top-level members the requesting program provably reads, propagated down
     // through child tables and arrays of tables. The grammar parse has ALREADY validated every key and value, so
     // omitting an unread member's build changes nothing observable.
-    let root_prune = PruneRef {
-        lookup: prune,
-        id: prune.map_or(PRUNE_ALL, |_| jqf_codec_core::PruneTree::ROOT),
-    };
+    let root_prune = PruneRef::root(prune);
     build_table_from_doc(
         &mut builder,
         &schema,
@@ -482,10 +505,18 @@ fn build_document_from_doc(
         frontier,
         root_prune,
         0,
+        coverage,
         &mut spans_committed,
         resources,
     )?;
-    attach_comments(&mut builder, &trailer_comments, &[], root, resources)?;
+    attach_comments(
+        &mut builder,
+        &trailer_comments,
+        &[],
+        root,
+        coverage.attached_facts(),
+        resources,
+    )?;
     Ok((builder, root, spans_committed))
 }
 
@@ -511,6 +542,7 @@ fn build_table_from_doc(
     frontier: Option<usize>,
     prune: PruneRef<'_>,
     depth: usize,
+    coverage: BuilderCoverage,
     spans_committed: &mut bool,
     resources: &ResourceContext<'_>,
 ) -> Result<(), CodecError> {
@@ -536,9 +568,7 @@ fn build_table_from_doc(
     for (key, value) in assignments {
         // The prune hint names the members the program provably reads; an unobservable assignment is OMITTED (its
         // grammar validation already ran during the parse).
-        let Some(value_prune) = prune.member(doc.name_text(key.id).as_bytes()) else {
-            continue;
-        };
+        let value_prune = prune.member(doc.name_text(key.id).as_bytes()).unwrap_or(PRUNE_ALL);
         let node = build_value(
             builder,
             schema,
@@ -547,6 +577,7 @@ fn build_table_from_doc(
             frontier,
             prune.at(value_prune),
             depth + 1,
+            coverage,
             spans_committed,
             resources,
         )?;
@@ -563,16 +594,21 @@ fn build_table_from_doc(
             resources,
         )?;
     }
-    attach_comments(builder, &header_comments, &[], owner, resources)?;
-    attach_foot_comments(builder, &foot_comments, owner, resources)?;
+    attach_comments(
+        builder,
+        &header_comments,
+        &[],
+        owner,
+        coverage.attached_facts(),
+        resources,
+    )?;
+    attach_foot_comments(builder, &foot_comments, owner, coverage.attached_facts(), resources)?;
     // Child tables and arrays of tables, in first-definition order.
     for key in children {
         // An unobservable child is OMITTED wholesale — its subtree holds no member the program reads. The spine law
         // still holds for the PARENT (this table's own node was built); an omitted child is simply a member that never
         // exists in the pruned document.
-        let Some(child_prune) = prune.member(doc.name_text(key.id).as_bytes()) else {
-            continue;
-        };
+        let child_prune = prune.member(doc.name_text(key.id).as_bytes()).unwrap_or(PRUNE_ALL);
         let part = key.id;
         match doc.child(table_id, part) {
             // An array-of-tables child: its element ids are the flat state's ledger, walked by id instead of resolving
@@ -594,6 +630,7 @@ fn build_table_from_doc(
                         frontier,
                         element_prune,
                         depth + 1,
+                        coverage,
                         spans_committed,
                         resources,
                     )?;
@@ -632,6 +669,7 @@ fn build_table_from_doc(
                     frontier,
                     prune.at(child_prune),
                     depth + 1,
+                    coverage,
                     spans_committed,
                     resources,
                 )?;
@@ -658,138 +696,16 @@ fn build_table_from_doc(
     Ok(())
 }
 
-/// The session-owned copy of the requirement's kept-subtree prune hint, flattened to plain lookup nodes (json's
-/// `PruneMap` shape). `None` when no tree rides the requirement or it keeps everything at the root (nothing to prune).
-///
-/// The hint is MONOTONE: omitting members the tree names unobservable is always sound, and a codec is free to ignore it
-/// entirely.
-#[derive(Clone)]
-pub(crate) struct PruneLookup {
-    nodes: Vec<PruneLookupNode>,
-}
-
-#[derive(Clone)]
-struct PruneLookupNode {
-    all: bool,
-    element: Option<u32>,
-    /// Ascending by key bytes (the transport's push-order contract).
-    keys: Vec<(alloc::boxed::Box<[u8]>, u32)>,
-}
-
-/// Keep-whole sentinel: no pruning below this position.
-pub(crate) const PRUNE_ALL: u32 = u32::MAX;
-
-impl PruneLookup {
-    pub(crate) fn to_grammar(&self) -> crate::grammar::GrammarPrune {
-        crate::grammar::GrammarPrune::from_nodes(
-            self.nodes
-                .iter()
-                .map(|node| (node.all, node.element, node.keys.clone()))
-                .collect(),
-        )
-    }
-
-    /// Copies the transported tree; `None` when the hint keeps everything at the root (nothing to prune).
-    pub(crate) fn from_transport(tree: &jqf_codec_core::PruneTree) -> Option<Self> {
-        if tree.root().is_all() {
-            return None;
-        }
-        let mut nodes = Vec::new();
-        for id in 0..u32::MAX {
-            let Some(node) = tree.node(id) else { break };
-            nodes.push(PruneLookupNode {
-                all: node.is_all(),
-                element: node.element(),
-                keys: node
-                    .members()
-                    .map(|(name, child)| (alloc::boxed::Box::from(name.as_bytes()), child))
-                    .collect(),
-            });
-        }
-        Some(Self { nodes })
-    }
-
-    fn node(&self, id: u32) -> Option<&PruneLookupNode> {
-        self.nodes.get(id as usize)
-    }
-
-    /// The member demand at `id`'s position: the child node id when the member is observed (a named key or the shared
-    /// element node), or `None` when the member is unobservable and may be omitted. A node that keeps everything
-    /// delivers `PRUNE_ALL`.
-    fn member_prune(&self, id: u32, name: &[u8]) -> Option<u32> {
-        let node = self.node(id)?;
-        if node.all {
-            return Some(PRUNE_ALL);
-        }
-        if let Ok(position) = node.keys.binary_search_by(|(key, _)| key.as_ref().cmp(name)) {
-            Some(node.keys[position].1)
-        } else {
-            node.element.or(Some(PRUNE_ALL))
-        }
-    }
-
-    /// The shared every-child demand at `id`'s position: the element node when the tree names one, else keep-whole.
-    fn element_prune(&self, id: u32) -> u32 {
-        match self.node(id) {
-            Some(node) if !node.all => node.element.unwrap_or(PRUNE_ALL),
-            _ => PRUNE_ALL,
-        }
-    }
-}
-
-/// One prune position threaded through the build: the optional lookup and the current tree node id (or [`PRUNE_ALL`] to
-/// keep everything below).
-#[derive(Clone, Copy)]
-pub(crate) struct PruneRef<'a> {
-    lookup: Option<&'a PruneLookup>,
-    id: u32,
-}
-
-impl PruneRef<'_> {
-    /// The member demand at this position: the child node id when the member is observed, or `None` when it is
-    /// unobservable and may be omitted.
-    fn member(&self, name: &[u8]) -> Option<u32> {
-        match self.lookup {
-            Some(lookup) if self.id != PRUNE_ALL => lookup.member_prune(self.id, name),
-            _ => Some(PRUNE_ALL),
-        }
-    }
-
-    /// This position's shared every-child demand (array elements).
-    fn element(&self) -> Self {
-        let id = match self.lookup {
-            Some(lookup) if self.id != PRUNE_ALL => lookup.element_prune(self.id),
-            _ => PRUNE_ALL,
-        };
-        Self {
-            lookup: self.lookup,
-            id,
-        }
-    }
-
-    /// A descendant position named by a member or element lookup.
-    fn at(&self, id: u32) -> Self {
-        Self {
-            lookup: self.lookup,
-            id,
-        }
-    }
-}
-
-/// Creates a fresh request-accounted TOML builder and its prepared schema. The scoped route shares this entry point:
-/// every located document is a fresh build over the validated tree (the whole route's `build_document` is this plus the
-/// root table node and the span ledger).
+/// Creates a fresh request-accounted TOML builder and its prepared schema. `coverage` is the bound requirement's
+/// [`required_builder_coverage`](jqf_codec_core::required_builder_coverage): identity `.` skips comment facts;
+/// `.@comment` and `FactIntent::Preserve` attach them. The scoped route shares this entry point.
 pub(crate) fn fresh_builder(
+    coverage: BuilderCoverage,
     _resources: &ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, PreparedDocumentSchema), CodecError> {
     let recipe = toml_schema_recipe().map_err(map_data)?;
-    let (mut builder, schema) = AccountedDocumentBuilder::try_new_prepared_with_coverage(
-        &recipe,
-        // Attached facts are demanded ONLY for the comment projection (one `toml.comment@1` fact per commented
-        // statement's value).
-        BuilderCoverage::minimal_semantic().with_attached_facts(true),
-    )
-    .map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
     builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
         DocumentCapabilityFamily::Attributes,
     ));
@@ -933,8 +849,12 @@ pub(crate) fn attach_comments(
     leading: &[String],
     inline: &[String],
     owner: NodeId,
+    attach_facts: bool,
     resources: &ResourceContext<'_>,
 ) -> Result<(), CodecError> {
+    if !attach_facts {
+        return Ok(());
+    }
     attach_comment_fact(builder, COMMENT_FACT, leading, owner, resources)?;
     attach_comment_fact(builder, COMMENT_INLINE_FACT, inline, owner, resources)?;
     Ok(())
@@ -945,8 +865,12 @@ pub(crate) fn attach_foot_comments(
     builder: &mut AccountedDocumentBuilder<'_>,
     foot: &[String],
     owner: NodeId,
+    attach_facts: bool,
     resources: &ResourceContext<'_>,
 ) -> Result<(), CodecError> {
+    if !attach_facts {
+        return Ok(());
+    }
     attach_comment_fact(builder, COMMENT_FOOT_FACT, foot, owner, resources)
 }
 
@@ -1134,6 +1058,7 @@ fn build_value(
     frontier: Option<usize>,
     prune: PruneRef<'_>,
     depth: usize,
+    coverage: BuilderCoverage,
     spans_committed: &mut bool,
     resources: &ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
@@ -1174,6 +1099,7 @@ fn build_value(
                     frontier,
                     item_prune,
                     depth + 1,
+                    coverage,
                     spans_committed,
                     resources,
                 )?;
@@ -1219,9 +1145,7 @@ fn build_value(
             for (key, entry) in entries {
                 // An inline-table member the program provably cannot read is omitted; the grammar's O(n^2) duplicate
                 // check already validated every entry during the parse.
-                let Some(entry_prune) = prune.member(names[key.id as usize].as_bytes()) else {
-                    continue;
-                };
+                let entry_prune = prune.member(names[key.id as usize].as_bytes()).unwrap_or(PRUNE_ALL);
                 let entry_node = build_value(
                     builder,
                     schema,
@@ -1230,6 +1154,7 @@ fn build_value(
                     frontier,
                     prune.at(entry_prune),
                     depth + 1,
+                    coverage,
                     spans_committed,
                     resources,
                 )?;
@@ -1257,10 +1182,11 @@ fn build_value(
                 frontier,
                 prune,
                 depth,
+                coverage,
                 spans_committed,
                 resources,
             )?;
-            attach_comments(builder, leading, inline, node, resources)?;
+            attach_comments(builder, leading, inline, node, coverage.attached_facts(), resources)?;
             Ok(node)
         }
         // The dispatch in [`build_value`] sends every scalar to [`build_scalar`]; these arms exist only so the
@@ -1417,11 +1343,11 @@ mod nesting_guard_tests {
         let ctx = limited_resources();
         let parts: Vec<String> = (0..65).map(|i| alloc::format!("k{i}")).collect();
         let over = alloc::format!("[{}]\nx = 1\n", parts.join("."));
-        let walker = crate::walk::Walker::try_new(source(over.as_bytes()), DialectKind::Toml10, &[], &ctx);
+        let walker = crate::walk::Walker::try_new(source(over.as_bytes()), DialectKind::Toml10, &[], &ctx, true);
         let err = walker.walk().expect_err("the walk rejects deep headers");
         assert_nesting_limit(&err);
         let deep_array = alloc::format!("a = {}1{}\n", "[".repeat(65), "]".repeat(65));
-        let walker = crate::walk::Walker::try_new(source(deep_array.as_bytes()), DialectKind::Toml10, &[], &ctx);
+        let walker = crate::walk::Walker::try_new(source(deep_array.as_bytes()), DialectKind::Toml10, &[], &ctx, true);
         let err = walker.walk().expect_err("the walk rejects deep arrays");
         assert_nesting_limit(&err);
         let _ = (SourceId::new(1), SourceKind::Input, SourceRef::new);
@@ -1490,7 +1416,12 @@ mod builder_tests {
         let mut ctx = crate::test_support::resources();
         let bytes: &'static [u8] = b"# the title\ntitle = \"catalog\" # a note\n";
         let src = source(bytes);
-        let mut session = TomlParseState::try_new(DialectKind::Toml10, None, None);
+        let mut session = TomlParseState::try_new(
+            DialectKind::Toml10,
+            None,
+            None,
+            BuilderCoverage::minimal_semantic().with_attached_facts(true),
+        );
         let mut context = jqf_codec_core::CodecRunContext::new(&mut ctx);
         let result = session.decode(AccessInput::Source(src), &mut context).expect("decode");
         let product = match result.outcome() {
@@ -1528,5 +1459,207 @@ mod builder_tests {
         // The leading block and the own-line trailing comment attach as two facts.
         assert_eq!(found, vec!["the title".to_owned()]);
         assert_eq!(inline, vec!["a note".to_owned()]);
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::{COMMENT_FACT, COMMENT_INLINE_FACT};
+    use alloc::string::String;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use jqf_codec_core::{
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
+        CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, FactIntent, ValidationMode,
+    };
+    use jqf_data::{FactKindId, FactPayloadView, FactRoleId};
+    use jqf_resource::ResourceContext;
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    fn resources() -> ResourceContext<'static> {
+        crate::test_support::resources()
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(93), SourceKind::Input),
+            "coverage.toml",
+            bytes,
+            0,
+        )
+    }
+
+    fn whole_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        AccessRequirement::try_whole(
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn exact_member_requirement(
+        member: &str,
+        demand: CodecDemand,
+        resources: &ResourceContext<'_>,
+    ) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        path.try_push_semantic_member(member, resources).expect("member");
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn attached_fact_demand(role: &str, resources: &ResourceContext<'_>) -> CodecDemand {
+        let mut demand = CodecDemand::try_new(resources);
+        let kind = FactKindId::try_new(role).expect("kind");
+        let role = FactRoleId::try_new(role).expect("role");
+        demand
+            .try_insert(&DemandClause::AttachedFact { kind, role })
+            .expect("insert");
+        demand
+    }
+
+    fn decode_requirement_product<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<jqf_codec_core::DocumentProduct<'bytes>, CodecError> {
+        let registration = crate::registration_1_0().expect("registration");
+        let dialect = jqf_data::DialectId::try_new(crate::TOML_JQF_1_0_DIALECT_ID).expect("dialect");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            resources,
+        )?;
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources)?;
+        let mut context = CodecRunContext::new(resources);
+        context.set_cooperative_credits(4_096);
+        let result = session.decode(&mut context)?;
+        let product = match result.outcome() {
+            AccessOutcome::FullDocument(product) => product,
+            AccessOutcome::Located(located) => located.product(),
+        };
+        product.try_clone().map_err(|_error| {
+            CodecError::new(CodecFailureKind::InternalContractViolation {
+                contract: "test product clone",
+            })
+        })
+    }
+
+    fn node_at(product: &jqf_codec_core::DocumentProduct<'_>, path: &[&str]) -> jqf_data::NodeId {
+        let document = product.document();
+        let mut node = document.root_handle();
+        for key in path {
+            let object = document
+                .value_view(node)
+                .expect("view")
+                .object()
+                .expect("object")
+                .expect("object view");
+            let mut found = None;
+            for entry in object.iter() {
+                let entry = entry.expect("entry");
+                if entry.key() == *key {
+                    found = Some(entry.value().node());
+                    break;
+                }
+            }
+            node = document.node_handle(found.expect("path member")).expect("handle");
+        }
+        document.value_view(node).expect("final view").node()
+    }
+
+    fn comment_facts(product: &jqf_codec_core::DocumentProduct<'_>, path: &[&str], role: &str) -> Vec<String> {
+        let document = product.document();
+        let node = node_at(product, path);
+        let mut out = Vec::new();
+        for fact_id in document.owner_fact_ids(node) {
+            let fact = document.fact(*fact_id).expect("fact");
+            if fact.role().as_str() != role {
+                continue;
+            }
+            if let FactPayloadView::List(items) = fact.payload() {
+                for item in items.iter() {
+                    if let FactPayloadView::Text(text) = item {
+                        out.push(String::from(text));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn identity_demand_does_not_attach_comment_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let product = decode_requirement_product(b"# lead a\na = 1\n", &requirement, &mut resources).expect("decode");
+        assert!(
+            comment_facts(&product, &["a"], COMMENT_FACT).is_empty(),
+            "identity must skip comment facts"
+        );
+        assert!(comment_facts(&product, &["a"], COMMENT_INLINE_FACT).is_empty());
+    }
+
+    #[test]
+    fn comment_clause_attaches_comment_facts() {
+        let mut resources = resources();
+        let requirement = whole_requirement(attached_fact_demand("comment", &resources), &resources);
+        let product = decode_requirement_product(b"# lead a\na = 1\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(
+            comment_facts(&product, &["a"], COMMENT_FACT),
+            vec![String::from("lead a")]
+        );
+    }
+
+    #[test]
+    fn preserve_attaches_comment_facts() {
+        let mut resources = resources();
+        let requirement =
+            whole_requirement(CodecDemand::try_new(&resources), &resources).with_fact_intent(FactIntent::Preserve);
+        let product =
+            decode_requirement_product(b"# lead a\na = 1 # note\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(
+            comment_facts(&product, &["a"], COMMENT_FACT),
+            vec![String::from("lead a")]
+        );
+        assert_eq!(
+            comment_facts(&product, &["a"], COMMENT_INLINE_FACT),
+            vec![String::from("note")]
+        );
+    }
+
+    #[test]
+    fn exact_identity_demand_skips_comment_facts() {
+        let mut resources = resources();
+        let empty = CodecDemand::try_new(&resources);
+        let requirement = exact_member_requirement("a", empty, &resources);
+        let product = decode_requirement_product(b"# lead a\na = 1\n", &requirement, &mut resources).expect("decode");
+        assert!(
+            comment_facts(&product, &[], COMMENT_FACT).is_empty(),
+            "Exact identity must skip comment facts"
+        );
+    }
+
+    #[test]
+    fn exact_comment_clause_attaches_comment_facts() {
+        let mut resources = resources();
+        let requirement = exact_member_requirement("a", attached_fact_demand("comment", &resources), &resources);
+        let product = decode_requirement_product(b"# lead a\na = 1\n", &requirement, &mut resources).expect("decode");
+        assert_eq!(comment_facts(&product, &[], COMMENT_FACT), vec![String::from("lead a")]);
     }
 }

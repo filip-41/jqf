@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use jqf_codec_core::{
     AccessFootprintKind, AccessGuarantees, AccessRequirement, AccessResultKind, CodecError, DecodeRequest,
     DiagnosticPolicy, ErasedAccessSession, ErasedProvider, InputProvider, ProviderInput, RouteDescription, RouteSlot,
+    markup_measure_demand, required_builder_coverage,
 };
 use jqf_resource::ResourceContext;
 
@@ -101,7 +102,13 @@ impl InputProvider for HtmlProvider {
             if exact || requirement.result() != AccessResultKind::CompleteDocument {
                 return Err(mismatch());
             }
-            let session = HtmlSession::new(source, self.fragment)?;
+            // Empty-path count or Whole bare-root `type` licenses the
+            // measure-skeleton decode: after WHATWG recover the session serves
+            // the document element as an array of cheap child nodes — the same
+            // kind `type`/`length` read on the full document. Element demand
+            // keeps `build_document`; measure children are NAME-only stubs.
+            let coverage = required_builder_coverage(requirement);
+            let session = HtmlSession::new(source, self.fragment, coverage, markup_measure_demand(requirement))?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::FULL_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });
@@ -123,4 +130,190 @@ impl InputProvider for HtmlProvider {
 
 fn mismatch() -> CodecError {
     CodecError::new(jqf_codec_core::CodecFailureKind::ProviderRouteMismatch)
+}
+
+#[cfg(test)]
+mod measure_provider_tests {
+    use super::*;
+    use jqf_codec_core::{CodecRunContext, DecodeRequest};
+    use jqf_data::{CountDemand, CountRow, DialectId};
+
+    fn resources() -> jqf_resource::ResourceContext<'static> {
+        jqf_resource::ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> jqf_source::ResolvedSource<'_> {
+        jqf_source::ResolvedSource::new(
+            jqf_source::SourceRef::new(jqf_source::SourceId::new(0), jqf_source::SourceKind::Input),
+            "input",
+            bytes,
+            0,
+        )
+    }
+
+    #[test]
+    fn count_requirement_opens_the_measure_session() {
+        let mut resources = resources();
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(b"<a href=\"https://ex\">hi</a>"),
+                DecodeRequest {
+                    validation: jqf_codec_core::ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        let demand = jqf_codec_core::CodecDemand::try_new(&resources);
+        let requirement = jqf_codec_core::AccessRequirement::try_whole(
+            demand,
+            jqf_codec_core::AccessGuarantees::new(jqf_codec_core::ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_count(CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        });
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let result = {
+            let mut run = CodecRunContext::new(&mut resources);
+            run.set_cooperative_credits(4096);
+            session.decode(&mut run).expect("decode")
+        };
+        match result.outcome() {
+            jqf_codec_core::AccessOutcome::FullDocument(product) => {
+                assert_eq!(
+                    product.document().node_count(),
+                    3,
+                    "the measure skeleton is html plus two cheap children: nodes={}",
+                    product.document().node_count()
+                );
+            }
+            jqf_codec_core::AccessOutcome::Located(_) => {
+                panic!("expected a full document outcome")
+            }
+        }
+    }
+
+    #[test]
+    fn type_requirement_opens_the_measure_session() {
+        let mut resources = resources();
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(b"<a href=\"https://ex\">hi</a>"),
+                DecodeRequest {
+                    validation: jqf_codec_core::ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        let demand = jqf_codec_core::CodecDemand::try_new(&resources);
+        let requirement = jqf_codec_core::AccessRequirement::try_whole(
+            demand,
+            jqf_codec_core::AccessGuarantees::new(jqf_codec_core::ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_type_demand();
+        assert!(requirement.type_demand(), "the requirement must carry the type hint");
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let result = {
+            let mut run = CodecRunContext::new(&mut resources);
+            run.set_cooperative_credits(4096);
+            session.decode(&mut run).expect("decode")
+        };
+        match result.outcome() {
+            jqf_codec_core::AccessOutcome::FullDocument(product) => {
+                let document = product.document();
+                let kind = document
+                    .value_view(document.root_handle())
+                    .expect("root view")
+                    .kind()
+                    .expect("root kind");
+                assert_eq!(kind, jqf_data::ValueKind::Array, "root kind is array");
+            }
+            jqf_codec_core::AccessOutcome::Located(_) => {
+                panic!("expected a full document outcome")
+            }
+        }
+    }
+
+    #[test]
+    fn identity_demand_keeps_the_doctype_fact() {
+        let mut resources = resources();
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(b"<!DOCTYPE html><html></html>"),
+                DecodeRequest {
+                    validation: jqf_codec_core::ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        let requirement = jqf_codec_core::AccessRequirement::try_whole(
+            jqf_codec_core::CodecDemand::try_new(&resources),
+            jqf_codec_core::AccessGuarantees::new(jqf_codec_core::ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement");
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let result = {
+            let mut run = CodecRunContext::new(&mut resources);
+            run.set_cooperative_credits(4096);
+            session.decode(&mut run).expect("decode")
+        };
+        let jqf_codec_core::AccessOutcome::FullDocument(product) = result.outcome() else {
+            panic!("expected a full document outcome");
+        };
+        let document = product.document();
+        let root = document.root();
+        let has_doctype = document.owner_fact_ids(root).iter().any(|id| {
+            document
+                .fact(*id)
+                .is_ok_and(|fact| fact.role().as_str() == crate::document::DOCTYPE_FACT)
+        });
+        assert!(has_doctype, "identity must still attach html.doctype@1");
+    }
 }

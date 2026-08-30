@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 use jqf_codec_core::{
     AccessGuarantees, AccessInput, AccessOutcome, AccessResult, AccessResultKind, AccessSession, CodecError,
     CodecFailureKind, CodecRunContext, DocumentProduct, ErasedAccessSession, PhysicalRouteId, ProviderInput,
-    RouteDescription, RouteSlot,
+    PruneLookup, RouteDescription, RouteSlot,
 };
 use jqf_data::{
     AccountedDocumentBuilder, AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage,
@@ -126,61 +126,6 @@ impl CsvHandles {
             item: schema.occurrence_role(0).ok_or_else(data_contract)?,
             field: schema.occurrence_role(1).ok_or_else(data_contract)?,
         })
-    }
-}
-
-/// The session-owned copy of the requirement's kept-subtree prune hint, flattened to plain lookup nodes (json's
-/// `PruneMap` shape). `None` when no tree rides the requirement or it keeps everything at the root (nothing to prune).
-///
-/// The hint is MONOTONE: omitting members the tree names unobservable is always sound, and a codec is free to ignore it
-/// entirely. The headered dialect consults it to build only the members the program provably reads; the array dialect
-/// never receives one (the engine's static-`.[i]` widening keeps array containers whole), so the array arm is
-/// untouched.
-pub(crate) struct PruneLookup {
-    nodes: Vec<PruneLookupNode>,
-}
-
-struct PruneLookupNode {
-    all: bool,
-    element: Option<u32>,
-    /// Ascending by key bytes (the transport's push-order contract).
-    keys: Vec<(Box<[u8]>, u32)>,
-}
-
-impl PruneLookup {
-    /// Copies the transported tree; `None` when the hint keeps everything at the root (nothing to prune).
-    fn from_transport(tree: &jqf_codec_core::PruneTree) -> Option<Self> {
-        if tree.root().is_all() {
-            return None;
-        }
-        let mut nodes = Vec::new();
-        for id in 0..u32::MAX {
-            let Some(node) = tree.node(id) else { break };
-            nodes.push(PruneLookupNode {
-                all: node.is_all(),
-                element: node.element(),
-                keys: node
-                    .members()
-                    .map(|(name, child)| (Box::from(name.as_bytes()), child))
-                    .collect(),
-            });
-        }
-        Some(Self { nodes })
-    }
-
-    /// Whether the root object's member `name` is unobservable and MAY be omitted. A node that keeps everything, a
-    /// named key, or a shared element node all deliver the member.
-    fn omits_member(&self, name: &str) -> bool {
-        let Some(node) = self.nodes.get(jqf_codec_core::PruneTree::ROOT as usize) else {
-            return false;
-        };
-        if node.all {
-            return false;
-        }
-        node.keys
-            .binary_search_by(|(key, _)| key.as_ref().cmp(name.as_bytes()))
-            .is_err()
-            && node.element.is_none()
     }
 }
 

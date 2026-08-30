@@ -14,8 +14,8 @@ Three rules hold for every recognizer:
 2. Recognizers change how the executor walks or what the document consumer
    answers. They never change published bytes, and a runtime decline falls back
    to the floor mid-flight without changing the answer.
-3. Count and element demands are derived once at compile and consulted per
-   record.
+3. Count, element, type, and keys demands are derived once at compile and
+   consulted per record.
 
 ## Projection: `Structure < Fields(S) < Subtree`
 
@@ -30,17 +30,37 @@ feeds the [codec demand](demand.md) and the prune hints, and it is visible as
 ## Count
 
 Rows: `PATH | length`, `PATH | keys | length`, `[C[] | suffix] | length`, and
-the filtered twin `[C[] | select(p)] | length`. When the document can prove the
+the filtered twin `[C[] | select(p)] | length` (and its `PATH | map(select(p)) |
+length` spelling). When the document can prove the
 answer (a span skeleton knows its element count) the consumer publishes it
 without walking elements. Optional probes, nested iteration, and paths the prune
 tree cannot name decline.
 
+## Type
+
+Rows: bare `type` and `PATH | type` over a static Current key or index. A
+trailing slice (`.[1:3] | type`) and `type?` decline. Bare `type` is a
+kind-only read of the document root; `PATH | type` Exact-locates the
+prefix so residual `type` sees the named node.
+
+## Keys
+
+Rows: bare `keys` and `PATH | keys` over a static Current key or index.
+`keys_unsorted` declines because the publish sorts. `keys?` declines. The
+keys-count twins (`PATH | keys | length`) stay on the Count table. The
+consumer publishes the container's keys from a Located outcome without
+running the residual: object names sorted, array indexes as numbers.
+
 ## Element
 
-Rows: the fan-out family (`.catalog[] | .name`, collected fan-outs, constructor
-fan-outs with static keys), `reduce`-object-increment, and the counted prefixes
-(`limit(k; …)`, `first`, `nth`). The consumer streams exactly the elements
-needed, so `limit(2; .xs[])` visits two children, not the container.
+Rows: the fan-out family (`.catalog[] | .name`, collected fan-outs including
+`PATH | map(.name)`, constructor fan-outs with static keys),
+`reduce`-object-increment, the counted prefixes (`limit(k; …)`, `first`,
+`nth`), and the select fan-out (`.catalog[] | select(.ok) | .name` and
+`PATH | map(select(p))`). The consumer streams exactly the elements needed, so
+`limit(2; .xs[])` visits two children, not the container. `.catalog[] |
+select(.ok) | .name` applies the closed collect-filter predicate per element
+then the static probe.
 
 ## Correlated scan
 

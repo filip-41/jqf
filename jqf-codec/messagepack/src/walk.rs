@@ -108,6 +108,30 @@ pub(crate) fn locate(
     Ok((outcome, item_end))
 }
 
+/// Kind of the item starting at `start`. The walk already validated every unread byte.
+pub(crate) fn classify_kind(
+    source: ResolvedSource<'_>,
+    dialect: Dialect,
+    start: usize,
+    resources: &ResourceContext<'_>,
+) -> Result<ValueKind, CodecError> {
+    let mut walker = Walker {
+        source,
+        bytes: source.bytes(),
+        dialect,
+        steps: &[],
+        pos: start,
+        outcome: None,
+        resources,
+    };
+    let marker = walker.read_marker()?;
+    match marker {
+        Marker::Fixarray | Marker::Array16 | Marker::Array32 => Ok(ValueKind::Array),
+        Marker::Fixmap | Marker::Map16 | Marker::Map32 => Ok(ValueKind::Object),
+        _ => walker.skip_scalar(start, marker),
+    }
+}
+
 impl Walker<'_> {
     fn walk_item(&mut self, step: StepCtx, value_start: usize) -> Result<(), CodecError> {
         if step.is_none() {

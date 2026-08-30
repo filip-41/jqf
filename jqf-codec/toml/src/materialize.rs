@@ -5,7 +5,9 @@
 //! bounded by the subtree.
 
 use jqf_codec_core::CodecError;
-use jqf_data::{AccountedDocumentBuilder, AccountedOccurrenceKey, AccountedSemanticNode, LocalOwnerRef, NodeId};
+use jqf_data::{
+    AccountedDocumentBuilder, AccountedOccurrenceKey, AccountedSemanticNode, BuilderCoverage, LocalOwnerRef, NodeId,
+};
 use jqf_resource::ResourceContext;
 
 use alloc::string::String;
@@ -20,16 +22,17 @@ pub(crate) fn build_located_document(
     located: &Located<'_>,
     names: &[String],
     bytes: &[u8],
+    coverage: BuilderCoverage,
     resources: &ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let (mut builder, _) = crate::parse::fresh_builder(resources)?;
+    let (mut builder, _) = crate::parse::fresh_builder(coverage, resources)?;
     let root = match located {
-        Located::Value(value) => build_value(&mut builder, value, names, bytes, resources)?,
-        Located::Table(table) => build_table(&mut builder, table, names, bytes, resources)?,
+        Located::Value(value) => build_value(&mut builder, value, names, bytes, coverage, resources)?,
+        Located::Table(table) => build_table(&mut builder, table, names, bytes, coverage, resources)?,
         Located::ArrayOfTables(elements) => {
             let array = add_array_node(&mut builder, resources)?;
             for element in *elements {
-                let element_node = build_table(&mut builder, element, names, bytes, resources)?;
+                let element_node = build_table(&mut builder, element, names, bytes, coverage, resources)?;
                 add_item_occurrence(&mut builder, array, element_node, resources)?;
             }
             array
@@ -47,20 +50,21 @@ fn build_table(
     table: &TableTree,
     names: &[String],
     bytes: &[u8],
+    coverage: BuilderCoverage,
     resources: &ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
     let node = add_table_node(builder, resources)?;
     for (key, value) in &table.assignments {
-        let value_node = build_value(builder, value, names, bytes, resources)?;
+        let value_node = build_value(builder, value, names, bytes, coverage, resources)?;
         add_member_occurrence(builder, node, key, names, value_node, resources)?;
     }
     for (key, child) in &table.children {
         let child_node = match child {
-            ChildKind::Table(table) => build_table(builder, table, names, bytes, resources)?,
+            ChildKind::Table(table) => build_table(builder, table, names, bytes, coverage, resources)?,
             ChildKind::ArrayOfTables(elements) => {
                 let array = add_array_node(builder, resources)?;
                 for element in elements {
-                    let element_node = build_table(builder, element, names, bytes, resources)?;
+                    let element_node = build_table(builder, element, names, bytes, coverage, resources)?;
                     add_item_occurrence(builder, array, element_node, resources)?;
                 }
                 array
@@ -81,13 +85,14 @@ fn build_value(
     value: &Tree,
     names: &[String],
     bytes: &[u8],
+    coverage: BuilderCoverage,
     resources: &ResourceContext<'_>,
 ) -> Result<NodeId, CodecError> {
     match value {
         Tree::Array { items, .. } => {
             let array = add_array_node(builder, resources)?;
             for item in items {
-                let item_node = build_value(builder, item, names, bytes, resources)?;
+                let item_node = build_value(builder, item, names, bytes, coverage, resources)?;
                 add_item_occurrence(builder, array, item_node, resources)?;
             }
             Ok(array)
@@ -95,7 +100,7 @@ fn build_value(
         Tree::InlineTable { entries, .. } => {
             let table = add_inline_table_node(builder, resources)?;
             for (key, entry) in entries {
-                let entry_node = build_value(builder, entry, names, bytes, resources)?;
+                let entry_node = build_value(builder, entry, names, bytes, coverage, resources)?;
                 add_inline_member_occurrence(builder, table, key, names, entry_node, resources)?;
             }
             Ok(table)
@@ -171,8 +176,8 @@ fn build_value(
             )
             .map_err(map_data),
         Tree::Commented { value, leading, inline } => {
-            let node = build_value(builder, value, names, bytes, resources)?;
-            crate::parse::attach_comments(builder, leading, inline, node, resources)?;
+            let node = build_value(builder, value, names, bytes, coverage, resources)?;
+            crate::parse::attach_comments(builder, leading, inline, node, coverage.attached_facts(), resources)?;
             Ok(node)
         }
     }

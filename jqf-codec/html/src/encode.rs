@@ -219,7 +219,7 @@ impl HtmlEncoder {
     /// named `k`, an array item a child element named `item`, a string/number/boolean a text run, and `null` an empty
     /// element. A key that is not a WHATWG tag name and byte/temporal/tagged values are refused, never renamed.
     fn encode_value(&mut self, value: &Value, resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
-        let mut builder = crate::document::fresh_builder(resources)?;
+        let mut builder = crate::document::fresh_builder(jqf_data::BuilderCoverage::complete(), resources)?;
         let root = build_value_element(&mut builder, VALUE_ROOT_NAME, value, resources)?;
         let document = builder.finish(root, resources).map_err(crate::document::map_data)?;
         let node = document.root_handle();

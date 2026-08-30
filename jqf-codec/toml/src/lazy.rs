@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use jqf_codec_core::{CodecError, map_span_materialization_error};
-use jqf_data::{DataError, LazySpanMaterializer, Value};
+use jqf_data::{BuilderCoverage, DataError, LazySpanMaterializer, Value};
 use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -50,8 +50,13 @@ fn materialize(text: &str, dialect: DialectKind, resources: &mut ResourceContext
     let source = ResolvedSource::new(SPAN_SOURCE, "container-span", &wrapped, 0);
     let doc = parse::parse_direct(source, dialect, resources)?;
     let value = parse::first_assignment_value(&doc)?.clone();
-    let (builder, root) =
-        materialize::build_located_document(&Located::Value(&value), doc.names(), &wrapped, resources)?;
+    let (builder, root) = materialize::build_located_document(
+        &Located::Value(&value),
+        doc.names(),
+        &wrapped,
+        BuilderCoverage::minimal_semantic(),
+        resources,
+    )?;
     let document = builder.finish(root, resources).map_err(map_data)?;
     document.materialize_root(resources).map_err(map_data)
 }
@@ -63,6 +68,10 @@ fn materialize(text: &str, dialect: DialectKind, resources: &mut ResourceContext
 /// Parses one complete VALUE region — wrapped as `x = <span>` — and builds a fresh document whose root is that
 /// value. The walk's carried comments attach to the built root: the LEADING set as `toml.comment@1` and the own-line
 /// trailing set as `toml.comment_inline@1`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one wrapped-value rebuild: span, carried comments, dialect, and coverage"
+)]
 pub(crate) fn build_wrapped_value(
     bytes: &[u8],
     start: usize,
@@ -70,6 +79,7 @@ pub(crate) fn build_wrapped_value(
     leading: &[String],
     inline: &[String],
     dialect: DialectKind,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(jqf_data::AccountedDocumentBuilder<'static>, jqf_data::NodeId), CodecError> {
     let mut wrapped = alloc::vec![b'x', b' ', b'='];
@@ -78,8 +88,15 @@ pub(crate) fn build_wrapped_value(
     let doc = parse::parse_direct(source, dialect, resources)?;
     let value = parse::first_assignment_value(&doc)?.clone();
     let (mut builder, root) =
-        materialize::build_located_document(&Located::Value(&value), doc.names(), &wrapped, resources)?;
-    parse::attach_comments(&mut builder, leading, inline, root, resources)?;
+        materialize::build_located_document(&Located::Value(&value), doc.names(), &wrapped, coverage, resources)?;
+    parse::attach_comments(
+        &mut builder,
+        leading,
+        inline,
+        root,
+        coverage.attached_facts(),
+        resources,
+    )?;
     Ok((builder, root))
 }
 
@@ -91,13 +108,14 @@ pub(crate) fn build_implicit_table(
     bytes: &[u8],
     pieces: &[(Vec<String>, usize, usize)],
     dialect: DialectKind,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(jqf_data::AccountedDocumentBuilder<'static>, jqf_data::NodeId), CodecError> {
     let buffer = synthesize_implicit_table_region(bytes, pieces);
     let source = ResolvedSource::new(SPAN_SOURCE, "implicit-table", &buffer, 0);
     let doc = parse::parse_direct(source, dialect, resources)?;
     let value = parse::first_assignment_value(&doc)?.clone();
-    materialize::build_located_document(&Located::Value(&value), doc.names(), &buffer, resources)
+    materialize::build_located_document(&Located::Value(&value), doc.names(), &buffer, coverage, resources)
 }
 
 fn synthesize_implicit_table_region(bytes: &[u8], pieces: &[(Vec<String>, usize, usize)]) -> Vec<u8> {
@@ -137,6 +155,10 @@ fn push_key_component(out: &mut Vec<u8>, text: &str) {
 /// Concatenates one located table's subtree STATEMENT spans and parses them as a mini-document; selects the walk's
 /// exact target and builds a fresh document whose root is that target. The walk's carried FOOT run attaches to the
 /// built root as `toml.comment_foot@1`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one statement-table rebuild: spans, foot comments, path depth, dialect, and coverage"
+)]
 pub(crate) fn build_statement_table(
     bytes: &[u8],
     spans: &[jqf_source::Span],
@@ -144,6 +166,7 @@ pub(crate) fn build_statement_table(
     key_depth: usize,
     element: bool,
     dialect: DialectKind,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(jqf_data::AccountedDocumentBuilder<'static>, jqf_data::NodeId), CodecError> {
     let mut buffer = Vec::new();
@@ -154,8 +177,8 @@ pub(crate) fn build_statement_table(
     let source = ResolvedSource::new(SPAN_SOURCE, "table-spans", &buffer, 0);
     let mut doc = parse::parse_direct(source, dialect, resources)?;
     let target = parse::target_ids_for_walk(&doc, key_depth, element)?;
-    let (mut builder, root) = parse::build_located_from_doc(&mut doc, &target, &buffer, resources)?;
-    parse::attach_foot_comments(&mut builder, foot, root, resources)?;
+    let (mut builder, root) = parse::build_located_from_doc(&mut doc, &target, &buffer, coverage, resources)?;
+    parse::attach_foot_comments(&mut builder, foot, root, coverage.attached_facts(), resources)?;
     Ok((builder, root))
 }
 
@@ -167,6 +190,7 @@ pub(crate) fn build_range_value(
     end: usize,
     empty: bool,
     dialect: DialectKind,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(jqf_data::AccountedDocumentBuilder<'static>, jqf_data::NodeId), CodecError> {
     let mut wrapped = alloc::vec![b'x', b' ', b'='];
@@ -178,7 +202,7 @@ pub(crate) fn build_range_value(
     let source = ResolvedSource::new(SPAN_SOURCE, "range-spans", &wrapped, 0);
     let doc = parse::parse_direct(source, dialect, resources)?;
     let value = parse::first_assignment_value(&doc)?.clone();
-    materialize::build_located_document(&Located::Value(&value), doc.names(), &wrapped, resources)
+    materialize::build_located_document(&Located::Value(&value), doc.names(), &wrapped, coverage, resources)
 }
 
 /// Builds the fresh array a range over an array-of-tables materializes: each in-range element's subtree is concatenated
@@ -188,6 +212,7 @@ pub(crate) fn build_range_of_tables(
     bytes: &[u8],
     element_spans: &[Vec<jqf_source::Span>],
     dialect: DialectKind,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(jqf_data::AccountedDocumentBuilder<'static>, jqf_data::NodeId), CodecError> {
     let mut tables: Vec<crate::grammar::TableTree> = Vec::new();
@@ -207,7 +232,7 @@ pub(crate) fn build_range_of_tables(
         names.extend(doc.names().iter().cloned());
         tables.push(element);
     }
-    materialize::build_located_document(&Located::ArrayOfTables(&tables), &names, bytes, resources)
+    materialize::build_located_document(&Located::ArrayOfTables(&tables), &names, bytes, coverage, resources)
 }
 
 /// Resolves every span-backed string in a parsed TABLE subtree against the buffer it was parsed from, into owned text:

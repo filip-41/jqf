@@ -1338,6 +1338,84 @@ mod tests {
         assert!(result.is_err());
     }
 
+    fn run_type_demand<'source>(
+        bytes: &'source [u8],
+        path: &[Step<'_>],
+    ) -> Result<AccessResult<'source>, jqf_codec_core::CodecError> {
+        let mut resources = test_support::resources();
+        let registration = registration().expect("registration");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(crate::RFC8259_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )?;
+        let requirement = requirement(Some(path), DiagnosticPolicy::ErrorsOnly, &resources).with_type_demand();
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources)?;
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run)
+    }
+
+    /// Exact `type_demand` locates `.users` then keeps a kind-only empty array — no child nodes.
+    #[test]
+    fn exact_type_demand_at_users_does_not_retain_child_nodes() {
+        let result = run_type_demand(br#"{"users":[1,2,3]}"#, &[Step::Member("users")]).expect("type demand");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        let view = document.value_view(*node).expect("view");
+        assert_eq!(view.kind().expect("kind"), ValueKind::Array);
+        let array = view.array().expect("array").expect("array view");
+        assert_eq!(array.len(), 0, "type_demand must not retain array members");
+        assert_eq!(document.node_count(), 1, "kind-only document is the empty array node");
+        assert_eq!(
+            document.semantic_relationship_count(),
+            0,
+            "kind-only array has no child edges"
+        );
+    }
+
+    #[test]
+    fn exact_type_demand_still_validates_unread_bytes() {
+        let result = run_type_demand(br#"{"users":[1,2,3]} false"#, &[Step::Member("users")]);
+        assert!(
+            result.is_err(),
+            "unread trailing value must still fail Exact validation"
+        );
+    }
+
+    #[test]
+    fn exact_type_demand_names_each_json_kind() {
+        let bytes = br#"{"a":[1],"o":{"x":1},"s":"hi","n":1,"b":true,"z":null}"#;
+        for (member, kind) in [
+            ("a", ValueKind::Array),
+            ("o", ValueKind::Object),
+            ("s", ValueKind::String),
+            ("n", ValueKind::Number),
+            ("b", ValueKind::Bool),
+            ("z", ValueKind::Null),
+        ] {
+            let result = run_type_demand(bytes, &[Step::Member(member)]).expect(member);
+            let selected = located(&result);
+            let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+                panic!("{member} node")
+            };
+            let view = selected.product().document().value_view(*node).expect("view");
+            assert_eq!(view.kind().expect("kind"), kind, "{member}");
+            assert_eq!(selected.product().document().node_count(), 1, "{member} is kind-only");
+        }
+    }
+
     #[test]
     fn successful_diagnostic_policy_and_report_match_document_coverage() {
         let result = run(br"null", None, DiagnosticPolicy::All).expect("all diagnostics");

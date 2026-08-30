@@ -1,4 +1,9 @@
 //! YAML decoder provider and access session.
+//!
+//! Slot 0 is Whole/`CompleteDocument`; slot 1 is Exact/`Located`. The graph is
+//! always fully parsed (YAML cannot defer). Exact prune trims only the located
+//! subtree after that parse. Tags attach when the program reads `.@tag` or
+//! preserves facts — see [`crate::document::demanded_intrinsic`].
 
 use alloc::vec::Vec;
 
@@ -59,12 +64,29 @@ impl InputProvider for YamlProvider {
             let prune = requirement
                 .prune()
                 .and_then(crate::document::PruneLookup::from_transport);
-            let state = crate::parse::YamlParseState::try_new(source, dialect, prune, resources)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let want_tags = jqf_codec_core::requirement_wants_intrinsic_tag(requirement);
+            let state = crate::parse::YamlParseState::try_new(source, dialect, prune, coverage, want_tags, resources)?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::FULL_PHYSICAL_ROUTE_ID, || Ok(state));
         }
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
-            let session = crate::scoped::NativeScopedSession::try_new(path.steps(), origin, dialect)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let want_tags = jqf_codec_core::requirement_wants_intrinsic_tag(requirement);
+            // Re-anchored Exact prune: omit unread mapping members of the located subtree. The graph is still fully
+            // parsed (YAML cannot defer); only the subtree materialize drops unobservable members.
+            let prune = requirement
+                .prune()
+                .and_then(crate::document::PruneLookup::from_transport);
+            let session = crate::scoped::NativeScopedSession::try_new(
+                path.steps(),
+                origin,
+                dialect,
+                coverage,
+                want_tags,
+                prune,
+                requirement.type_demand(),
+            )?;
             ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || Ok(session))
         } else {
             Err(CodecError::new(jqf_codec_core::CodecFailureKind::ProviderRouteMismatch))

@@ -34,6 +34,13 @@ pub(crate) struct NativeScopedSession {
     steps: Vec<OwnedStep>,
     origin: SelectionOrigin,
     dialect: DialectKind,
+    coverage: jqf_data::BuilderCoverage,
+    /// See [`crate::document::demanded_intrinsic`].
+    want_tags: bool,
+    /// Re-anchored kept-subtree prune over the located node. `None` keeps every member.
+    prune: Option<crate::document::PruneLookup>,
+    /// Kind-only subtree: empty array/object or a dummy scalar. The graph is still fully parsed.
+    type_demand: bool,
     /// The resumable validate+parse (None once the graph is in hand).
     parse: Option<GraphParse>,
     /// The retained decoded-source descriptor, moved out of [`GraphParse`] when its graph is taken: post-parse
@@ -48,11 +55,19 @@ impl NativeScopedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         dialect: DialectKind,
+        coverage: jqf_data::BuilderCoverage,
+        want_tags: bool,
+        prune: Option<crate::document::PruneLookup>,
+        type_demand: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: locate::own_steps(steps)?,
             origin,
             dialect,
+            coverage,
+            want_tags,
+            prune,
+            type_demand,
             parse: None,
             decoded: None,
             finished: false,
@@ -112,14 +127,29 @@ impl NativeScopedSession {
             .map_err(|error| self.translate(error, source))?;
         let (product, selection) = match &located {
             Located::Node(node) => {
-                let (builder, root) = crate::scoped_build::build_subtree_document(
-                    &graph,
-                    *node,
-                    source,
-                    self.dialect,
-                    source_mapped,
-                    resources,
-                )
+                let (builder, root) = if self.type_demand {
+                    crate::scoped_build::build_kind_only_document(
+                        &graph,
+                        *node,
+                        source,
+                        self.dialect,
+                        self.coverage,
+                        self.want_tags,
+                        resources,
+                    )
+                } else {
+                    crate::scoped_build::build_subtree_document(
+                        &graph,
+                        *node,
+                        source,
+                        self.dialect,
+                        source_mapped,
+                        self.coverage,
+                        self.want_tags,
+                        self.prune.as_ref(),
+                        resources,
+                    )
+                }
                 .map_err(|error| self.translate(error, source))?;
                 let document = builder.finish(root, resources).map_err(crate::document::map_data)?;
                 let product = DocumentProduct::try_new(document, resources)?;
@@ -130,14 +160,21 @@ impl NativeScopedSession {
                 (product, selection)
             }
             Located::Range { items } => {
-                let (builder, root) = crate::scoped_build::build_range_document(
-                    &graph,
-                    items,
-                    source,
-                    self.dialect,
-                    source_mapped,
-                    resources,
-                )
+                let (builder, root) = if self.type_demand {
+                    crate::scoped_build::build_empty_array_document(self.coverage, resources)
+                } else {
+                    crate::scoped_build::build_range_document(
+                        &graph,
+                        items,
+                        source,
+                        self.dialect,
+                        source_mapped,
+                        self.coverage,
+                        self.want_tags,
+                        self.prune.as_ref(),
+                        resources,
+                    )
+                }
                 .map_err(|error| self.translate(error, source))?;
                 let document = builder.finish(root, resources).map_err(crate::document::map_data)?;
                 let product = DocumentProduct::try_new(document, resources)?;

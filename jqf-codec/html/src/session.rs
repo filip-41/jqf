@@ -40,10 +40,18 @@ pub(crate) struct HtmlSession {
     finalizer: Option<AccountedDocumentFinalizer<'static>>,
     /// Parse as a FRAGMENT under the fixed default context (the `html.fragment@1` registration) rather than a document.
     fragment: bool,
+    coverage: jqf_data::BuilderCoverage,
+    /// Empty-path count or Whole bare-root `type`: project the measure skeleton after recover.
+    measure: bool,
 }
 
 impl HtmlSession {
-    pub(crate) fn new(_source: ResolvedSource<'_>, fragment: bool) -> Result<Self, CodecError> {
+    pub(crate) fn new(
+        _source: ResolvedSource<'_>,
+        fragment: bool,
+        coverage: jqf_data::BuilderCoverage,
+        measure: bool,
+    ) -> Result<Self, CodecError> {
         Ok(Self {
             phase: Phase::Decode,
             tree_build: None,
@@ -52,6 +60,8 @@ impl HtmlSession {
             binding_stage: None,
             finalizer: None,
             fragment,
+            coverage,
+            measure,
         })
     }
 }
@@ -93,12 +103,19 @@ impl AccessSession for HtmlSession {
                         }
                         TreeBuildPoll::Ready(tree) => {
                             self.tree_build = None;
-                            let (builder, root) =
-                                document::build_document(&tree, context.resources()).map_err(|error| {
-                                    #[cfg(jqf_trace)]
-                                    std::eprintln!("session: build_document failed: {error:?}");
-                                    error
-                                })?;
+                            // Recover always consumes the input (WHATWG). Measure
+                            // wins whenever the flag is set and skips descendant
+                            // ATTRIBUTE_FACT tables.
+                            let (builder, root) = if self.measure {
+                                document::build_measure_document(&tree, context.resources())
+                            } else {
+                                document::build_document(&tree, self.coverage, context.resources())
+                            }
+                            .map_err(|error| {
+                                #[cfg(jqf_trace)]
+                                std::eprintln!("session: document build failed: {error:?}");
+                                error
+                            })?;
                             self.builder = Some(builder);
                             self.root = Some(root);
                             // The document retains the source authority the source-echo encoder reads back: seal it
@@ -174,4 +191,62 @@ impl AccessSession for HtmlSession {
 
 pub(crate) fn data_contract() -> CodecError {
     jqf_codec_core::data_contract("HTML session state missing during poll")
+}
+
+#[cfg(test)]
+mod measure_session_tests {
+    use super::*;
+    use jqf_codec_core::{AccessInput, AccessOutcome, CodecRunContext};
+    use jqf_resource::ResourceContext;
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    #[test]
+    fn measure_session_publishes_the_skeleton_document() {
+        let input = b"<a href=\"https://ex\">hi</a>";
+        let source = jqf_source::ResolvedSource::new(
+            jqf_source::SourceRef::new(jqf_source::SourceId::new(0), jqf_source::SourceKind::Input),
+            "input",
+            input,
+            0,
+        );
+        let mut resources = resources();
+        let demand = jqf_data::CountDemand {
+            row: jqf_data::CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        let mut session =
+            HtmlSession::new(source, false, jqf_data::BuilderCoverage::complete(), true).expect("session");
+        let mut context = CodecRunContext::new(&mut resources);
+        context.set_cooperative_credits(4096);
+        let outcome = session
+            .decode(AccessInput::Source(source), &mut context)
+            .expect("decode");
+        let AccessOutcome::FullDocument(product) = outcome.outcome() else {
+            panic!("expected full document");
+        };
+        let document = product.document();
+        assert_eq!(
+            document.count_children_demand(&demand, &mut resources).expect("count"),
+            jqf_data::CountVerdict::Count(2),
+            "root length is the child count"
+        );
+    }
 }

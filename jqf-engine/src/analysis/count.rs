@@ -14,6 +14,7 @@
 //! | shape | example | demand |
 //! | --- | --- | --- |
 //! | `[C[] SUFFIX] \| length` | `[.catalog[] \| .name] \| length` | [`CountRow::Collect`], path `C`, probe `SUFFIX` |
+//! | `[C[] \| select(P)] \| length` / `PATH \| map(select(P)) \| length` | `.catalog \| map(select(.stock > 0)) \| length` | [`CountRow::Collect`] with [`CountDemand::filter`] |
 //! | `PATH \| length` / bare `length` | `.catalog \| length` | [`CountRow::Container`], path `PATH` |
 //! | `PATH \| keys \| length` / `PATH \| keys_unsorted \| length` | `.catalog \| keys \| length` | [`CountRow::Container`], path `PATH` |
 //!
@@ -30,12 +31,13 @@
 //!
 //! Deliberate v1 declines (the floor serves them): optional (`?`) probe steps,
 //! nested iteration (more than one `.[]`), multi-output bodies (`length,
-//! length`), `?` on the `keys`/`keys_unsorted` or `length` call, the
-//! replicate row (`[C[] | LITERAL]`), and any path or probe naming an ARRAY
-//! POSITION (`.users[0] | length`) — [`PruneNode`] cannot name a position, so
-//! that row would keep the whole document to answer one count while the floor
-//! reads only the named element. Each decline is a missed win, never a wrong
-//! answer.
+//! length`), `?` on the `keys`/`keys_unsorted` or `length` call, and any path
+//! or probe naming an ARRAY POSITION (`.users[0] | length`) — [`PruneNode`]
+//! cannot name a position, so that row would keep the whole document to answer
+//! one count while the floor reads only the named element. Each decline is a
+//! missed win, never a wrong answer. Replicate `[C[] | LITERAL] | length` is
+//! the collect row with an empty probe: the Structure witness already names a
+//! payload-free body, so the count is the container's element count.
 
 use alloc::vec::Vec;
 
@@ -44,7 +46,7 @@ use jqf_data::{CountDemand, CountRow, CountStep};
 use super::prune::PruneNode;
 use crate::analysis::ProjectionClass;
 use crate::analysis::PushdownSplit;
-use crate::analysis::path_steps::{count_each_steps, range_normalized, static_path};
+use crate::analysis::path_steps::{count_each_steps, range_normalized, static_member_prefix, static_path};
 use crate::program::{BinaryKind, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess};
 use jqf_builtins::registry::builtins::id;
 
@@ -82,6 +84,27 @@ pub(crate) fn count_demand(
 /// outputs, so `SUFFIX` must be a static `Key`/`Index` path that emits
 /// exactly one value per item it touches, or nothing (the reference's empty).
 fn collect_row(nodes: &[ProgramNode], root: ProgramNodeId, split: PushdownSplit) -> Option<CountDemand> {
+    collect_length_row(nodes, root, split).or_else(|| prefixed_collect_length_row(nodes, root))
+}
+
+/// `PATH | map(f) | length` ≡ `[PATH[] | f] | length`. Pipe is right-associative,
+/// so the arena is `FlatMap(PATH, FlatMap(Collect, length))` and the unprefixed
+/// row's split is the PATH stage, not the collect. Peel the static prefix and
+/// recognize the inner collect against its own split.
+fn prefixed_collect_length_row(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<CountDemand> {
+    let ProgramNode::FlatMap { upstream, body } = &nodes[root.index()] else {
+        return None;
+    };
+    let prefix = static_member_prefix(nodes, *upstream)?;
+    let inner_split = crate::analysis::analyze(nodes, *body);
+    let mut demand = collect_length_row(nodes, *body, inner_split)?;
+    let mut path = prefix;
+    path.extend(demand.path.iter().cloned());
+    demand.path = path;
+    Some(demand)
+}
+
+fn collect_length_row(nodes: &[ProgramNode], root: ProgramNodeId, split: PushdownSplit) -> Option<CountDemand> {
     let ProgramNode::FlatMap { upstream, body } = &nodes[root.index()] else {
         return None;
     };
@@ -138,6 +161,8 @@ fn collect_row(nodes: &[ProgramNode], root: ProgramNodeId, split: PushdownSplit)
     // A select directly after the boundary stage is the FILTER twin: no
     // residual steps, and the collect body is exactly
     // `FlatMap { entry stage, Call(select) }` over an admitted predicate.
+    // `PATH | map(select(P)) | length` is the same row after
+    // [`prefixed_collect_length_row`] peels the static prefix.
     // Any other body spelling declines (probe rows keep their law).
     let filter = if residual.is_empty() {
         select_filter(nodes, *collect_body, entry)
@@ -204,7 +229,7 @@ fn select_filter(
 ///
 /// Everything else declines: multi-step paths, optionals (`?`), dynamic or
 /// variable operands, reversed operand order, float-category literals.
-fn admitted_predicate(
+pub(crate) fn admitted_predicate(
     nodes: &[ProgramNode],
     arg: ProgramNodeId,
 ) -> Option<(jqf_data::CountTest, alloc::string::String)> {
@@ -497,18 +522,65 @@ fn is_keys_then_length(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
     is_keys_count_call(nodes, *upstream) && is_length_call(nodes, *body)
 }
 
-/// The recognized TYPE demand of one compiled program: a bare
-/// root `type` call, whose answer is the root VALUE KIND — a kind-only read
-/// that needs no materialized tree. This is the sibling of the count table's
-/// [`container_row`]: the same closed-table shape, a [`ProgramNode::Call`]
-/// root resolved to `type/0`. `type?` (a term-try) and `PATH | type` are NOT
-/// rows — their roots are a `Try` and a `FlatMap` respectively — so they
-/// fall through to the floor, exactly as the count table's declines do.
+/// The recognized TYPE demand of one compiled program: a kind-only read.
+///
+/// Rows: a bare-root `type` call (empty path) and `PATH | type` where PATH is a
+/// static Current Key/Index stage with no trailing slice. A trailing slice
+/// (`.[1:3] | type`) declines: dropping the range would look like bare `type`
+/// and Whole would type the root. `type?` (a `Try` root) and any other wrapper
+/// stay off the table — the floor serves them. The path rides the requirement
+/// so a codec can skip building the named node's payload; XML's
+/// measure-skeleton still only opens on the empty path.
 pub(crate) fn type_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> bool {
+    type_demand_path(nodes, root).is_some()
+}
+
+/// The static path a type-class program names, or `None` when it is not a row.
+/// Empty is the document root.
+pub(crate) fn type_demand_path(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Vec<CountStep>> {
+    path_then_call(nodes, root, is_type_call)
+}
+
+fn is_type_call(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
     matches!(
-        &nodes[root.index()],
+        &nodes[id.index()],
         ProgramNode::Call { overload, args, .. }
             if args.is_empty() && overload.get() == jqf_builtins::registry::builtins::id::TYPE
+    )
+}
+
+/// The recognized KEYS-publish demand: `keys` at the root, or `PATH | keys`
+/// over a static Current path with no trailing slice. `keys_unsorted`
+/// declines because the publish sorts. The keys-count twins
+/// (`PATH | keys | length`) stay on the count table — they match first at
+/// requirement lowering. `keys?` declines (a Try root).
+pub(crate) fn keys_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Vec<CountStep>> {
+    path_then_call(nodes, root, is_keys_sorted_call)
+}
+
+fn path_then_call(
+    nodes: &[ProgramNode],
+    root: ProgramNodeId,
+    is_call: fn(&[ProgramNode], ProgramNodeId) -> bool,
+) -> Option<Vec<CountStep>> {
+    if is_call(nodes, root) {
+        return Some(Vec::new());
+    }
+    let ProgramNode::FlatMap { upstream, body } = &nodes[root.index()] else {
+        return None;
+    };
+    if !is_call(nodes, *body) {
+        return None;
+    }
+    let demand = container_from_path_node(nodes, *upstream)?;
+    demand.range.is_none().then_some(demand.path)
+}
+
+fn is_keys_sorted_call(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
+    matches!(
+        &nodes[id.index()],
+        ProgramNode::Call { overload, args, .. }
+            if args.is_empty() && overload.get() == jqf_builtins::registry::builtins::id::KEYS
     )
 }
 
@@ -615,6 +687,11 @@ mod tests {
         assert_eq!(d.row, CountRow::Collect);
         assert!(d.path.is_empty());
         assert_eq!(d.probe, vec![CountStep::ObjectKey("name".into())]);
+
+        // Pipe is right-associative: PATH | map(f) | length ≡ [PATH[] | f] | length.
+        let mapped = demand(".catalog | map(.name) | length").expect("prefixed map|length");
+        let collected = demand("[.catalog[] | .name] | length").expect("collect row");
+        assert_eq!(mapped, collected);
     }
 
     #[test]
@@ -716,6 +793,27 @@ mod tests {
         assert!(demand(".users[0] | length").is_none());
         assert!(demand(".users[0] | keys | length").is_none());
         assert!(demand("[.catalog[] | .items[0]] | length").is_none());
+    }
+
+    #[test]
+    fn replicate_literal_collect_is_the_empty_probe_row() {
+        // `[C[] | LITERAL] | length` is the collect row with an empty probe:
+        // the Structure witness already names a payload-free body, so the
+        // count is the container's element count (one output per item).
+        let d = demand("[.catalog[] | 1] | length").expect("replicate collect");
+        assert_eq!(d.row, CountRow::Collect);
+        assert_eq!(d.path, vec![CountStep::ObjectKey("catalog".into())]);
+        assert!(d.probe.is_empty());
+        assert!(d.filter.is_none());
+        assert_eq!(
+            demand("[.catalog[] | true] | length").as_ref(),
+            Some(&d),
+            "boolean literal is the same empty-probe collect"
+        );
+        let root = demand("[.[] | null] | length").expect("root replicate");
+        assert_eq!(root.row, CountRow::Collect);
+        assert!(root.path.is_empty());
+        assert!(root.probe.is_empty());
     }
 
     // -- Collect-filter rows: `[C[] | select(P)] | length`. ---------------
@@ -824,6 +922,23 @@ mod tests {
         // The prune tree stays the elements' spine (probe is empty).
         let tree = super::count_prune_tree(&d);
         assert!(tree.is_some(), "spine prune applies to filter rows");
+    }
+
+    #[test]
+    fn prefixed_map_select_length_is_the_filter_row() {
+        let mapped = demand(".catalog | map(select(.stock > 0)) | length").expect("PATH|map(select)|length");
+        let collected = demand("[.catalog[] | select(.stock > 0)] | length").expect("collect filter");
+        assert_eq!(mapped, collected);
+        assert!(mapped.filter.is_some());
+        assert_eq!(mapped.path, vec![CountStep::ObjectKey("catalog".into())]);
+
+        let root_map = demand("map(select(.stock > 0)) | length").expect("map(select)|length");
+        let root_collect = demand("[.[] | select(.stock > 0)] | length").expect("root collect filter");
+        assert_eq!(root_map, root_collect);
+
+        let active = demand(".users | map(select(.active == true)) | length").expect("boolean filter");
+        assert_eq!(active.path, vec![CountStep::ObjectKey("users".into())]);
+        assert!(active.filter.is_some());
     }
 }
 

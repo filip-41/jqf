@@ -92,7 +92,8 @@ impl InputProvider for JqftProvider {
             return Err(CodecError::new(CodecFailureKind::ProviderRouteMismatch));
         }
         let source = input.source();
-        let state = crate::parse::JqftParseState::try_new(source, self.kind, self.allow_adjacent_values);
+        let coverage = jqf_codec_core::required_builder_coverage(requirement);
+        let state = crate::parse::JqftParseState::try_new(source, self.kind, self.allow_adjacent_values, coverage);
         let route = match self.kind {
             JqftKind::Jqft => crate::JQFT_FULL_PHYSICAL_ROUTE_ID,
             JqftKind::Jqfjson => crate::JQFJSON_FULL_PHYSICAL_ROUTE_ID,
@@ -118,6 +119,7 @@ impl InputProvider for JqftProvider {
         let Some(parse) = state.downcast_mut::<crate::parse::JqftParseState>() else {
             return Ok(false);
         };
+        parse.set_coverage(jqf_codec_core::required_builder_coverage(requirement));
         parse.try_reset();
         Ok(true)
     }

@@ -3,8 +3,9 @@
 use alloc::vec::Vec;
 
 use jqf_data::{CountStep, SliceRange};
+use jqf_resource::ResourceError;
 
-use crate::program::{ProgramNode, SliceBounds, StageStep, StepAccess};
+use crate::program::{ProgramNode, ProgramNodeId, SliceBounds, StageStart, StageStep, StepAccess};
 
 /// The container-path range of one recognized row: the slice's bounds
 /// normalized under the boundary law, admitted only when neither bound is
@@ -39,6 +40,80 @@ pub(crate) fn static_path(steps: &[StageStep]) -> Option<Vec<CountStep>> {
         }
     }
     Some(path)
+}
+
+/// A Current-start stage of non-optional Key/Index steps — the static prefix
+/// of `PATH | map(f)` and `PATH | map(f) | length`. Empty is already a root
+/// collect row.
+pub(crate) fn static_member_stage_steps(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<Vec<StageStep>> {
+    let ProgramNode::Stage {
+        start: StageStart::Current,
+        steps,
+    } = &nodes[id.index()]
+    else {
+        return None;
+    };
+    if steps.is_empty() {
+        return None;
+    }
+    if steps
+        .iter()
+        .any(|step| !matches!(step.access(), StepAccess::Key(_) | StepAccess::Index(_)) || step.is_optional())
+    {
+        return None;
+    }
+    Some(steps.clone())
+}
+
+/// Prepends `prefix` onto the leading Current-start stage of `inner` (or of that
+/// stage when `inner` is a `FlatMap`). `Ok(false)` when the shape is not that
+/// pair; `Err` on reserve failure.
+pub(crate) fn prepend_in_place(
+    out: &mut [ProgramNode],
+    inner: ProgramNodeId,
+    prefix: &[StageStep],
+) -> Result<bool, ResourceError> {
+    let stage_id = match out.get(inner.index()) {
+        Some(ProgramNode::Stage {
+            start: StageStart::Current,
+            ..
+        }) => inner,
+        Some(ProgramNode::FlatMap { upstream, .. }) => {
+            let upstream = *upstream;
+            match out.get(upstream.index()) {
+                Some(ProgramNode::Stage {
+                    start: StageStart::Current,
+                    ..
+                }) => upstream,
+                _ => return Ok(false),
+            }
+        }
+        _ => return Ok(false),
+    };
+    let ProgramNode::Stage { steps, .. } = &mut out[stage_id.index()] else {
+        return Ok(false);
+    };
+    let mut combined = Vec::new();
+    combined
+        .try_reserve(prefix.len() + steps.len())
+        .map_err(|_| ResourceError::AllocationFailed)?;
+    combined.extend(prefix.iter().cloned());
+    combined.extend(steps.iter().cloned());
+    *steps = combined;
+    Ok(true)
+}
+
+/// [`static_member_stage_steps`] as count steps.
+pub(crate) fn static_member_prefix(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<Vec<CountStep>> {
+    static_path(&static_member_stage_steps(nodes, id)?)
+}
+
+/// True when a collect-hoist prefix is a non-empty run of non-optional Key/Index steps.
+pub(crate) fn hoistable_collect_prefix(prefix: &[StageStep]) -> bool {
+    !prefix.is_empty()
+        && prefix
+            .iter()
+            .all(|step| matches!(step.access(), StepAccess::Key(_) | StepAccess::Index(_)) && !step.is_optional())
 }
 
 /// The number of `.[]` ([`StepAccess::Each`]) steps in the whole arena.

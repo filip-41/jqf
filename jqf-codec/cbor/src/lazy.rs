@@ -29,7 +29,7 @@ impl LazySpanMaterializer for CborSpanMaterializer {
 
     fn materialize_span_bytes(&self, bytes: &[u8], resources: &mut ResourceContext<'_>) -> Result<Value, DataError> {
         let source = ResolvedSource::new(SPAN_SOURCE, "container-span", bytes, 0);
-        let document = crate::parse::decode_span_document(source, 0, bytes.len(), resources)
+        let document = crate::parse::decode_span_document(source, 0, bytes.len(), None, resources)
             .map_err(|error| map_span_materialization_error(&error))?;
         document.materialize_root(resources)
     }

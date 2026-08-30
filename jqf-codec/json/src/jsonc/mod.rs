@@ -16,9 +16,9 @@
 //!
 //! ## Ceiling
 //!
-//! JSONC serves the whole-document route only. Strict JSON's scoped exact-path route and lazy-frontier deferral stay
-//! strict JSON's; an exact-path program over a large `.jsonc` materializes the whole document instead of the subtree.
-//! `Located` is still answered identically through core's `ExactFallbackState`.
+//! JSONC advertises Whole and Exact. Exact shares strict JSON's scoped session with comment grammar and, when
+//! coverage demands attached facts, comment collection so Preserve / `.@comment` keep leading comments. Identity Exact
+//! still validates the whole input.
 //!
 //! ## Comment facts
 //!

@@ -175,12 +175,20 @@ pub(crate) fn with_decode_fact_intent(
     ctx: &RouteContext<'_, '_>,
     editing: bool,
 ) -> jqf_codec_core::AccessRequirement {
-    let preserve = editing || matches!(ctx.output_format.as_str(), "jsonc" | "json5") || ctx.compiled.accesses_facts();
+    let preserve = editing || output_encoder_reemits_facts(ctx.output_format.as_str()) || ctx.compiled.accesses_facts();
     requirement.with_fact_intent(if preserve {
         FactIntent::Preserve
     } else {
         FactIntent::None
     })
+}
+
+/// Output formats whose encoder re-emits attached facts (comments, markup name/attrs, occurrence topology).
+fn output_encoder_reemits_facts(format: &str) -> bool {
+    matches!(
+        format,
+        "jsonc" | "json5" | "toml" | "yaml" | "ini" | "properties" | "dotenv" | "jqft" | "jqfb" | "html" | "xml"
+    )
 }
 
 /// Serves `execute`'s outcome to the caller, mapping the report shape the arm's drive family produces and turning a

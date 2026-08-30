@@ -33,13 +33,13 @@ extern crate std;
 #[cfg(test)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use jqf_codec_core::{AccessRequirement, CodecError, CodecFailureKind};
+use jqf_codec_core::{AccessRequirement, CodecError, CodecFailureKind, DemandClause};
 use jqf_resource::policy::MismatchPolicy;
 use jqf_resource::{ResourceContext, ResourceError};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef, Span};
 use jqf_syntax::{SyntaxInputError, parse_program, parse_query};
 
-use jqf_data::Value;
+use jqf_data::{ExpandedName, Value};
 
 use crate::analysis::{BoundaryConsumer, ProjectionClass, analyze, fuse_with_callables};
 use crate::codec_requirement::{
@@ -148,6 +148,9 @@ pub struct CompiledProgram {
     /// The program is `[FAN-OUT]`: the SDK collects every visited probe
     /// value into one array and publishes that array as the sole item.
     element_collect: bool,
+    /// The recognized KEYS-publish path (`keys` / `PATH | keys`). Empty is
+    /// the document root. `None` when the program is not a keys row.
+    keys: Option<alloc::vec::Vec<jqf_data::CountStep>>,
     /// Kept-subtree selection over a pulled `input`/`inputs` record.
     /// Present when the program pulls and the pulled demand bounds below
     /// the whole record. The record `NullFirst` drive attaches it as a
@@ -162,6 +165,10 @@ const _: () = {
     // worker thread; do not weaken detach to paper over it.
     assert_send_sync::<CompiledProgram>();
 };
+
+fn insert_clause(requirement: &mut AccessRequirement, clause: &DemandClause) -> Result<(), CodecError> {
+    requirement.try_insert_clause(clause).map_err(CodecError::from)
+}
 
 impl CompiledProgram {
     /// The kept-subtree selection over the document root, when the program's
@@ -206,57 +213,58 @@ impl CompiledProgram {
         // so the decline law — about the codec never answering missing/null —
         // is unchanged.
         if resources.mismatch_policy() != MismatchPolicy::Lenient {
-            return try_lower_root_requirement(self.policy, None, resources);
+            return self.attach_program_demand(try_lower_root_requirement(self.policy, None, resources)?);
         }
-        // A count-class program lowers the LAZY WHOLE-DOCUMENT requirement:
-        // the count consumer answers from the document's span
-        // skeleton — the container is a deferred span exactly when the
-        // whole-document route defers it — plus the Count demand hint and a
-        // KEPT-SUBTREE prune that keeps the counted container's elements'
-        // spine (the element COUNT is the only observable, so no payload is
-        // owed). The frontier stays LAZY deliberately: a codec with a span
-        // skeleton (strict JSON) drops the prune and serves the spans, while
-        // an eager codec with none (YAML) honors the prune and builds only
-        // the counted skeleton — the count-gate rss lanes' memory. The
-        // caller's frontier override still wins; the fallback (consumer
-        // decline) runs the WHOLE program over the outcome, which the lazy
-        // whole document serves byte-for-byte.
+        // A count-class program lowers the WHOLE-DOCUMENT requirement plus the
+        // Count demand hint and a kept-subtree prune (the element COUNT is the
+        // only observable, so no payload is owed). Unbounded count visits every
+        // element boundary, so the default is EAGER: that arms the prune on
+        // JSON (which otherwise drops it under a nonzero frontier and re-walks
+        // the fat array's span). A bounded element prefix stays lazy — see
+        // [`Self::consumer_frontier`]. Policy override still wins. Consumer
+        // decline runs the whole program over the outcome.
         if let Some(demand) = self.count_demand() {
-            // The prune does not gate the frontier here: the count lowering
-            // attaches its own kept-subtree prune below and the frontier
-            // stays LAZY either way (a span-skeleton codec drops the prune,
-            // an eager codec honors it), so only the policy override decides.
-            let frontier = self.policy.lazy_frontier();
+            let frontier = self.consumer_frontier(false);
             let requirement = try_lower_root_requirement(self.policy, frontier, resources)?;
             let requirement = match crate::analysis::count::count_prune_tree(demand) {
                 Some(tree) => requirement.with_prune(try_lower_prune_tree(&tree, resources)?),
                 None => requirement,
             };
-            return Ok(requirement.with_count(demand.clone()));
+            return self.attach_program_demand(requirement.with_count(demand.clone()));
         }
-        // An element-iteration program lowers the LAZY WHOLE-DOCUMENT
-        // requirement with an ELEMENT demand hint and the
-        // program's kept-subtree prune: the document-core consumer iterates
-        // the deferred container's span skeleton one element at a time
-        // (strict JSON's span leaf), while a codec without spans (YAML)
-        // honors the prune and builds only the per-element members the probe
-        // reads. The frontier stays LAZY exactly like the count lowering —
-        // the codec's span skeleton must survive for the consumer to iterate
-        // it — so the prune rides as a hint the JSON provider ignores under
-        // the frontier and the YAML/XML providers honor on the eager build.
+        // An element-iteration program lowers the WHOLE-DOCUMENT requirement
+        // with an ELEMENT demand hint and the program's kept-subtree prune.
+        // Fan-out stays lazy so JSON keeps the container as a span; the span
+        // leaf extracts the probe (and a select filter) without building every
+        // element. Reduce-fold without a range defaults eager so prune-armed
+        // JSON can skip unread members of fat fold elements. `limit`/`first`/
+        // `nth` keep a bounded `demand.range` and stay lazy. Policy override
+        // still wins.
         if let Some(demand) = self.element_demand() {
-            // The prune does not gate the frontier here either: the element
-            // lowering attaches the program's kept-subtree prune as a hint
-            // below and the frontier stays LAZY so the codec's span skeleton
-            // survives for the consumer to iterate — only the policy decides.
-            let frontier = self.policy.lazy_frontier();
+            let span_fan_out = matches!(demand.row, jqf_data::ElementRow::FanOut);
+            let frontier = self.consumer_frontier(demand.range.is_some() || span_fan_out);
             let requirement = try_lower_root_requirement(self.policy, frontier, resources)?;
             let requirement =
                 match crate::analysis::prune_tree(self.program.nodes(), self.program.root(), self.program.slots()) {
                     Some(tree) => requirement.with_prune(try_lower_prune_tree(&tree, resources)?),
                     None => requirement,
                 };
-            return Ok(requirement.with_element(demand.clone()));
+            return self.attach_program_demand(requirement.with_element(demand.clone()));
+        }
+        // Bare `type` is a kind-only read of the document root: Whole plus
+        // the type hint so a codec can skip payload (XML measure-skeleton).
+        // `PATH | type` is not this arm — the executor still consumes the
+        // pushdown prefix, so Whole would type the root. That row Exact-locates
+        // PATH and the residual `type` reads the located node; the hint rides
+        // the Exact requirement below. `type?` is not a row.
+        if self.type_demand_path().is_some_and(|path| path.is_empty()) {
+            let frontier = self.consumer_frontier(false);
+            let requirement = try_lower_root_requirement(self.policy, frontier, resources)?;
+            let requirement = match &self.prune {
+                Some(tree) if frontier == Some(0) => requirement.with_prune(try_lower_prune_tree(tree, resources)?),
+                _ => requirement,
+            };
+            return self.attach_program_demand(requirement.with_type_demand());
         }
         if self.program.split().is_whole_document() {
             // The route decision travels WITH the requirement: the policy's
@@ -296,19 +304,11 @@ impl CompiledProgram {
                 }
             };
             let requirement = try_lower_root_requirement(self.policy, frontier, resources)?;
-            let requirement = if self.type_demand() {
-                // A bare-root `type` call: its answer is the root VALUE
-                // KIND, a kind-only read. The hint lets a codec serve it
-                // without building the tree (the XML provider's measure
-                // parse — the xml-type-gate rss lane); a codec that ignores
-                // it still answers correctly from the root it builds.
-                requirement.with_type_demand()
-            } else {
-                requirement
-            };
             return match (&self.prune, frontier) {
-                (Some(tree), Some(0)) => Ok(requirement.with_prune(try_lower_prune_tree(tree, resources)?)),
-                _ => Ok(requirement),
+                (Some(tree), Some(0)) => {
+                    self.attach_program_demand(requirement.with_prune(try_lower_prune_tree(tree, resources)?))
+                }
+                _ => self.attach_program_demand(requirement),
             };
         }
         let path = self.pushdown_prefix_path()?;
@@ -318,10 +318,105 @@ impl CompiledProgram {
         // residual that starts at `.[]` would prune across an element, and
         // the hint would no longer be rooted at the pushed-down node. Fail
         // closed — over-delivery is always sound.
+        let requirement = if self.type_demand() {
+            requirement.with_type_demand()
+        } else {
+            requirement
+        };
         match self.reanchor_prune(&path) {
-            Some(tree) => Ok(requirement.with_prune(try_lower_prune_tree(tree, resources)?)),
-            None => Ok(requirement),
+            Some(tree) => self.attach_program_demand(requirement.with_prune(try_lower_prune_tree(tree, resources)?)),
+            None => self.attach_program_demand(requirement),
         }
+    }
+
+    /// Inserts demand clauses the program's accessors name: `.@tag` as
+    /// [`DemandClause::IntrinsicTag`], other `.@role` as
+    /// [`DemandClause::AttachedFact`], and `.&name` as
+    /// [`DemandClause::Attribute`]. Dynamic `.@(expr)` / `.&(expr)` cannot
+    /// name the identity, so they keep every catalogued fact and the tag.
+    fn attach_program_demand(&self, mut requirement: AccessRequirement) -> Result<AccessRequirement, CodecError> {
+        let mut want_tag = false;
+        let mut want_all_facts = false;
+        let mut want_topology = false;
+        let mut facts = Vec::new();
+        let mut attributes = Vec::new();
+        for node in self.program.nodes() {
+            if let ProgramNode::Call { overload, .. } = node
+                && (overload.get() == jqf_builtins::registry::builtins::id::XPATH_1
+                    || overload.get() == jqf_builtins::registry::builtins::id::CSS_1)
+            {
+                // xpath/css read name, attrs, textContent, and child/owner
+                // topology. The engine cannot parse the selector string here;
+                // catalogued markup facts plus topology are the closed
+                // over-approximation.
+                want_all_facts = true;
+                want_topology = true;
+            }
+            let ProgramNode::Stage { steps, .. } = node else {
+                continue;
+            };
+            for step in steps {
+                match step.access() {
+                    StepAccess::NodeAccessor(name) if name == "tag" => want_tag = true,
+                    StepAccess::NodeAccessor(name) => facts.push(name.as_str()),
+                    StepAccess::DynNodeAccessor(_) => {
+                        want_tag = true;
+                        want_all_facts = true;
+                    }
+                    StepAccess::Attribute(name) => attributes.push(name.as_str()),
+                    StepAccess::DynAttribute(_) => want_all_facts = true,
+                    _ => {}
+                }
+            }
+        }
+        if want_tag {
+            insert_clause(&mut requirement, &DemandClause::IntrinsicTag)?;
+        }
+        if want_all_facts {
+            for role in jqf_codec_core::ATTACHED_FACT_ROLES {
+                insert_clause(
+                    &mut requirement,
+                    &DemandClause::try_attached_fact(role).ok_or_else(|| {
+                        CodecError::new(CodecFailureKind::InternalContractViolation {
+                            contract: "attached-fact demand identity",
+                        })
+                    })?,
+                )?;
+            }
+        } else {
+            for role in facts {
+                if !jqf_codec_core::ATTACHED_FACT_ROLES.contains(&role) {
+                    continue;
+                }
+                insert_clause(
+                    &mut requirement,
+                    &DemandClause::try_attached_fact(role).ok_or_else(|| {
+                        CodecError::new(CodecFailureKind::InternalContractViolation {
+                            contract: "attached-fact demand identity",
+                        })
+                    })?,
+                )?;
+            }
+        }
+        for name in attributes {
+            let expanded = ExpandedName::try_new("", name).map_err(|_| {
+                CodecError::new(CodecFailureKind::InternalContractViolation {
+                    contract: "attribute demand identity",
+                })
+            })?;
+            insert_clause(&mut requirement, &DemandClause::Attribute(expanded))?;
+        }
+        if want_topology {
+            insert_clause(
+                &mut requirement,
+                &DemandClause::Topology(jqf_codec_core::TopologyDemand::Children),
+            )?;
+            insert_clause(
+                &mut requirement,
+                &DemandClause::Topology(jqf_codec_core::TopologyDemand::Owner),
+            )?;
+        }
+        Ok(requirement)
     }
 
     /// Runs this program over one SYNTHESIZED value with no codec pushdown:
@@ -517,8 +612,11 @@ impl CompiledProgram {
                 else {
                     return None;
                 };
-                (*collect_body, *body)
+                (*collect_body, Some(*body))
             }
+            // `[STREAM] | add` is rewritten to a reduce at compile; slurp still
+            // needs the map-body `.[]` reseated onto the inputs `$x`.
+            ProgramNode::Reduce { source, .. } => (*source, None),
             _ => return None,
         };
         // The collect body must be the `.[] | F` map shape: a fused stage
@@ -577,9 +675,12 @@ impl CompiledProgram {
             }
             _ => return None,
         };
-        let is_length = match &nodes[suffix.index()] {
-            ProgramNode::Call { overload, .. } => overload.get() == jqf_builtins::registry::builtins::id::LENGTH,
-            _ => return None,
+        let is_length = match suffix {
+            Some(suffix) => match &nodes[suffix.index()] {
+                ProgramNode::Call { overload, .. } => overload.get() == jqf_builtins::registry::builtins::id::LENGTH,
+                _ => return None,
+            },
+            None => false,
         };
         let collect = push_rewrite_node(&mut new_nodes, ProgramNode::CollectArray { body: Some(f_graph) })?;
         let current = push_rewrite_node(
@@ -590,14 +691,19 @@ impl CompiledProgram {
             },
         )?;
         // The suffix call (add/length) is the ROOT's own call node, reused
-        // with its pinned overload id and revision.
-        let suffix_flat = push_rewrite_node(
-            &mut new_nodes,
-            ProgramNode::FlatMap {
-                upstream: collect,
-                body: suffix,
-            },
-        )?;
+        // with its pinned overload id and revision. A compile-time
+        // `[STREAM]|add` reduce has no suffix call: the per-record
+        // contribution is `f_graph` itself.
+        let suffix_flat = match suffix {
+            Some(suffix) => push_rewrite_node(
+                &mut new_nodes,
+                ProgramNode::FlatMap {
+                    upstream: collect,
+                    body: suffix,
+                },
+            )?,
+            None => f_graph,
+        };
         let update = push_rewrite_node(
             &mut new_nodes,
             ProgramNode::Binary {
@@ -872,6 +978,21 @@ impl CompiledProgram {
         })
     }
 
+    /// Frontier for a count or element-iteration lowering.
+    ///
+    /// The policy override wins. A bounded element prefix (`limit`/`first`/`nth`)
+    /// and every fan-out stay lazy so unread elements remain spans the JSON
+    /// leaf can extract from. Unbounded count and reduce-fold default eager
+    /// (`Some(0)`) so the prune hint is armed: JSON otherwise drops prune
+    /// under a nonzero frontier.
+    fn consumer_frontier(&self, stays_lazy: bool) -> Option<u32> {
+        match self.policy.lazy_frontier() {
+            Some(depth) => Some(depth),
+            None if stays_lazy => None,
+            None => Some(0),
+        }
+    }
+
     /// Whether this program's root evaluation consumes the entire input
     /// document — the eager side (see [`crate::analysis::lazy`]).
     ///
@@ -1097,6 +1218,7 @@ impl CompiledProgram {
         // and a static forward prefix re-anchors it onto the located node.
         let prune = crate::analysis::prune_tree(program.nodes(), program.root(), program.slots());
         let pulled_record = crate::analysis::pulled_record_prune_tree(program.nodes(), program.root(), program.slots());
+        let keys = crate::analysis::count::keys_demand(program.nodes(), program.root());
         Self {
             program,
             policy,
@@ -1107,6 +1229,7 @@ impl CompiledProgram {
             element,
             element_construct,
             element_collect,
+            keys,
             pulled_record,
         }
     }
@@ -1143,14 +1266,26 @@ impl CompiledProgram {
         crate::analysis::element::element_plan(program.nodes(), program.root(), program.split())
     }
 
-    /// Whether this program is a bare-root `type` call: its
-    /// answer is the root VALUE KIND, a kind-only read that needs no
-    /// materialized tree. `false` for every other program, including the
-    /// term-try `type?` (a `Try` root) and `PATH | type` (a `FlatMap` root);
-    /// the floor serves those byte for byte.
+    /// Whether this program is a type-class row: a kind-only read of the root
+    /// (`type`) or of a static path (`PATH | type`) with no trailing slice.
+    /// `false` for `type?` and for `.[1:3] | type`.
     #[must_use]
     pub fn type_demand(&self) -> bool {
         crate::analysis::count::type_demand(self.program.nodes(), self.program.root())
+    }
+
+    /// The static path a type-class program names. Empty is the document root.
+    /// `None` when [`Self::type_demand`] is false.
+    #[must_use]
+    pub(crate) fn type_demand_path(&self) -> Option<alloc::vec::Vec<jqf_data::CountStep>> {
+        crate::analysis::count::type_demand_path(self.program.nodes(), self.program.root())
+    }
+
+    /// The static path a keys-publish program names (`keys` / `PATH | keys`).
+    /// Empty is the document root. `None` when the program is not that row.
+    #[must_use]
+    pub fn keys_demand(&self) -> Option<&[jqf_data::CountStep]> {
+        self.keys.as_deref()
     }
 
     /// Whether this program is the RANGE-locate row `PATH[a:b]` — a bare slice
@@ -2025,6 +2160,8 @@ fn compile(
     // as a pipe-free path: `.a | .b` and `.a.b` become the identical requirement.
     let (mut nodes, root) =
         fuse_with_callables(&mut lowered_nodes, lowered_root, &callables).map_err(EngineCompileError::Resource)?;
+    let mut slots = slots;
+    let root = rewrite_collect_add(&mut nodes, root, &mut slots)?;
     crate::analysis::mark_tail_calls(&mut nodes);
     crate::exec::GraphMachine::mark_keyed_collects(&mut nodes);
     crate::exec::mark_binary_shapes(&mut nodes);
@@ -2037,6 +2174,106 @@ fn compile(
         uses_inputs_cursor,
         runtime_index_slot,
     ))
+}
+
+/// `[STREAM] | add` → `reduce STREAM as $x (null; . + $x)`.
+///
+/// `add/0` folds the input array's children; collecting the stream only to
+/// fold it is the peak the element/count rows already avoid. The rewrite
+/// keeps `add`'s empty-input `null` and the native `+` update, so the
+/// executor's ordinary reduce path serves it.
+fn rewrite_collect_add(
+    nodes: &mut Vec<ProgramNode>,
+    root: ProgramNodeId,
+    slots: &mut u32,
+) -> Result<ProgramNodeId, EngineCompileError> {
+    let Some(stream) = collect_add_stream(nodes, root) else {
+        return Ok(root);
+    };
+    let slot = *slots;
+    *slots = slot.checked_add(1).ok_or_else(|| {
+        EngineCompileError::Parse(ParseRejection::internal(
+            "program exceeds the variable slot addressing bound",
+        ))
+    })?;
+    let init = push_rewrite_node(
+        nodes,
+        ProgramNode::Stage {
+            start: StageStart::Literal(Value::Null),
+            steps: Vec::new(),
+        },
+    )
+    .ok_or(EngineCompileError::Resource(ResourceError::AllocationFailed))?;
+    let acc = push_rewrite_node(
+        nodes,
+        ProgramNode::Stage {
+            start: StageStart::Current,
+            steps: Vec::new(),
+        },
+    )
+    .ok_or(EngineCompileError::Resource(ResourceError::AllocationFailed))?;
+    let addend = push_rewrite_node(
+        nodes,
+        ProgramNode::Stage {
+            start: StageStart::Variable(slot),
+            steps: Vec::new(),
+        },
+    )
+    .ok_or(EngineCompileError::Resource(ResourceError::AllocationFailed))?;
+    let update = push_rewrite_node(nodes, ProgramNode::binary(BinaryKind::Add, acc, addend))
+        .ok_or(EngineCompileError::Resource(ResourceError::AllocationFailed))?;
+    push_rewrite_node(
+        nodes,
+        ProgramNode::Reduce {
+            source: stream,
+            slot,
+            init,
+            update,
+            keyed_collect: None,
+        },
+    )
+    .ok_or(EngineCompileError::Resource(ResourceError::AllocationFailed))
+}
+
+/// `[STREAM] | add`, or `PATH | (map(f) | add)` — pipe is right-associative, so
+/// the latter is `FlatMap(PATH, FlatMap(Collect, add))`. The PATH spelling
+/// prepends the static prefix onto the collect body in place so the reduce
+/// source is `[PATH[] | f]`.
+fn collect_add_stream(nodes: &mut [ProgramNode], root: ProgramNodeId) -> Option<ProgramNodeId> {
+    let ProgramNode::FlatMap { upstream, body } = nodes[root.index()] else {
+        return None;
+    };
+    if is_add_zero(nodes, body) {
+        if let ProgramNode::CollectArray { body: Some(stream) } = nodes[upstream.index()] {
+            return Some(stream);
+        }
+        return None;
+    }
+    let prefix = crate::analysis::path_steps::static_member_stage_steps(nodes, upstream)?;
+    let ProgramNode::FlatMap {
+        upstream: collect,
+        body: add,
+    } = nodes[body.index()]
+    else {
+        return None;
+    };
+    if !is_add_zero(nodes, add) {
+        return None;
+    }
+    let ProgramNode::CollectArray { body: Some(stream) } = nodes[collect.index()] else {
+        return None;
+    };
+    if !crate::analysis::path_steps::prepend_in_place(nodes, stream, &prefix).ok()? {
+        return None;
+    }
+    Some(stream)
+}
+
+fn is_add_zero(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
+    let ProgramNode::Call { overload, args, .. } = &nodes[id.index()] else {
+        return false;
+    };
+    overload.get() == jqf_builtins::registry::builtins::id::ADD_ZERO && args.is_empty()
 }
 
 /// Appends one node to a rewrite arena, mirroring the lowerer's arena law:
@@ -2122,6 +2359,21 @@ mod tests {
                 compiled(src).streaming_slurp_aggregate().is_none(),
                 "{src} must decline"
             );
+        }
+    }
+
+    #[test]
+    fn collect_add_rewrites_to_reduce() {
+        for src in [
+            "[.catalog[] | .score] | add",
+            ".catalog | map(.score) | add",
+            "map(.score) | add",
+        ] {
+            let program = compiled(src);
+            match &program.arena()[program.root().index()] {
+                ProgramNode::Reduce { .. } => {}
+                other => panic!("{src}: expected Reduce, got {other:?}"),
+            }
         }
     }
 
@@ -5112,13 +5364,9 @@ mod r2_type_probe_tests {
         );
         let requirement = program.try_requirement(&resources).expect("lowers");
         assert!(requirement.prune().is_some(), "the requirement must carry the prune");
-        // The fold is an ELEMENT row, so it lowers the LAZY
-        // whole document (frontier 1 — the codec's span skeleton must survive
-        // for the element-iteration consumer to iterate it), beside the
-        // element demand hint. The prune rides as a hint the JSON provider
-        // ignores under the frontier and the YAML provider honors on the
-        // eager build.
-        assert_eq!(requirement.lazy_frontier(), 1, "the fold stays lazy");
+        // Unbounded element rows decode EAGER so the prune is armed (JSON
+        // drops prune under a nonzero frontier). Bounded prefixes stay lazy.
+        assert_eq!(requirement.lazy_frontier(), 0, "the unbounded fold is eager");
         assert!(
             requirement.element().is_some(),
             "the fold must carry the element demand hint"
@@ -5126,16 +5374,117 @@ mod r2_type_probe_tests {
     }
 
     #[test]
-    fn type_question_and_path_type_decline() {
+    fn type_question_declines_and_path_type_exact_locates() {
         let resources = ledger();
         let policy = crate::codec_requirement::CodecRequirementPolicy::new(
             jqf_codec_core::ValidationMode::Strict,
             jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
         );
-        for source in ["type?", ".a | type", "[.a] | type", "type, ."] {
+        for source in ["type?", "[.a] | type", "type, ."] {
             let program = try_compile_program(source, policy, &resources).expect("compiles");
-            assert!(!program.type_demand(), "{source} must not be a bare-root type row");
+            assert!(!program.type_demand(), "{source} must not be a type row");
         }
+        let path_type = try_compile_program(".a | type", policy, &resources).expect("compiles");
+        assert!(path_type.type_demand(), "PATH | type is a type row");
+        assert_eq!(
+            path_type.type_demand_path().expect("path"),
+            alloc::vec![jqf_data::CountStep::ObjectKey(alloc::string::String::from("a"))]
+        );
+        let requirement = path_type.try_requirement(&resources).expect("lowers");
+        assert!(
+            !requirement.footprint().is_whole(),
+            "PATH | type Exact-locates the prefix so residual type sees the named node"
+        );
+        assert!(requirement.type_demand(), "PATH | type still carries the kind hint");
+    }
+
+    #[test]
+    fn slice_then_type_does_not_lower_as_bare_root_type() {
+        let resources = ledger();
+        let policy = crate::codec_requirement::CodecRequirementPolicy::new(
+            jqf_codec_core::ValidationMode::Strict,
+            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+        );
+        let program = try_compile_program(".[1:3] | type", policy, &resources).expect("compiles");
+        assert!(
+            !program.type_demand(),
+            "a trailing slice is not a type row: empty-path plus range would type the root"
+        );
+        let requirement = program.try_requirement(&resources).expect("lowers");
+        assert!(
+            !requirement.type_demand(),
+            ".[1:3] | type must not take the Whole+empty-path type arm"
+        );
+        let users = try_compile_program(".users[1:3] | type", policy, &resources).expect("compiles");
+        let users_requirement = users.try_requirement(&resources).expect("lowers");
+        assert!(
+            !users_requirement.footprint().is_whole(),
+            ".users[1:3] | type Exact-locates the prefix"
+        );
+    }
+
+    /// Engine-lowered Exact `type_demand` at `.users` must not retain the array's child nodes.
+    #[test]
+    fn exact_type_demand_at_users_does_not_retain_child_nodes() {
+        let mut resources = ledger();
+        let policy = crate::codec_requirement::CodecRequirementPolicy::new(
+            jqf_codec_core::ValidationMode::Strict,
+            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+        );
+        let program = try_compile_program(".users | type", policy, &resources).expect("compiles");
+        let requirement = program.try_requirement(&resources).expect("lowers");
+        assert!(requirement.type_demand(), "PATH | type carries the kind hint");
+        assert!(
+            !requirement.footprint().is_whole(),
+            "PATH | type Exact-locates the prefix"
+        );
+        let bytes = br#"{"users":[1,2,3]}"#;
+        let source = jqf_source::ResolvedSource::new(
+            jqf_source::SourceRef::new(jqf_source::SourceId::new(0), jqf_source::SourceKind::Input),
+            "input.json",
+            bytes,
+            0,
+        );
+        let registration = jqf_codec_json::registration().expect("json");
+        let mut provider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source,
+                jqf_codec_core::DecodeRequest {
+                    validation: jqf_codec_core::ValidationMode::Strict,
+                    diagnostics: jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+                    dialect: &jqf_data::DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: jqf_codec_json::VALUE_SEPARATORS,
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let result = {
+            let mut run = jqf_codec_core::CodecRunContext::new(&mut resources);
+            run.set_cooperative_credits(4_096);
+            session.decode(&mut run).expect("decode")
+        };
+        let jqf_codec_core::AccessOutcome::Located(located) = result.outcome() else {
+            panic!("PATH | type must locate")
+        };
+        let jqf_codec_core::ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!("located node")
+        };
+        let document = located.product().document();
+        let view = document.value_view(*node).expect("view");
+        assert_eq!(
+            view.kind().expect("kind"),
+            jqf_data::ValueKind::Array,
+            ".users is an array"
+        );
+        let array = view.array().expect("array").expect("array view");
+        assert_eq!(array.len(), 0, "type_demand must not retain child nodes");
+        assert_eq!(document.node_count(), 1, "kind-only document is the empty array");
     }
 }
 
@@ -5162,13 +5511,21 @@ mod r6_element_requirement_probe {
             jqf_codec_core::ValidationMode::Strict,
             jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
         );
-        for (source, should) in [
-            (".catalog[] | .name", true),
-            (".catalog[] | {id,name,sku}", true),
-            (".[] | length", true),
-            ("reduce (.catalog[] | .attrs.warehouse) as $w ({}; .[$w] += 1)", true),
-            (".catalog[] | select(.id > 1) | .name", false),
-            (".", false),
+        for (source, should, eager) in [
+            (".catalog[] | .name", true, false),
+            (".catalog[] | {id,name,sku}", true, false),
+            (".[] | length", true, false),
+            (".catalog | map(.name)", true, false),
+            (".catalog | map({id, name})", true, false),
+            ("[.catalog[] | {id}]", true, false),
+            (
+                "reduce (.catalog[] | .attrs.warehouse) as $w ({}; .[$w] += 1)",
+                true,
+                true,
+            ),
+            (".catalog[] | select(.id > 1) | .name", true, false),
+            (".catalog | map(select(.id > 1))", true, false),
+            (".", false, false),
         ] {
             let program = try_compile_program(source, policy, &resources).expect("compiles");
             let demand = program.element_demand();
@@ -5180,7 +5537,183 @@ mod r6_element_requirement_probe {
                     requirement.footprint().is_whole(),
                     "{source} must lower the whole document"
                 );
+                assert_eq!(
+                    requirement.lazy_frontier(),
+                    u32::from(!eager),
+                    "{source} fan-out stays lazy; unbounded fold is eager"
+                );
             }
         }
+    }
+
+    #[test]
+    fn unbounded_count_and_collect_are_eager_bounded_element_stays_lazy() {
+        let resources = ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources");
+        let policy = crate::codec_requirement::CodecRequirementPolicy::new(
+            jqf_codec_core::ValidationMode::Strict,
+            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+        );
+        let count = try_compile_program(".catalog | length", policy, &resources).expect("compiles");
+        assert!(count.count_demand().is_some(), "PATH|length is a count row");
+        assert_eq!(
+            count.try_requirement(&resources).expect("lowers").lazy_frontier(),
+            0,
+            "unbounded count is eager"
+        );
+        let collected = try_compile_program("[.catalog[] | .id]", policy, &resources).expect("compiles");
+        assert!(
+            collected.element_demand().is_some(),
+            "collected fan-out is an element row"
+        );
+        assert_eq!(
+            collected.try_requirement(&resources).expect("lowers").lazy_frontier(),
+            1,
+            "unbounded collect stays lazy so the span leaf can extract"
+        );
+        let limited = try_compile_program("limit(2; .catalog[] | .id)", policy, &resources).expect("compiles");
+        assert!(limited.element_demand().is_some(), "limit fan-out is an element row");
+        assert_eq!(
+            limited.try_requirement(&resources).expect("lowers").lazy_frontier(),
+            1,
+            "bounded prefix stays lazy"
+        );
+    }
+
+    #[test]
+    fn collect_piped_to_add_rewrites_to_reduce() {
+        let resources = ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources");
+        let policy = crate::codec_requirement::CodecRequirementPolicy::new(
+            jqf_codec_core::ValidationMode::Strict,
+            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+        );
+        let program = try_compile_program("[.catalog[] | .n] | add", policy, &resources).expect("compiles");
+        assert!(
+            matches!(program.arena()[program.root().index()], ProgramNode::Reduce { .. }),
+            "[STREAM]|add must be a reduce"
+        );
+    }
+
+    #[test]
+    fn tag_accessor_inserts_intrinsic_tag_clause() {
+        let resources = ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources");
+        let policy = crate::codec_requirement::CodecRequirementPolicy::new(
+            jqf_codec_core::ValidationMode::Strict,
+            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+        );
+        let tagged = try_compile_program(".@tag", policy, &resources).expect("compiles");
+        let demand = tagged.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand
+                .demand()
+                .clauses()
+                .iter()
+                .any(|clause| matches!(clause, jqf_codec_core::DemandClause::IntrinsicTag)),
+            ".@tag names the intrinsic-tag clause"
+        );
+        let commented = try_compile_program(".@comment", policy, &resources).expect("compiles");
+        let demand = commented.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand.demand().clauses().iter().any(|clause| matches!(
+                clause,
+                jqf_codec_core::DemandClause::AttachedFact { role, .. } if role.as_str() == "comment"
+            )),
+            ".@comment names the comment attached-fact clause"
+        );
+        let aliased = try_compile_program(".@comment_head", policy, &resources).expect("compiles");
+        let demand = aliased.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand.demand().clauses().iter().any(|clause| matches!(
+                clause,
+                jqf_codec_core::DemandClause::AttachedFact { role, .. } if role.as_str() == "comment"
+            )),
+            ".@comment_head lowers as the comment attached-fact clause"
+        );
+        let href = try_compile_program(".&href", policy, &resources).expect("compiles");
+        let demand = href.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand.demand().clauses().iter().any(|clause| matches!(
+                clause,
+                jqf_codec_core::DemandClause::Attribute(name) if name.local_name() == "href"
+            )),
+            ".&href names the attribute clause"
+        );
+        let plain = try_compile_program(".", policy, &resources).expect("compiles");
+        let demand = plain.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand.demand().clauses().iter().all(|clause| !matches!(
+                clause,
+                jqf_codec_core::DemandClause::IntrinsicTag
+                    | jqf_codec_core::DemandClause::AttachedFact { .. }
+                    | jqf_codec_core::DemandClause::Attribute(_)
+            )),
+            "identity does not demand tag, fact, or attribute clauses"
+        );
+        let xpath = try_compile_program("xpath(\"//item\")", policy, &resources).expect("compiles");
+        let demand = xpath.try_requirement(&resources).expect("lowers");
+        assert!(
+            demand
+                .demand()
+                .clauses()
+                .iter()
+                .any(|clause| matches!(clause, jqf_codec_core::DemandClause::Topology(_))),
+            "xpath names topology"
+        );
+        assert!(
+            demand.demand().clauses().iter().any(|clause| matches!(
+                clause,
+                jqf_codec_core::DemandClause::AttachedFact { role, .. } if role.as_str() == "content"
+            )),
+            "xpath names content fact"
+        );
+        assert!(
+            try_compile_program("keys", policy, &resources)
+                .expect("compiles")
+                .keys_demand()
+                .is_some()
+        );
+        assert_eq!(
+            try_compile_program(".users | keys", policy, &resources)
+                .expect("compiles")
+                .keys_demand()
+                .expect("path")
+                .len(),
+            1
+        );
     }
 }

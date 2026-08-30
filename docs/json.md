@@ -95,7 +95,7 @@ the edit lane's re-render, so an edited `.jsonc` file stays JSONC.
 | `jsonc` |  ✓  |  ✓  |  ✓   | one document per source                              |
 | `json5` |  ✓  |  ✓  |  ✓   | one document per source                              |
 
-JSON is the codec that defers hardest: counts and element streams can be
-answered from the validated span skeleton without building nodes the program
-never reads. Every byte is still validated first. See
+JSON is the codec that defers hardest: counts, element streams, kind-only
+`type`, and `keys` can be answered from the validated span skeleton without
+building nodes the program never reads. Every byte is still validated first. See
 [Demand and pushdown](demand.md).

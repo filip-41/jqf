@@ -150,7 +150,7 @@ impl InputProvider for JsonProvider {
         let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
         let steps = path.steps();
         let schema_prototype = self.try_schema_prototype(resources)?;
-        let session = crate::scoped::ScopedSession::try_new_with_schema_prototype(
+        let mut session = crate::scoped::ScopedSession::try_new_with_schema_prototype(
             steps,
             origin,
             diagnostics,
@@ -159,6 +159,13 @@ impl InputProvider for JsonProvider {
             schema_prototype,
             resources,
         )?;
+        if let Some(tree) = requirement.prune() {
+            session.arm_prune(
+                tree.try_clone_in(resources)
+                    .map_err(|_| crate::error::data_contract())?,
+            );
+        }
+        session.set_type_demand(requirement.type_demand());
         ErasedAccessSession::try_new_source_with_route(input.source(), crate::SCOPED_PHYSICAL_ROUTE_ID, || Ok(session))
     }
 
@@ -214,7 +221,11 @@ impl InputProvider for JsonProvider {
         let Some(scoped) = state.downcast_mut::<crate::scoped::ScopedSession>() else {
             return Ok(false);
         };
-        Ok(scoped.try_reset(path.steps(), origin, diagnostics, coverage, self.allow_adjacent_values))
+        if !scoped.try_reset(path.steps(), origin, diagnostics, coverage, self.allow_adjacent_values) {
+            return Ok(false);
+        }
+        scoped.set_type_demand(requirement.type_demand());
+        Ok(true)
     }
 }
 
