@@ -273,21 +273,9 @@ fn merge_into(
 ) -> Result<(), BinaryError> {
     for entry in source {
         let value = entry.value().clone();
-        match target.key_position(entry.key()) {
-            // The position was just resolved against this same table and a detach clones entries IN ORDER, so it still
-            // names a slot; a `None` is unreachable and is answered as a refusal rather than a panic.
-            Some(position) => {
-                *target
-                    .try_get_index_mut(position)
-                    .map_err(|_| BinaryError::Allocation)?
-                    .ok_or(BinaryError::Allocation)? = value;
-            }
-            None => {
-                target
-                    .try_insert_unique(entry.clone_key(), value)
-                    .map_err(|_| BinaryError::Allocation)?;
-            }
-        }
+        target
+            .try_insert_or_replace(entry.clone_key(), value)
+            .map_err(|_| BinaryError::Allocation)?;
     }
     Ok(())
 }

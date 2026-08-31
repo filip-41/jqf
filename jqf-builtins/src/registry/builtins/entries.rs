@@ -109,7 +109,9 @@ pub fn to_entries(input: &Value, resources: &ResourceContext<'_>) -> Result<Valu
             let mut out =
                 jqf_data::Array::try_with_capacity(object.len()).map_err(|_| EngineRunError::allocation_failure())?;
             for entry in object {
-                let key = Value::try_string(entry.key()).map_err(|_| EngineRunError::allocation_failure())?;
+                let key = entry
+                    .try_to_value_string()
+                    .map_err(|_| EngineRunError::allocation_failure())?;
                 let value = entry.value().clone();
                 out.try_push(pair(key, value, resources)?)
                     .map_err(|_| EngineRunError::allocation_failure())?;

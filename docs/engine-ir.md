@@ -5,6 +5,9 @@ VM. A program lowers to a **generator graph** — a dense arena of nodes indexed
 by id, with one root — and the executor interprets that graph. This page is the
 detail under [Architecture § Engine IR](architecture.md#engine-ir).
 
+For the full compile pipeline (gate, preludes, lowering, transform, analyze,
+finish), see [Engine compiler](engine-compiler.md).
+
 ## The composition core
 
 Five node kinds carry the shape of the program:
@@ -39,7 +42,7 @@ body (it ignores its upstream, so fusing would change cardinality). One
 structural rewrite runs alongside: an object constructor whose members share a
 static prefix hoists it — `{a: .p.x, b: .p.y}` → `.p | {a: .x, b: .y}` — except
 a leftmost `==` under `select`, which is protected because the
-[correlated-scan recognizer](recognizers.md) needs it intact.
+[correlated-scan recognizer](recognizers.md#correlated-scan) needs it intact.
 
 The arena at rest is in **path-normal form** - no fusable pipe of stages remains.
 A bare-`Stage` root is a pure path, a `Choice` or constructor root is a

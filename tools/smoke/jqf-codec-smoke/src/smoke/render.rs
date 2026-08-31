@@ -438,8 +438,8 @@ fn at_sh(payload: &str) -> Result<String, String> {
         jqf_codec_core::ValidationMode::Strict,
         jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
     );
-    let program =
-        jqf_engine::try_compile_program("@sh", policy, &resources).map_err(|error| format!("compile @sh: {error}"))?;
+    let program = jqf_engine::try_compile_program("@sh", policy, jqf_engine::CompileOptions::new(), &resources)
+        .map_err(|error| format!("compile @sh: {error}"))?;
     let requirement = program
         .try_requirement(&resources)
         .map_err(|error| format!("requirement: {:?}", error.kind()))?;

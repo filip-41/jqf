@@ -16,7 +16,10 @@ What it has:
   numbers
 - `OffsetDateTime`, `LocalDateTime`, `LocalDate`, `LocalTime` — dates
   and times, plus RFC 3339 parse and write
-- borrowed views (`ValueView`, `ArrayView`, `ObjectView`, …)
+- borrowed views (`ValueView`, `ArrayView`, `ObjectView`, `ScalarView`, …);
+  `ScalarView` is the borrowed atom form of an owned `Value` or a document
+  scalar (`NumberView` is `Number | Integer(&str) | Decimal | Float`).
+  There is no `Atom` type
 - bounded readers (`TopologyReader`, `FactReader`)
 - `AccountedDocumentBuilder` — build one document
 - `resolve_index` — signed indexes (`.[-1]` counts from the end)
@@ -37,6 +40,50 @@ assert_eq!(value.tag().map(TagId::as_str), Some("!layer"));
 assert_eq!(value.kind(), ValueKind::Bool);
 ```
 
+## Reservation and workspace reuse
+
+`DocumentCapacity` plus `try_reserve` is a builder hint for nodes,
+occurrences, stored text, and facts. It does not reserve `wide`,
+`tags`, or per-role `owner_positions`. A missed hint still builds; it
+is not a completeness claim.
+
+`MaterializeWorkspace` reuses cycle-detection scratch across
+`materialize_root_with` / `materialize_node_with`. The one-shot
+`materialize_root` / `materialize_node` paths allocate a fresh
+workspace each time.
+
+```rust
+use jqf_data::{
+    AccountedDocumentBuilder, AccountedSemanticNode, DocumentCapacity, MaterializeWorkspace, Value,
+};
+use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+
+static CONTROL: ContinueControl = ContinueControl;
+let limits = ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX);
+let mut resources = ResourceContext::new(
+    RequestAccount::try_new(limits)?,
+    &CONTROL,
+    WorkMeter::try_new_v1(1).ok_or("work meter")?,
+)?;
+
+let mut builder = AccountedDocumentBuilder::try_new("example", None)?;
+builder.try_reserve(
+    DocumentCapacity {
+        nodes: 1,
+        ..DocumentCapacity::default()
+    },
+    &resources,
+)?;
+let root = builder.add_node("example.bool", AccountedSemanticNode::Bool(true), None, &resources)?;
+let document = builder.finish(root, &resources)?;
+let mut workspace = MaterializeWorkspace::new();
+assert!(matches!(
+    document.materialize_root_with(&mut workspace, &mut resources)?,
+    Value::Bool(true)
+));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Signed indexes
 
 Signed indexes count from the end:
@@ -53,10 +100,12 @@ assert_eq!(resolve_index(items.len(), 3), None);
 
 `Value` has no `PartialEq`, `Hash`, or `Ord`; comparison lives with the
 caller that owns what equal means. `kind()` looks through a tag
-wrapper. A `Document` keeps source order and duplicate keys in its
-topology, then projects one semantic object: first key position, last
-value. Value and number construction fail only if the allocator refuses
-and never charge a request ledger.
+wrapper. `Value` is `Clone` (a refcount bump). `Document` sharing is
+`try_clone` / `Clone` (Arc tables, not a deep copy). A `Document` keeps
+source order and duplicate keys in its topology, then projects one
+semantic object: first key position, last value. Value and number
+construction fail only if the allocator refuses and never charge a
+request ledger. Document building charges a resource context.
 
 ## Contracts
 

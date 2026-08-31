@@ -20,8 +20,8 @@ use jqf_codec_core::{CodecError, PruneRef};
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode,
     AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind, DataError, DiagnosticCoverage, Document,
-    DocumentCapabilityFamily, DocumentSchemaRecipe, FractionalSecond, KnownUtcOffset, LocalDateTime, LocalOwnerRef,
-    LocalTime, NodeId, OffsetDateTime, PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole,
+    DocumentCapabilityFamily, DocumentCapacity, DocumentSchemaRecipe, FractionalSecond, KnownUtcOffset, LocalDateTime,
+    LocalOwnerRef, LocalTime, NodeId, OffsetDateTime, PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole,
     PreparedSemanticNode, UtcOffset, ValueKind, civil_from_epoch,
 };
 use jqf_resource::ResourceContext;
@@ -169,6 +169,20 @@ pub(crate) fn build_document_with_spans(
         BuilderCoverage::minimal_semantic(),
     )
     .map_err(map_data)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: skeleton.items.len(),
+            occurrences: skeleton.items.iter().fold(0usize, |count, item| {
+                count.saturating_add(match &item.kind {
+                    ItemKind::Array(children) => children.len(),
+                    ItemKind::Map(pairs) => pairs.len() / 2,
+                    _ => 0,
+                })
+            }),
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
     builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
         DocumentCapabilityFamily::Attributes,
     ));

@@ -126,14 +126,15 @@
 //!   `all($o[]; .k != probe)` answers from the same index. The row is the
 //!   `select` call whose predicate is the
 //!   prelude expansion `isempty($o[] | (cond and empty))` — see
-//!   [`anti_joins`]. The `not (==)` spelling (a `not` call around an equality)
+//!   [`scan_tables`]. The `not (==)` spelling (a `not` call around an equality)
 //!   and `any/2` (the semi-join) are NOT rows.
 //! - **An OWNED source.** Identity needs a `NodeHandle`; an owned container has
 //!   none. Enforced at run time, where the representation is known.
 
 use alloc::vec::Vec;
 
-use crate::program::{BinaryKind, LogicalOp, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess};
+use super::PartialSort;
+use crate::program::{BinaryKind, LabelSlot, LogicalOp, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess};
 use jqf_builtins::registry::builtins::id;
 
 /// One recognized correlated scan, addressed entirely by arena node id.
@@ -234,26 +235,9 @@ impl AntiJoinScan {
 /// An allocation failure yields an EMPTY table rather than an error: the table
 /// is a pure optimization, and a program the naive scan can run must never fail
 /// because the optimizer could not allocate.
+#[cfg(test)]
 pub fn anti_joins(nodes: &[ProgramNode]) -> Vec<AntiJoinScan> {
-    let mut found = Vec::new();
-    for index in 0..nodes.len() {
-        let Some(id) = ProgramNodeId::from_index(index) else {
-            break;
-        };
-        // The anti select sits in a scan's body (through the optional bind),
-        // so the row is discovered from its enclosing `FlatMap`.
-        if !matches!(nodes[index], ProgramNode::FlatMap { .. }) {
-            continue;
-        }
-        let Some(scan) = anti_row(nodes, id) else {
-            continue;
-        };
-        if found.try_reserve(1).is_err() {
-            return Vec::new();
-        }
-        found.push(scan);
-    }
-    found
+    scan_tables(nodes).2
 }
 
 /// Row A1: `select(P)` where P is the prelude `all/2` expansion over a NEGATED
@@ -273,8 +257,8 @@ pub fn anti_joins(nodes: &[ProgramNode]) -> Vec<AntiJoinScan> {
 ///                          Logical{And, Binary{NotEqual, keypath, probe}, Empty} }
 /// ```
 ///
-/// The label/break linkage is NOT verified beyond the shapes: the first
-/// output of the upstream Choice is the answer (`false` if the generator
+/// The label/break linkage is verified by [`anti_first_break_matches`]: the
+/// first output of the upstream Choice is the answer (`false` if the generator
 /// emitted anything, `true` if it emitted nothing), and the runtime
 /// replacement answers the same question from the index.
 /// The `select` call a scan body reaches through its (optional) binding
@@ -304,12 +288,23 @@ fn anti_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<AntiJoinScan> {
     let select = anti_select_through_binds(nodes, *body)?;
     let predicate = select_predicate(nodes, select)?;
     // The `first/1` expansion's label wraps the whole body.
-    let ProgramNode::Label { body, .. } = &nodes[predicate.index()] else {
+    let ProgramNode::Label {
+        body, slot: label_slot, ..
+    } = &nodes[predicate.index()]
+    else {
         return None;
     };
-    let ProgramNode::FlatMap { upstream, .. } = &nodes[body.index()] else {
+    let ProgramNode::FlatMap {
+        upstream,
+        body: first_out_body,
+        ..
+    } = &nodes[body.index()]
+    else {
         return None;
     };
+    if !anti_first_break_matches(nodes, *first_out_body, *label_slot) {
+        return None;
+    }
     let ProgramNode::Choice { left, right } = &nodes[upstream.index()] else {
         return None;
     };
@@ -381,6 +376,24 @@ fn anti_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<AntiJoinScan> {
     })
 }
 
+/// The `first/1` expansion ends in `., break $label` — the break slot must
+/// match the enclosing [`ProgramNode::Label`] slot or the row is not sound.
+fn anti_first_break_matches(nodes: &[ProgramNode], id: ProgramNodeId, label_slot: LabelSlot) -> bool {
+    let ProgramNode::Choice { left, right } = &nodes[id.index()] else {
+        return false;
+    };
+    matches!(
+        &nodes[left.index()],
+        ProgramNode::Stage {
+            start: StageStart::Current,
+            steps,
+        } if steps.is_empty()
+    ) && matches!(
+        &nodes[right.index()],
+        ProgramNode::Break { slot } if *slot == label_slot
+    )
+}
+
 /// Whether `id` is the bare literal `true` (`Stage{Literal(Bool(true)), []}`).
 fn is_literal_true(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
     matches!(
@@ -408,21 +421,43 @@ fn is_literal_false(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
 /// An allocation failure yields an EMPTY table rather than an error: the table
 /// is a pure optimization, and a program the naive scan can run must never fail
 /// because the optimizer could not allocate.
+#[cfg(test)]
 pub fn correlated_scans(nodes: &[ProgramNode]) -> Vec<CorrelatedScan> {
-    let mut found = Vec::new();
+    scan_tables(nodes).0
+}
+
+/// Builds correlated, partial-sort, and anti-join tables in one arena walk.
+pub(crate) fn scan_tables(nodes: &[ProgramNode]) -> (Vec<CorrelatedScan>, Vec<PartialSort>, Vec<AntiJoinScan>) {
+    use crate::analysis::partial::partial_sort_row;
+    let mut scans = Vec::new();
+    let mut topk = Vec::new();
+    let mut anti = Vec::new();
     for index in 0..nodes.len() {
         let Some(id) = ProgramNodeId::from_index(index) else {
             break;
         };
-        let Some(scan) = source_row(nodes, id) else {
-            continue;
-        };
-        if found.try_reserve(1).is_err() {
-            return Vec::new();
+        if let Some(scan) = source_row(nodes, id) {
+            if scans.try_reserve(1).is_err() {
+                return (Vec::new(), topk, anti);
+            }
+            scans.push(scan);
         }
-        found.push(scan);
+        if let Some(row) = partial_sort_row(nodes, id) {
+            if topk.try_reserve(1).is_err() {
+                return (scans, Vec::new(), anti);
+            }
+            topk.push(row);
+        }
+        if matches!(nodes[index], ProgramNode::FlatMap { .. })
+            && let Some(scan) = anti_row(nodes, id)
+        {
+            if anti.try_reserve(1).is_err() {
+                return (scans, topk, Vec::new());
+            }
+            anti.push(scan);
+        }
     }
-    found
+    (scans, topk, anti)
 }
 
 /// Row S1: `FlatMap{ Stage{Variable(S) | Current, [static…, Each]}, Call(SELECT, [P]) }`.
@@ -1177,7 +1212,8 @@ mod tests {
     ///
     /// 0 container stage, 1 key path, 2 probe, 3 not-equal, 4 empty,
     /// 5 and, 6 generator `FlatMap`, 7 false literal, 8 false-pipe `FlatMap`,
-    /// 9 true literal, 10 choice, 11 label, 12 select.
+    /// 9 true literal, 10 choice, 11 label-body `FlatMap`, 12 identity `.`,
+    /// 13 break, 14 `., break` choice, 15 label, 16 select.
     fn anti_arena() -> Vec<ProgramNode> {
         vec![
             ProgramNode::Stage {
@@ -1228,7 +1264,7 @@ mod tests {
             // output flows through `., break $out` and ends the label.
             ProgramNode::FlatMap {
                 upstream: nid(10),
-                body: nid(12),
+                body: nid(14),
             },
             ProgramNode::Stage {
                 start: StageStart::Current,
@@ -1319,6 +1355,13 @@ mod tests {
         assert_eq!(anti_joins(&nodes), Vec::new());
     }
 
+    #[test]
+    fn row_a1_declines_when_label_and_break_slots_mismatch() {
+        let mut nodes = anti_arena();
+        nodes[13] = ProgramNode::Break { slot: 1 };
+        assert_eq!(anti_joins(&nodes), Vec::new());
+    }
+
     /// The anti-join row probe on a REAL compiled program: the corpus spelling
     /// must reach the row through the whole pipeline, not just through a
     /// hand-built arena like the rows above.
@@ -1346,10 +1389,11 @@ mod tests {
                 jqf_codec_core::ValidationMode::Strict,
                 jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
             ),
+            crate::compile::CompileOptions::new(),
             &resources,
         )
         .expect("compiles");
-        let rows = anti_joins(program.arena());
+        let rows = program.program.anti_joins();
         assert_eq!(rows.len(), 1, "the anti spelling is one row");
         // The container is the bound `$o` stage and the key path is `.k`.
         let ProgramNode::Stage { start, .. } = &program.arena()[rows[0].container_stage().index()] else {

@@ -74,7 +74,12 @@
       <div class="eyebrow">Architecture in depth</div>
       <ul class="nav-tree nav-pages">
         <li><a href="#document-model">Document model</a></li>
-        <li><a href="#engine-ir">Engine IR</a></li>
+        <li>
+          <a href="#engine-ir">Engine IR</a>
+          <ul class="nav-tree nav-nested">
+            <li><a href="#engine-compiler">Compiler</a></li>
+          </ul>
+        </li>
         <li><a href="#recognizers">Shape recognizers</a></li>
         <li><a href="#demand">Demand and pushdown</a></li>
         <li><a href="#parallelism">Parallelism</a></li>
@@ -138,13 +143,28 @@ const PAGES = {
   'embedding':      { file: 'embedding.md',      title: 'Embedding jqf' },
   'document-model': { file: 'document-model.md', title: 'Document model' },
   'engine-ir':      { file: 'engine-ir.md',      title: 'Engine IR' },
+  'engine-compiler': { file: 'engine-compiler.md', title: 'Engine compiler', parent: 'engine-ir' },
   'recognizers':    { file: 'recognizers.md',    title: 'Shape recognizers' },
   'demand':         { file: 'demand.md',         title: 'Demand and pushdown' },
   'parallelism':    { file: 'parallelism.md',    title: 'Parallelism' },
 };
 const PAGES_BY_FILE = Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [v.file, k]));
 
+function setRailActive(pageName, parentPage) {
+  for (const a of document.querySelectorAll('.rail .nav-tree a[href^="#"]')) {
+    const hrefPage = a.getAttribute('href').slice(1);
+    const active = hrefPage === pageName;
+    const activeParent = parentPage && hrefPage === parentPage;
+    a.classList.toggle('active', active);
+    a.classList.toggle('active-parent', activeParent);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
+}
+
+let showGen = 0;
 async function show() {
+  const gen = ++showGen;
   const [name, anchor] = location.hash.slice(1).split('/');
   const out = document.getElementById('page');
   if (name && !PAGES[name] && out.childElementCount) {
@@ -156,16 +176,12 @@ async function show() {
   const pageName = PAGES[name] ? name : 'overview';
   const page = PAGES[pageName];
   const targetAnchor = PAGES[name] ? anchor : name;
-  for (const a of document.querySelectorAll('.rail .nav-tree a[href^="#"]')) {
-    const active = a.getAttribute('href') === '#' + pageName;
-    a.classList.toggle('active', active);
-    if (active) a.setAttribute('aria-current', 'page');
-    else a.removeAttribute('aria-current');
-  }
+  const parentPage = page.parent;
   try {
     const response = await fetch(page.file);
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const md = await response.text();
+    if (gen !== showGen) return;
     out.innerHTML = marked.parse(md);
     // marked core no longer assigns heading ids; add GFM-style slugs so
     // fragment links (usage.md#editing …) land on their sections.
@@ -185,11 +201,20 @@ async function show() {
         a.setAttribute('href', '#' + PAGES_BY_FILE[m[1]] + (m[2] ? '/' + m[2] : ''));
       }
     }
-    if (targetAnchor) requestAnimationFrame(() => document.getElementById(targetAnchor)?.scrollIntoView());
+    setRailActive(pageName, parentPage);
+    if (targetAnchor) {
+      const el = document.getElementById(targetAnchor);
+      if (el) el.scrollIntoView();
+    } else {
+      window.scrollTo(0, 0);
+    }
   } catch (error) {
+    if (gen !== showGen) return;
     out.innerHTML = `<p>failed to load <code>${page.file}</code>: ${error.message} — serve this directory over HTTP.</p>`;
+    setRailActive(pageName, parentPage);
   }
 }
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 window.addEventListener('hashchange', show);
 show();
 </script>

@@ -66,7 +66,8 @@ The **pushdown split** names the maximal static prefix of the entry stage before
 
 A bare-`Stage` residual takes a single-slot fast path. `Choice` / `FlatMap` engage the graph interpreter. One value is in flight per frame; an unsuppressed failure discards the frame stack.
 
-The detail is [Engine IR](engine-ir.md).
+The detail is [Engine IR](engine-ir.md). The compile pipeline itself is
+[Engine compiler](engine-compiler.md).
 
 ## Shape recognizers
 
@@ -92,6 +93,7 @@ $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
+jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: route: stream
@@ -102,6 +104,7 @@ jqf: explain: route: stream
 | --- | --- |
 | `class:` | program shape — identity, assignment, whole-document, `inputs`, static per-record path |
 | `demand:` | `Subtree` or `Fields(...)`, and the consumer (`none`, `residual`, `collect`) |
+| `routes:` | finish-cached count, element, keys, type, and `inputs` cursor |
 | `pushdown:` | static path prefix the codec can serve without building the rest |
 | `route:` | the route that served the request (`stream`, `record`, `edit`, …) |
 | `cost:` | ledger peak, input/output bytes, spill |

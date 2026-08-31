@@ -160,7 +160,7 @@ use jqf_codec_core::{
 use jqf_codec_json::ndjson::NdjsonProfile;
 use jqf_codec_json::{JsonEncodeOptions, JsonIndent};
 use jqf_data::{DialectId, FormatId, Value};
-use jqf_engine::{CodecRequirementPolicy, CompiledProgram, try_compile_program_with_args};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
 use jqf_resource::{
     Control, ControlOutcome, EnvironmentSnapshot, RequestAccount, ResourceContext, ResourceLimits, WorkMeter,
 };
@@ -1089,8 +1089,17 @@ fn compile_with_args(
         .next_program_id
         .checked_add(1)
         .ok_or_else(|| setup_failure("program table overflow".to_owned()))?;
-    let compiled = try_compile_program_with_args(program, POLICY, value_bindings, &handle.resources)
-        .map_err(|e| setup_failure(format!("{e}")))?;
+    let compiled = try_compile_program(
+        program,
+        POLICY,
+        CompileOptions {
+            cli_vars: value_bindings,
+            split_exp: false,
+            ..Default::default()
+        },
+        &handle.resources,
+    )
+    .map_err(|e| setup_failure(format!("{e}")))?;
     // SAFETY: this function's `# Safety` contract requires `out_id` to be
     // a valid, aligned, writable slot for one `u32`.
     unsafe {
@@ -1845,8 +1854,17 @@ fn run_fresh(
         String::from("$ARGS"),
         empty_args_value(&handle.resources).map_err(setup_failure)?,
     )];
-    let compiled = try_compile_program_with_args(program, POLICY, &args_bindings, &handle.resources)
-        .map_err(|e| setup_failure(format!("{e}")))?;
+    let compiled = try_compile_program(
+        program,
+        POLICY,
+        CompileOptions {
+            cli_vars: &args_bindings,
+            split_exp: false,
+            ..Default::default()
+        },
+        &handle.resources,
+    )
+    .map_err(|e| setup_failure(format!("{e}")))?;
     // SAFETY: this function's `# Safety` contract requires `input` to be
     // readable for `input_len` bytes; `(NULL, 0)` is the documented empty
     // input .
@@ -2216,8 +2234,17 @@ fn run_fresh_streaming(
         String::from("$ARGS"),
         empty_args_value(&handle.resources).map_err(setup_failure)?,
     )];
-    let compiled = try_compile_program_with_args(program, POLICY, &args_bindings, &handle.resources)
-        .map_err(|e| setup_failure(format!("{e}")))?;
+    let compiled = try_compile_program(
+        program,
+        POLICY,
+        CompileOptions {
+            cli_vars: &args_bindings,
+            split_exp: false,
+            ..Default::default()
+        },
+        &handle.resources,
+    )
+    .map_err(|e| setup_failure(format!("{e}")))?;
     // SAFETY: this function's `# Safety` contract requires `input` to be
     // readable for `input_len` bytes; `(NULL, 0)` is the documented empty
     // input .

@@ -116,8 +116,8 @@ use jqf_codec_core::{
     RecycledSessionState,
 };
 use jqf_data::{
-    BatchLimit, Document, DocumentFact, FactPayloadView, LocalOwnerRef, MaterializeWorkspace, NodeHandle, NodeId,
-    ReaderPoll, TopologyBatch, Value,
+    Document, DocumentFact, FactPayloadView, LocalOwnerRef, MaterializeWorkspace, NodeHandle, NodeId, ReaderPoll,
+    TopologyBatch, Value, unbounded_batch_limit,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::{Namespace, Severity};
@@ -497,7 +497,7 @@ fn has_doctype(document: &Document<'_>, resources: &mut ResourceContext<'_>) -> 
         return root_owns_doctype(document);
     }
     let owner = LocalOwnerRef::Node(document.root());
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+    let limit = unbounded_batch_limit();
     let Ok(mut reader) = document.fact_reader(resources) else {
         return Err(jqf_codec_core::data_contract(
             "XML doctype fact read over a valid document",
@@ -646,7 +646,7 @@ impl DeterministicSerializer {
     /// One attached-fact pass: element names and attribute maps.
     /// Used only when the document has no fact-owner index.
     fn read_facts(&mut self, document: &Document<'_>, resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
-        let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+        let limit = unbounded_batch_limit();
         let mut reader = match document.fact_reader(resources) {
             Ok(reader) => reader,
             // A document from a non-XML codec (or from owned values) carries
@@ -724,7 +724,7 @@ impl DeterministicSerializer {
     /// One topology pass: every node's schema kind, so the renderer can tell
     /// text, comment, and processing-instruction leaves apart.
     fn read_kinds(&mut self, document: &Document<'_>, resources: &mut ResourceContext<'_>) -> Result<(), CodecError> {
-        let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+        let limit = unbounded_batch_limit();
         let Ok(mut reader) = document.topology_reader(resources) else {
             return Err(jqf_codec_core::data_contract(
                 "XML serializer topology read over a valid document",

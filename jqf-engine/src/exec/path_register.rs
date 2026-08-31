@@ -563,9 +563,7 @@ impl<'source> PathWalk<'source> {
                     EngineResult::Located(located) => {
                         crate::exec::stage::Container::Located(located.try_clone().map_err(EngineRunError::Codec)?)
                     }
-                    EngineResult::Owned(value) => {
-                        crate::exec::stage::Container::Owned(jqf_builtins::semantics::path::try_clone(value))
-                    }
+                    EngineResult::Owned(value) => crate::exec::stage::Container::Owned(value.clone()),
                 };
                 self.stack
                     .try_reserve(1)
@@ -597,9 +595,7 @@ impl<'source> PathWalk<'source> {
                     EngineResult::Located(located) => {
                         crate::exec::stage::Container::Located(located.try_clone().map_err(EngineRunError::Codec)?)
                     }
-                    EngineResult::Owned(value) => {
-                        crate::exec::stage::Container::Owned(jqf_builtins::semantics::path::try_clone(value))
-                    }
+                    EngineResult::Owned(value) => crate::exec::stage::Container::Owned(value.clone()),
                 };
                 self.stack
                     .try_reserve(1)

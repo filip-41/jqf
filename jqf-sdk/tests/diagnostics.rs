@@ -15,7 +15,7 @@
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::diag::{DiagnosticBuffer, DiagnosticRecord, DiagnosticSink};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
@@ -77,6 +77,7 @@ fn run_with_policy(
     let compiled = try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compile");
@@ -204,6 +205,7 @@ fn ledger_invariance_receipt() {
         let compiled = try_compile_program(
             program,
             CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+            CompileOptions::new(),
             &resources,
         )
         .expect("compile");

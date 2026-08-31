@@ -21,8 +21,9 @@
 [configuration](configuration.md) · [embedding](embedding.md)
 
 **Architecture in depth.** [Document model](document-model.md) ·
-[engine IR](engine-ir.md) · [shape recognizers](recognizers.md) ·
-[demand and pushdown](demand.md) · [parallelism](parallelism.md)
+[engine IR](engine-ir.md) · [engine compiler](engine-compiler.md) ·
+[shape recognizers](recognizers.md) · [demand and pushdown](demand.md) ·
+[parallelism](parallelism.md)
 
 `jqf --help`, `jqf --help-format <fmt>`, and `jqf --help facts` are the live
 flag and format surfaces.

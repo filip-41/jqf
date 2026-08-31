@@ -3,26 +3,49 @@
 //! [`Value`] is the owned semantic value. [`Document`] is one immutable document a decoder builds and a caller reads.
 //! Building a value does not invent document topology, facts, or source authority.
 //!
-//! [`Document`] is cheap to share. Build one with [`AccountedDocumentBuilder`]; [`DocumentCapacity`] can reserve table
-//! sizes first. Heap payloads on a [`Value`] are shared: `Clone` is a refcount bump, and a later write copies first.
-//! Value constructors fail only if the allocator refuses; they do not take a resource context. Array and object writes
-//! are the same. Materializing still needs a context for work credits and cancel.
+//! [`Document`] is cheap to share: [`Document::try_clone`] (and [`Clone`]) retain the same Arc tables. Heap payloads on
+//! a [`Value`] are shared: `Clone` is a refcount bump, and a later write copies first. Value constructors fail only if
+//! the allocator refuses; they do not take a resource context. Array and object writes are the same. Document building
+//! charges a resource context; value construction never does. Materializing still needs a context for work credits and
+//! cancel.
+//!
+//! The borrowed atom form of an owned [`Value`] or a document scalar is [`ScalarView`]. [`NumberView`] is
+//! `Number | Integer(&str) | Decimal | Float`. There is no `Atom` type.
+//!
+//! Hidden unsafe source-seal APIs on the builder are codec-core only. Their safety invariant is ownership of the exact
+//! immutable source segment the binding was sealed against — matching metadata is not enough.
 //!
 //! # Example
 //!
-//! ``` use jqf_data::{     AccountedDocumentBuilder, AccountedSemanticNode, FormatId, Value, };
-//! use jqf_resource::{     ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter, };
+//! ```
+//! use jqf_data::{
+//!     AccountedDocumentBuilder, AccountedSemanticNode, DocumentCapacity, MaterializeWorkspace, Value,
+//! };
+//! use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 //!
 //! static CONTROL: ContinueControl = ContinueControl;
 //! let limits = ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX);
-//! let mut resources = ResourceContext::new(     RequestAccount::try_new(limits)?,
-//!     &CONTROL,     WorkMeter::try_new_v1(1).ok_or("work meter")?, )?;
+//! let mut resources = ResourceContext::new(
+//!     RequestAccount::try_new(limits)?,
+//!     &CONTROL,
+//!     WorkMeter::try_new_v1(1).ok_or("work meter")?,
+//! )?;
 //!
-//! let format = FormatId::try_new("example")?; let mut builder = AccountedDocumentBuilder::try_new("example", None)?;
-//! let root = builder.add_node(     "example.bool",     AccountedSemanticNode::Bool(true),     None,
-//!     &resources, )?; let document = builder.finish(root, &resources)?;
-//!
-//! assert!(matches!(document.materialize_root(&mut resources)?, Value::Bool(true)));
+//! let mut builder = AccountedDocumentBuilder::try_new("example", None)?;
+//! builder.try_reserve(
+//!     DocumentCapacity {
+//!         nodes: 1,
+//!         ..DocumentCapacity::default()
+//!     },
+//!     &resources,
+//! )?;
+//! let root = builder.add_node("example.bool", AccountedSemanticNode::Bool(true), None, &resources)?;
+//! let document = builder.finish(root, &resources)?;
+//! let mut workspace = MaterializeWorkspace::new();
+//! assert!(matches!(
+//!     document.materialize_root_with(&mut workspace, &mut resources)?,
+//!     Value::Bool(true)
+//! ));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

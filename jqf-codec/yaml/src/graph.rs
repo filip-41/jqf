@@ -669,6 +669,12 @@ impl YamlGraph {
         self.nodes.as_slice().len()
     }
 
+    /// Sequence items plus mapping entries — the occurrence slab a document builder will admit.
+    #[must_use]
+    pub(crate) fn occurrence_count(&self) -> usize {
+        self.children.len().saturating_add(self.entries.len())
+    }
+
     /// Follows alias nodes to their resolved target. A cycle is `UnsupportedRepresentation` (the graph retains it; a
     /// semantic value cannot).
     pub(crate) fn follow_alias(&self, mut id: NodeId, source: ResolvedSource<'_>) -> Result<NodeId, CodecError> {

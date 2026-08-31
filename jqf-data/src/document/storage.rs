@@ -1356,8 +1356,9 @@ impl<'source> Deref for DocumentStorageOwner<'source> {
 
 /// One immutable document.
 ///
-/// Storage is immutable once finalized and Arc-shared: [`Self::try_clone`] retains the same tables without copying
-/// them, so every clone observes identical retained data for the lifetime of the document.
+/// Storage is immutable once finalized and Arc-shared: [`Clone`] and [`Self::try_clone`] retain the same tables without
+/// copying them, so every clone observes identical retained data for the lifetime of the document. `Value` is `Clone`
+/// too (refcount bump); this type is not a deep copy of the document graph.
 pub struct Document<'source> {
     pub(crate) storage: DocumentStorageOwner<'source>,
     pub(crate) borrowed_source: Option<ValidatedSourceBacking<'source>>,
@@ -1366,6 +1367,24 @@ pub struct Document<'source> {
     /// non-minimal escapes, no duplicate keys. Set at finalize. `false` means do not echo the source as the encoded
     /// form.
     pub(crate) source_canonical: bool,
+}
+
+impl Clone for Document<'_> {
+    fn clone(&self) -> Self {
+        Self {
+            storage: match &self.storage {
+                DocumentStorageOwner::AccountedInline(storage) => {
+                    DocumentStorageOwner::AccountedInline(Arc::clone(storage))
+                }
+                DocumentStorageOwner::AccountedShared(storage) => {
+                    DocumentStorageOwner::AccountedShared(Arc::clone(storage))
+                }
+            },
+            borrowed_source: self.borrowed_source,
+            trusted_session_source_attachment: self.trusted_session_source_attachment,
+            source_canonical: self.source_canonical,
+        }
+    }
 }
 
 impl fmt::Debug for Document<'_> {
@@ -1399,20 +1418,10 @@ impl<'source> Document<'source> {
     }
 
     /// Retains another owner of the same immutable storage.
+    ///
+    /// Infallible: sharing is an Arc bump. [`Clone`] is the same operation without the `Result`.
     pub fn try_clone(&self) -> Result<Self, DataError> {
-        Ok(Self {
-            storage: match &self.storage {
-                DocumentStorageOwner::AccountedInline(storage) => {
-                    DocumentStorageOwner::AccountedInline(Arc::clone(storage))
-                }
-                DocumentStorageOwner::AccountedShared(storage) => {
-                    DocumentStorageOwner::AccountedShared(Arc::clone(storage))
-                }
-            },
-            borrowed_source: self.borrowed_source,
-            trusted_session_source_attachment: self.trusted_session_source_attachment,
-            source_canonical: self.source_canonical,
-        })
+        Ok(self.clone())
     }
 
     /// Returns whether two documents retain the same immutable prepared-schema allocation.
@@ -2011,10 +2020,28 @@ impl<'source> Document<'source> {
     }
 
     /// Materializes the canonical root semantic value iteratively.
+    ///
+    /// Allocates a fresh [`crate::MaterializeWorkspace`]. To reuse cycle-detection scratch across documents, call
+    /// [`Self::materialize_root_with`].
     pub fn materialize_root(&self, resources: &mut ResourceContext<'_>) -> Result<Value, DataError> {
         self.require_capability(DocumentCapability::SemanticNodes)?;
         self.require_capability(DocumentCapability::IntrinsicTags)?;
         crate::materialize::materialize_document_node(self, self.root(), resources)
+    }
+
+    /// Materializes the canonical root into an owned value, reusing `workspace` as document-independent cycle-detection
+    /// scratch.
+    ///
+    /// Equivalent to [`Self::materialize_root`] but amortizes the O(node-count) cycle-detection bitmap across calls,
+    /// the same reuse [`Self::materialize_node_with`] provides for a named node.
+    pub fn materialize_root_with(
+        &self,
+        workspace: &mut crate::MaterializeWorkspace,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<Value, DataError> {
+        self.require_capability(DocumentCapability::SemanticNodes)?;
+        self.require_capability(DocumentCapability::IntrinsicTags)?;
+        crate::materialize::materialize_node_with_workspace(self, workspace, self.root(), resources)
     }
 
     /// Materializes one revision-scoped node semantic value iteratively.
@@ -2173,6 +2200,46 @@ pub enum DataError {
     Control(ControlError),
 }
 
+/// Consumer-facing class of a [`DataError`].
+///
+/// Codecs and builtins match this instead of dumping every remaining variant as one internal-contract class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DataErrorClass {
+    /// Host pressure: [`DataError::Resource`] or [`DataError::Control`].
+    Host,
+    /// Memory or checked arithmetic: [`DataError::Allocation`] or [`DataError::ArithmeticOverflow`].
+    Budget,
+    /// A demanded reader capability is not retained: [`DataError::CapabilityUnavailable`].
+    Absent,
+    /// The demanded semantic shape cannot become a value: [`DataError::UnrepresentableSemantic`] or
+    /// [`DataError::CyclicSemanticGraph`].
+    Unrepresentable,
+    /// A document, handle, coverage, or reader contract defect.
+    Broken,
+}
+
+impl DataError {
+    /// Classifies this error for a codec or builtin boundary.
+    #[must_use]
+    pub const fn class(self) -> DataErrorClass {
+        match self {
+            Self::Resource(_) | Self::Control(_) => DataErrorClass::Host,
+            Self::Allocation | Self::ArithmeticOverflow => DataErrorClass::Budget,
+            Self::CapabilityUnavailable { .. } => DataErrorClass::Absent,
+            Self::UnrepresentableSemantic | Self::CyclicSemanticGraph => DataErrorClass::Unrepresentable,
+            Self::ContradictoryCoverage { .. }
+            | Self::InvalidNode
+            | Self::InvalidOccurrence
+            | Self::InvalidFact
+            | Self::StaleOrForeignHandle
+            | Self::UnmaterializedContainerSpan
+            | Self::InvalidDocument
+            | Self::ReaderFailed => DataErrorClass::Broken,
+        }
+    }
+}
+
 impl From<ResourceError> for DataError {
     fn from(value: ResourceError) -> Self {
         Self::Resource(value)
@@ -2230,6 +2297,31 @@ impl core::error::Error for DataError {
     }
 }
 
+#[cfg(test)]
+mod data_error_class_tests {
+    use super::{DataError, DataErrorClass};
+    use crate::document::DocumentCapability;
+
+    #[test]
+    fn class_splits_budget_absent_and_unrepresentable() {
+        assert_eq!(DataError::Allocation.class(), DataErrorClass::Budget);
+        assert_eq!(DataError::ArithmeticOverflow.class(), DataErrorClass::Budget);
+        assert_eq!(
+            DataError::CapabilityUnavailable {
+                capability: DocumentCapability::AttachedFacts,
+            }
+            .class(),
+            DataErrorClass::Absent
+        );
+        assert_eq!(
+            DataError::UnrepresentableSemantic.class(),
+            DataErrorClass::Unrepresentable
+        );
+        assert_eq!(DataError::CyclicSemanticGraph.class(), DataErrorClass::Unrepresentable);
+        assert_eq!(DataError::InvalidDocument.class(), DataErrorClass::Broken);
+    }
+}
+
 #[cfg(all(test, target_pointer_width = "64"))]
 mod layout_baseline_tests {
     use core::mem::{align_of, size_of};
@@ -2239,8 +2331,8 @@ mod layout_baseline_tests {
         ObjectWinnerEntry, OccurrenceRecord, RichOccurrenceSidecar, SemanticEdge, SharedDocumentStorage, StorageRange,
         StoredDocumentFact, StoredOccurrenceKey, StoredSemanticNode, WidePayload,
     };
-    use crate::document::{NodeKindBindingId, OccurrenceRoleBindingId, TextRef};
-    use crate::{DocumentNodeKindId, NodeId, OccurrenceId, OccurrenceRoleId};
+    use crate::document::{DocumentNodeKindId, NodeKindBindingId, OccurrenceRoleBindingId, TextRef};
+    use crate::{NodeId, OccurrenceId, OccurrenceRoleId};
 
     #[test]
     fn compact4_production_relationship_layout_is_pinned() {

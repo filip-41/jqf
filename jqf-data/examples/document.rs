@@ -3,8 +3,8 @@
 //! Run with `cargo run -p jqf-data --example document`.
 
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedOccurrenceKey, AccountedSemanticNode, BatchLimit, LocalOwnerRef, ReaderPoll,
-    TopologyBatch, Value,
+    AccountedDocumentBuilder, AccountedOccurrenceKey, AccountedSemanticNode, BatchLimit, DocumentCapacity,
+    LocalOwnerRef, MaterializeWorkspace, ReaderPoll, TopologyBatch, Value,
 };
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
@@ -21,6 +21,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A decoder builds one immutable document revision through the accounted builder: every retained allocation is
     // charged, every admission is one failure-atomic transaction.
     let mut builder = AccountedDocumentBuilder::try_new("example", None)?;
+    // Hint only: nodes, occurrences, stored text, and facts. Does not reserve wide, tags, or owner_positions.
+    builder.try_reserve(
+        DocumentCapacity {
+            nodes: 4,
+            occurrences: 3,
+            stored_text_bytes: 8,
+            facts: 0,
+        },
+        &resources,
+    )?;
 
     let root = builder.add_node(
         "example.object",
@@ -57,7 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Materialization is the explicit barrier where document nodes become owned values; the duplicate "count" member
     // materializes once, as 2.
-    let Value::Object(object) = document.materialize_root(&mut resources)? else {
+    let mut workspace = MaterializeWorkspace::new();
+    let Value::Object(object) = document.materialize_root_with(&mut workspace, &mut resources)? else {
         unreachable!("the root node is an object");
     };
     assert_eq!(object.len(), 2);

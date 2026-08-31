@@ -117,7 +117,11 @@ fn last_child_step(value: &Value, _resources: &ResourceContext<'_>) -> Result<Op
         Value::Object(object) => {
             let mut last = None;
             for entry in object {
-                last = Some(Value::try_string(entry.key()).map_err(|_| EngineRunError::allocation_failure())?);
+                last = Some(
+                    entry
+                        .try_to_value_string()
+                        .map_err(|_| EngineRunError::allocation_failure())?,
+                );
             }
             Ok(last)
         }
@@ -149,7 +153,9 @@ fn child_at(value: &Value, next: usize, _resources: &ResourceContext<'_>) -> Res
                 .iter()
                 .nth(next)
                 .ok_or_else(|| EngineRunError::internal_contract("tostream object child"))?;
-            let step = Value::try_string(entry.key()).map_err(|_| EngineRunError::allocation_failure())?;
+            let step = entry
+                .try_to_value_string()
+                .map_err(|_| EngineRunError::allocation_failure())?;
             let child = entry.value().clone();
             Ok((child, step))
         }

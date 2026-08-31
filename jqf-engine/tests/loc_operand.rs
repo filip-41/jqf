@@ -17,7 +17,7 @@
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, EngineCompileError, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, EngineCompileError, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{CodecCatalog, Diagnostics, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -72,6 +72,7 @@ fn run(program: &str, input: &str) -> Result<String, String> {
     let compiled = try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compile");
@@ -165,13 +166,13 @@ fn the_old_refusal_is_gone_and_unknown_names_still_refuse() {
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     for program in [".[$__loc__]", ".@($__loc__)", ".[$__loc__:]", "$__loc__"] {
         assert!(
-            try_compile_program(program, policy, &resources).is_ok(),
+            try_compile_program(program, policy, CompileOptions::new(), &resources).is_ok(),
             "{program} must compile"
         );
     }
     // A genuinely unbound name keeps its identical refusal from the same
     // ladder the named bindings now flow through.
-    match try_compile_program(".[$nope]", policy, &resources) {
+    match try_compile_program(".[$nope]", policy, CompileOptions::new(), &resources) {
         Err(EngineCompileError::UndefinedVariable { .. }) => {}
         other => panic!("expected UndefinedVariable, got {other:?}"),
     }

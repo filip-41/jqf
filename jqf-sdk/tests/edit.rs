@@ -19,7 +19,7 @@ fn json_dialect() -> &'static DialectId {
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program, try_compile_program_for_edit};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelineError, PipelineFailure,
@@ -122,7 +122,8 @@ fn run_edit(input: &[u8], sink: &mut CollectingSink, program_source: &str) -> Re
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.json",
@@ -358,7 +359,7 @@ fn mismatched_output_format_declines() {
     let other = FormatId::try_new("json2").expect("synthetic format id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(".", policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.json",
@@ -436,7 +437,8 @@ fn run_toml_edit(
         || DialectId::try_new(jqf_codec_toml::TOML_JQF_1_0_DIALECT_ID).expect("output dialect is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.toml",
@@ -594,7 +596,8 @@ fn run_jsonc_edit(
     let output_dialect = || DialectId::try_new(jqf_codec_json::jsonc::JQF_1_0_DIALECT_ID).expect("output dialect");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program_for_edit(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.jsonc",
@@ -634,7 +637,8 @@ fn run_json5_edit(
     let output_dialect = || DialectId::try_new(jqf_codec_json::json5::JQF_1_0_DIALECT_ID).expect("output dialect");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program_for_edit(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.json5",

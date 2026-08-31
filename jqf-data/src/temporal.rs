@@ -145,6 +145,10 @@ pub(crate) fn write_time_text(
     second: u8,
     fraction: &str,
 ) -> Result<(), TemporalError> {
+    // Digit-width refuses hour 100; the calendar range refuses hour 24 and 99, which still fit two digits.
+    if hour > 23 || minute > 59 || second > 60 {
+        return Err(TemporalError::OutOfRange);
+    }
     write_digits(out, u32::from(hour), 2)?;
     push(out, ":")?;
     write_digits(out, u32::from(minute), 2)?;
@@ -482,8 +486,8 @@ pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
 ///
 /// Unknown-local (`-00:00`) counts as offset zero. The enforced domain is years `0000..=9999` with in-range field
 /// values — what every parser and constructor produces — and inside it the result always fits `i64`. Outside it the
-/// arithmetic is not defined: debug builds assert the year bound, release builds wrap rather than check this hot
-/// conversion path, so a caller synthesizing wider values range-checks first.
+/// arithmetic is not defined: debug builds assert the documented civil window (year, month, and day), release builds
+/// wrap rather than check this hot conversion path. Non-hot callers use [`try_epoch_seconds_from_civil_parts`].
 #[must_use]
 pub fn epoch_seconds_from_civil_parts(
     year: i64,
@@ -495,8 +499,8 @@ pub fn epoch_seconds_from_civil_parts(
     offset_seconds: i64,
 ) -> i64 {
     debug_assert!(
-        (0..=9999).contains(&year),
-        "year outside the documented RFC 3339 window"
+        (0..=9999).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day),
+        "civil fields outside the documented RFC 3339 window"
     );
     days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - offset_seconds
 }
@@ -718,6 +722,43 @@ mod tests {
 
         super::write_digits(&mut out, 99, 2).expect("the widest two-digit value fits");
         assert_eq!(out, "99");
+    }
+
+    #[test]
+    fn write_time_text_refuses_calendar_illegal_hours() {
+        use crate::LocalTimeView;
+
+        let mut out = String::new();
+        assert_eq!(
+            LocalTimeView {
+                hour: 24,
+                minute: 0,
+                second: 0,
+                fraction: "",
+            }
+            .write_text(&mut out),
+            Err(TemporalError::OutOfRange)
+        );
+        assert_eq!(
+            LocalTimeView {
+                hour: 99,
+                minute: 0,
+                second: 0,
+                fraction: "",
+            }
+            .write_text(&mut out),
+            Err(TemporalError::OutOfRange)
+        );
+        assert!(out.is_empty(), "a refused hour writes nothing");
+        LocalTimeView {
+            hour: 23,
+            minute: 0,
+            second: 0,
+            fraction: "",
+        }
+        .write_text(&mut out)
+        .expect("hour 23 is in range");
+        assert_eq!(out, "23:00:00");
     }
 
     /// A sub-minute offset has no lossless RFC 3339 spelling in EITHER direction: positive would truncate to `+00:00`

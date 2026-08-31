@@ -10,7 +10,7 @@ use jqf_codec_core::{
     AccessAdapter, AccessResultKind, DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode,
 };
 use jqf_data::{DialectId, FormatId, Value};
-use jqf_engine::{CodecRequirementPolicy, CompiledProgram, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
 use jqf_resource::{
     ContinueControl, Control, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits, WorkMeter,
 };
@@ -452,7 +452,8 @@ pub(crate) fn probe_source(bytes: &[u8]) -> ResolvedSource<'_> {
 
 pub(crate) fn program_for(source: &str, resources: &ResourceContext<'_>) -> Result<CompiledProgram, String> {
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    try_compile_program(source, policy, resources).map_err(|error| format!("program {source:?}: {error}"))
+    try_compile_program(source, policy, CompileOptions::new(), resources)
+        .map_err(|error| format!("program {source:?}: {error}"))
 }
 
 #[allow(

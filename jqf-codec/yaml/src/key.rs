@@ -49,22 +49,16 @@ pub(crate) struct KeyEquality<'graph> {
 }
 
 impl<'graph> KeyEquality<'graph> {
-    #[allow(clippy::unnecessary_wraps)]
-    pub(crate) fn try_new(
-        graph: &'graph YamlGraph,
-        source: ResolvedSource<'graph>,
-        dialect: DialectKind,
-    ) -> Result<Self, CodecError> {
-        Ok(Self {
+    pub(crate) fn new(graph: &'graph YamlGraph, source: ResolvedSource<'graph>, dialect: DialectKind) -> Self {
+        Self {
             graph,
             source,
             dialect,
             active: Vec::new(),
-        })
+        }
     }
 
     /// Compares two graph nodes under the law.
-    #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
     pub(crate) fn equals(
         &mut self,
         left: NodeId,
@@ -426,10 +420,8 @@ mod tests {
         left: NodeId,
         right: NodeId,
     ) -> Verdict {
-        KeyEquality::try_new(graph, src, crate::provider::DialectKind::Core)
-            .expect("equality")
-            .equals(left, right, resources)
-            .expect("compare")
+        let mut equality = KeyEquality::new(graph, src, crate::provider::DialectKind::Core);
+        equality.equals(left, right, resources).expect("compare")
     }
 
     /// The livelock shape: the first left key matches a right key, the second does not. The old pop/re-scan backtracker

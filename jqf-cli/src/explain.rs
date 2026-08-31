@@ -89,6 +89,14 @@ pub fn render_plan(source: &str, compiled: &jqf_engine::CompiledProgram, compile
         render_class(plan.projection_class.clone()),
         plan.boundary_consumer.map_or("none", render_consumer)
     ));
+    lines.push(format!(
+        "jqf: explain: routes: count={} element={} keys={} type={} inputs_cursor={}",
+        yes(plan.count_route),
+        yes(plan.element_route),
+        yes(plan.keys_route),
+        yes(plan.type_route),
+        yes(plan.uses_inputs_cursor),
+    ));
     lines.push(format!("jqf: explain: pushdown: {}", render_path(&plan.pushdown)));
     lines.push(format!(
         "jqf: explain: ladder: morsel={} range_locate={}",

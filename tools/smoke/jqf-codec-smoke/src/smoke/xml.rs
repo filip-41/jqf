@@ -398,7 +398,7 @@ fn xpath_corpus() -> Result<(), String> {
                 .fact_reader(resources)
                 .map_err(|error| format!("fact reader: {error:?}"))?;
             let owner = jqf_data::LocalOwnerRef::Node(*node);
-            let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| "batch limit".to_owned())?;
+            let limit = jqf_data::unbounded_batch_limit();
             loop {
                 match reader
                     .poll_batch(limit, resources)

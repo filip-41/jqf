@@ -342,7 +342,7 @@ pub(crate) fn validate_duplicate_keys(
         return Ok(());
     };
     let mut visited: Vec<bool> = Vec::new();
-    let mut equality = KeyEquality::try_new(graph, source, dialect)?;
+    let mut equality = KeyEquality::new(graph, source, dialect);
     validate_node_keys(graph, root, source, dialect, resources, &mut visited, &mut equality)
 }
 

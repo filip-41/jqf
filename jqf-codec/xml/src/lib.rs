@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn attributes_and_comments_attach_the_accessor_facts() {
         use jqf_codec_core::{AccessInput, AccessOutcome, AccessSession};
-        use jqf_data::{BatchLimit, FactPayloadView, LocalOwnerRef, ReaderPoll};
+        use jqf_data::{FactPayloadView, LocalOwnerRef, ReaderPoll, unbounded_batch_limit};
         use jqf_resource::{ContinueControl, RequestAccount, ResourceLimits, WorkMeter};
 
         static CONTROL: ContinueControl = ContinueControl;
@@ -328,7 +328,7 @@ mod tests {
         let document = product.document();
         let owner = LocalOwnerRef::Node(document.root());
 
-        let limit = BatchLimit::new(usize::MAX).expect("limit");
+        let limit = unbounded_batch_limit();
         let mut reader = document.fact_reader(&mut resources).expect("fact reader");
         let mut attrs: alloc::collections::BTreeMap<String, String> = alloc::collections::BTreeMap::new();
         let mut comments: Option<alloc::vec::Vec<String>> = None;

@@ -1411,7 +1411,7 @@ mod builder_tests {
         use alloc::vec;
         use alloc::vec::Vec;
         use jqf_codec_core::AccessSession;
-        use jqf_data::{BatchLimit, FactPayloadView, ReaderPoll};
+        use jqf_data::{FactPayloadView, ReaderPoll, unbounded_batch_limit};
 
         let mut ctx = crate::test_support::resources();
         let bytes: &'static [u8] = b"# the title\ntitle = \"catalog\" # a note\n";
@@ -1430,7 +1430,7 @@ mod builder_tests {
         };
         let mut found = Vec::new();
         let mut inline = Vec::new();
-        let limit = BatchLimit::new(usize::MAX).expect("limit");
+        let limit = unbounded_batch_limit();
         let mut reader = product.document().fact_reader(&mut ctx).expect("reader");
         loop {
             match reader.poll_batch(limit, &mut ctx).expect("poll") {

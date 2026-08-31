@@ -124,34 +124,31 @@ type Path = Vec<Seg>;
 /// scalar product, or data already kept whole).
 type Outcome = Vec<Path>;
 
-/// Derives the kept-subtree tree for a whole-document program, or `None` when
-/// the program's reads cannot be bounded below the whole document.
-pub(crate) fn prune_tree(nodes: &[ProgramNode], root: ProgramNodeId, slots: u32) -> Option<PruneNode> {
+/// Derives the kept-subtree trees for a whole-document program and for a pulled
+/// record, sharing one walk.
+pub(crate) fn prune_trees(
+    nodes: &[ProgramNode],
+    root: ProgramNodeId,
+    slots: u32,
+) -> (Option<PruneNode>, Option<PruneNode>) {
     let walker = walk_program(nodes, root, slots);
-    // A pull's demand is not the root's: the blanket decline of the root
-    // tree stays. The pulled-record tree is [`pulled_record_prune_tree`].
-    if walker.declined || walker.saw_input_pull || walker.tree.all {
-        return None;
-    }
-    let mut tree = walker.tree;
-    let mut merge_budget = MAX_PRUNE_NODES * 8;
-    absorb_element_into_keys(&mut tree, &mut merge_budget);
-    Some(tree)
-}
-
-/// The kept-subtree tree over a PULLED record (`input`/`inputs`), or `None`
-/// when the program does not pull, the pull is consumed whole, or the walk
-/// declined. The record `NullFirst` drive attaches this as a per-record hint;
-/// delivering more than the tree names is always sound.
-pub(crate) fn pulled_record_prune_tree(nodes: &[ProgramNode], root: ProgramNodeId, slots: u32) -> Option<PruneNode> {
-    let walker = walk_program(nodes, root, slots);
-    if walker.declined || !walker.saw_input_pull || walker.pull_tree.all {
-        return None;
-    }
-    let mut tree = walker.pull_tree;
-    let mut merge_budget = MAX_PRUNE_NODES * 8;
-    absorb_element_into_keys(&mut tree, &mut merge_budget);
-    Some(tree)
+    let root_tree = if walker.declined || walker.saw_input_pull || walker.tree.all {
+        None
+    } else {
+        let mut tree = walker.tree;
+        let mut merge_budget = MAX_PRUNE_NODES * 8;
+        absorb_element_into_keys(&mut tree, &mut merge_budget);
+        Some(tree)
+    };
+    let pulled = if walker.declined || !walker.saw_input_pull || walker.pull_tree.all {
+        None
+    } else {
+        let mut tree = walker.pull_tree;
+        let mut merge_budget = MAX_PRUNE_NODES * 8;
+        absorb_element_into_keys(&mut tree, &mut merge_budget);
+        Some(tree)
+    };
+    (root_tree, pulled)
 }
 
 fn walk_program(nodes: &[ProgramNode], root: ProgramNodeId, slots: u32) -> Walker<'_> {
@@ -714,7 +711,7 @@ impl<'program> Walker<'program> {
 mod tests {
     use super::PruneNode;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use alloc::string::String;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -760,7 +757,8 @@ mod tests {
     fn tree_of(source: &str) -> Option<String> {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("probe program compiles");
+        let program =
+            try_compile_program(source, policy, CompileOptions::new(), &resources).expect("probe program compiles");
         program.prune_tree().map(render)
     }
 
@@ -900,7 +898,7 @@ mod tests {
     fn pulled_of(source: &str) -> Option<String> {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("compiles");
+        let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
         program.pulled_record_prune().map(render)
     }
 

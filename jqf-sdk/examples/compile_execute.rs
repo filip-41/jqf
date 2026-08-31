@@ -10,9 +10,10 @@
 
 use jqf_codec_json::{self, registration};
 use jqf_sdk::{
-    CodecCatalog, CompiledProgram, ContinueControl, DecodeRequest, DiagnosticPolicy, DialectId, EncodedItemReport,
-    FacadeFraming, FormatId, ItemSink, PipelinePolicy, PreservationRequest, RequestAccount, ResolvedSource,
-    ResourceContext, ResourceLimits, SourceId, SourceKind, SourceRef, ValidationMode, WorkMeter, try_compile_program,
+    CodecCatalog, CompileOptions, CompiledProgram, ContinueControl, DecodeRequest, DiagnosticPolicy, DialectId,
+    EncodedItemReport, FacadeFraming, FormatId, ItemSink, PipelinePolicy, PreservationRequest, RequestAccount,
+    ResolvedSource, ResourceContext, ResourceLimits, SourceId, SourceKind, SourceRef, ValidationMode, WorkMeter,
+    try_compile_program,
 };
 
 /// Collects every published item's bytes in order.
@@ -59,7 +60,8 @@ fn main() -> Result<(), String> {
 
     // Compile: the same entrypoint the CLI uses.
     let policy = jqf_sdk::CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let program: CompiledProgram = try_compile_program(".catalog[].name", policy, &resources).map_err(text)?;
+    let program: CompiledProgram =
+        try_compile_program(".catalog[].name", policy, CompileOptions::new(), &resources).map_err(text)?;
 
     // The input: a JSON byte slice.
     let input: &[u8] = br#"{"catalog":[{"name":"a"},{"name":"b"}]}"#;

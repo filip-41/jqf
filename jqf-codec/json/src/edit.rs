@@ -15,12 +15,13 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use jqf_codec_core::{
-    CodecError, CodecFailureKind, CodecRunContext, EditAppendMembers, EditInsertion, EditRemoval, EditRemoveMembers,
-    EncodeItem, ErasedEncoderSession, PreservationRequest, VecByteSink, map_data,
+    CodecError, CodecRunContext, EditAppendMembers, EditInsertion, EditRemoval, EditRemoveMembers, EncodeItem,
+    ErasedEncoderSession, PreservationRequest, VecByteSink, map_data,
 };
-use jqf_data::{BatchLimit, Document, DocumentCapability, FactPayloadView, NodeHandle, NodeId, ReaderPoll, Value};
+use jqf_data::{Document, DocumentCapability, FactPayloadView, NodeHandle, NodeId, Value};
 use jqf_resource::ResourceContext;
 
 use crate::byte_scan::is_json_ws;
@@ -128,46 +129,38 @@ pub(crate) fn build_comment_index(
             return Err(map_data(error, "JSONC comment index over a valid document"));
         }
     };
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|error| map_data(error, "JSONC comment index read"))?;
-        match poll {
-            ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    let jqf_data::LocalOwnerRef::Node(node) = fact.owner() else {
-                        continue;
-                    };
-                    if fact.role().as_str() != role {
-                        continue;
-                    }
-                    let FactPayloadView::List(texts) = fact.payload() else {
-                        continue;
-                    };
-                    let mut out = Vec::new();
-                    for entry in texts.iter() {
-                        if let FactPayloadView::Text(text) = entry {
-                            out.push(String::from(text));
-                        }
-                    }
-                    if !out.is_empty() {
-                        let handle = document.node_handle(node).map_err(data_error)?;
-                        index.insert(handle, out);
-                    }
+    match reader
+        .drain(resources, |fact| {
+            let jqf_data::LocalOwnerRef::Node(node) = fact.owner() else {
+                return ControlFlow::Continue(());
+            };
+            if fact.role().as_str() != role {
+                return ControlFlow::Continue(());
+            }
+            let FactPayloadView::List(texts) = fact.payload() else {
+                return ControlFlow::Continue(());
+            };
+            let mut out = Vec::new();
+            for entry in texts.iter() {
+                if let FactPayloadView::Text(text) = entry {
+                    out.push(String::from(text));
                 }
             }
-            ReaderPoll::Pending => {
-                // The encoder's fact-index read has no CodecRunContext to replenish through, so a Pending poll must
-                // resume through the resource entry point or it spins forever (the jsonc-smoke double-encode hang: the
-                // smoke's own reader got the resume fix; this is the same law at the codec side, which is the only path
-                // a real CLI encode reaches).
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(CodecError::from)?;
+            if out.is_empty() {
+                return ControlFlow::Continue(());
             }
-            ReaderPoll::End(_) => return Ok(index),
-        }
+            match document.node_handle(node).map_err(data_error) {
+                Ok(handle) => {
+                    index.insert(handle, out);
+                    ControlFlow::Continue(())
+                }
+                Err(error) => ControlFlow::Break(error),
+            }
+        })
+        .map_err(|error| map_data(error, "JSONC comment index read"))?
+    {
+        ControlFlow::Break(error) => Err(error),
+        ControlFlow::Continue(()) => Ok(index),
     }
 }
 

@@ -3,7 +3,7 @@ use std::sync::{Arc, mpsc};
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::task::{DetachedTaskBuffer, TaskChildAccount, TaskGrantLimits, TaskOutputBuffer};
 use jqf_resource::{
     ContinueControl, Control, ControlOutcome, RequestAccount, ResourceContext, ResourceError, ResourceLimits, WorkMeter,
@@ -129,7 +129,8 @@ fn drive_records<Sink: ItemSink<Error = ResourceError>>(
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id");
 
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let program = try_compile_program(program_source, policy, resources).map_err(|e| format!("{e}"))?;
+    let program =
+        try_compile_program(program_source, policy, CompileOptions::new(), resources).map_err(|e| format!("{e}"))?;
     let requirement = program
         .try_requirement(resources)
         .map_err(|error| format!("requirement: {:?}", error.kind()))?;

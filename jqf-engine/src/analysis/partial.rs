@@ -8,6 +8,7 @@
 //! [`super::topk`] keeps the executor-facing `topk_count` reading and imports
 //! the row from here.
 
+#[cfg(test)]
 use alloc::vec::Vec;
 
 use jqf_data::Value;
@@ -116,6 +117,7 @@ impl PartialSort {
 /// An allocation failure yields an EMPTY table rather than an error: the table
 /// is a pure optimization, and a program the full sort can run must never fail
 /// because the optimizer could not allocate.
+#[cfg(test)]
 pub fn partial_sorts(nodes: &[ProgramNode]) -> Vec<PartialSort> {
     let mut found = Vec::new();
     for index in 0..nodes.len() {
@@ -150,7 +152,7 @@ pub fn partial_sorts(nodes: &[ProgramNode]) -> Vec<PartialSort> {
     not(debug_assertions),
     allow(unused_variables, reason = "the revision pin is a debug-only assert")
 )]
-fn partial_sort_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<PartialSort> {
+pub(crate) fn partial_sort_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<PartialSort> {
     let ProgramNode::FlatMap { upstream, body } = &nodes[id.index()] else {
         return None;
     };

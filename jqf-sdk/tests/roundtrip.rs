@@ -16,7 +16,7 @@ fn json_dialect() -> &'static DialectId {
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_codec_json::{JsonEncodeOptions, JsonIndent};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelineFailure, PipelinePolicy, Report,
@@ -128,7 +128,8 @@ fn run_roundtrip_with_policy(
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.json",
@@ -373,7 +374,8 @@ fn different_output_format_or_dialect_declines() {
     let other_dialect = DialectId::try_new("dialect2").expect("synthetic dialect id is valid");
     let mut resources = resources();
     let requirement_policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", requirement_policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(".", requirement_policy, CompileOptions::new(), &resources).expect("program compiles");
     let mut sink = CollectingSink::new();
     let run = run_roundtrip_declines(
         &catalog,
@@ -454,6 +456,7 @@ fn default_execute_echoes_canonical_identity_without_the_roundtrip_flag() {
     let compiled = try_compile_program(
         ".",
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("program compiles");

@@ -31,7 +31,12 @@ let mut resources = ResourceContext::new(
     WorkMeter::try_new_v1(64)?,
 )?;
 
-let program = try_compile_program(".catalog[].name", policy, &resources)?;
+let program = try_compile_program(
+    ".catalog[].name",
+    policy,
+    CompileOptions::new(),
+    &resources,
+)?;
 let outcome = execute(
     Request::new(&program, Input::Whole(input))
         .with_catalog(catalog)
@@ -41,6 +46,16 @@ let outcome = execute(
     &mut sink,
 )?;
 ```
+
+### Compile
+
+`try_compile_program` is the same entry the CLI uses. It takes the
+program source, a requirement policy, `CompileOptions`, and the request
+ledger. `CompileOptions::new()` is the ordinary lane; the split-expression
+lane (`$index` for `--split-exp` / `--split-exp-file`) is
+`CompileOptions::split_exp()` and sees no `--arg` family bindings. What
+those options *do* is
+[Engine compiler](engine-compiler.md).
 
 **Codecs are dependency edges.** Registration is one line per
 codec — `jqf_codec_yaml::registration()`, `jqf_codec_toml::registration_1_0()`,

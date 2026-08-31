@@ -24,8 +24,8 @@ use jqf_codec_core::{
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedIntrinsicTag, AccountedOccurrenceKey,
     AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage,
-    DocumentCapabilityFamily, DocumentFinalizationPoll, DocumentTextId, FactPayload, LocalDate, LocalOwnerRef,
-    LocalTime, NodeId, TagId,
+    DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, DocumentTextId, FactPayload, LocalDate,
+    LocalOwnerRef, LocalTime, NodeId, TagId,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::ResolvedSource;
@@ -163,7 +163,11 @@ impl JqftParseState {
     /// from the new value's source — a stale binding from a previous value could never serve it. The construction is
     /// lazy: a fresh `try_new` and a reset both start with `builder: None`, and the first parse poll builds it from the
     /// poll's source, so the two paths share one law.
-    fn try_ensure_builder(&mut self, source: ResolvedSource<'_>) -> Result<(), CodecError> {
+    fn try_ensure_builder(
+        &mut self,
+        source: ResolvedSource<'_>,
+        resources: &ResourceContext<'_>,
+    ) -> Result<(), CodecError> {
         if self.builder.is_some() {
             return Ok(());
         }
@@ -175,6 +179,18 @@ impl JqftParseState {
         // attach them. Source attachment happens at publish and does not widen builder coverage.
         let (mut builder, _schema) =
             AccountedDocumentBuilder::try_new_prepared_with_coverage(&self.recipe, self.coverage).map_err(map_data)?;
+        let slots = source.bytes().len() / 8;
+        if slots > 0 {
+            let _ = builder.try_reserve(
+                DocumentCapacity {
+                    nodes: slots,
+                    occurrences: slots,
+                    stored_text_bytes: source.bytes().len(),
+                    ..DocumentCapacity::default()
+                },
+                resources,
+            );
+        }
         // The document retains its source authority (the input bytes) so `with_source` can echo the origin format
         // byte-identically (the memo's conformance level 1). The XML codec's precedent: bind the session source,
         // codec-core attaches the backing at publish. The seal is a linear pass, so it is started here as a cooperative
@@ -309,7 +325,7 @@ impl jqf_codec_core::AccessSession for JqftParseState {
                     // The builder is constructed lazily so a reused session binds the CURRENT value's source; a fresh
                     // session builds it on its first decode from the same source it was opened over.
                     if self.builder.is_none() {
-                        self.try_ensure_builder(source)?;
+                        self.try_ensure_builder(source, context.resources())?;
                     }
                     let progress = self.parse_step(source, context.resources())?;
                     if !progress {
@@ -2213,14 +2229,7 @@ fn decode_base64(input: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub(crate) fn map_data(error: DataError) -> CodecError {
-    // A builder can raise an UNREPRESENTABLE shape on the jqft graph; that arm is the codec's own, everything else is
-    // the shared mapping.
-    match error {
-        DataError::UnrepresentableSemantic | DataError::CyclicSemanticGraph => {
-            CodecError::new(CodecFailureKind::UnsupportedRepresentation)
-        }
-        other => jqf_codec_core::map_data(other, "jqft builder rejected document construction"),
-    }
+    jqf_codec_core::map_data(error, "jqft builder rejected document construction")
 }
 
 fn data_contract() -> CodecError {

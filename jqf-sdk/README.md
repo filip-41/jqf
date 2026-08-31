@@ -17,7 +17,7 @@ What it has:
 - `CodecCatalog` — the registrations one request may select
 - `ItemSink` / `FacadeFraming` — how published bytes leave
 - `PipelinePolicy` / `PipelineFailure` — decode, encode, and drive errors
-- `try_compile_program` / `CompiledProgram` / `CodecRequirementPolicy` —
+- `try_compile_program` / `CompileOptions` / `CompiledProgram` / `CodecRequirementPolicy` —
   re-exported from `jqf-engine`
 - `request_stack_bytes` — the sized-thread helper compile and execute need
 
@@ -29,7 +29,7 @@ crate-private.
 ```rust
 use jqf_codec_json::registration;
 use jqf_sdk::{
-    CodecCatalog, CodecRequirementPolicy, ContinueControl, DiagnosticPolicy, RequestAccount,
+    CodecCatalog, CodecRequirementPolicy, CompileOptions, ContinueControl, DiagnosticPolicy, RequestAccount,
     ResourceContext, ResourceLimits, ValidationMode, WorkMeter, try_compile_program,
 };
 
@@ -43,7 +43,7 @@ let resources = ResourceContext::new(
 .unwrap();
 
 let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-let compiled = try_compile_program(".catalog[].name", policy, &resources).unwrap();
+let compiled = try_compile_program(".catalog[].name", policy, CompileOptions::new(), &resources).unwrap();
 assert!(!compiled.uses_inputs_cursor());
 
 let json = registration().unwrap();

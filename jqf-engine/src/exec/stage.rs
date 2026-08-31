@@ -23,6 +23,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use jqf_codec_core::{CodecError, CodecFailureKind, LocatedProduct};
 use jqf_data::{Array, DataError, Document, NodeHandle, NodeId, Object, ScalarView, Value, ValueKind};
@@ -36,8 +37,8 @@ use jqf_builtins::codec_result::EngineResult;
 use jqf_builtins::error::message;
 use jqf_builtins::error::mismatch;
 use jqf_builtins::semantics::{
-    DynAccess, OwnedNav, accessor_matches_fact, clone_owned, dyn_index, navigate_owned_index, navigate_owned_key,
-    owned_kind, resolve_slice_bound, unrepresentable_index,
+    DynAccess, OwnedNav, accessor_matches_fact, dyn_index, navigate_owned_index, navigate_owned_key, owned_kind,
+    resolve_slice_bound, unrepresentable_index,
 };
 
 /// A container an `.[]` step fans out — either still located in its authoritative
@@ -318,7 +319,7 @@ pub(crate) fn descend_borrowed<'source>(
     let mut at = at;
     loop {
         let Some(step) = steps.get(at) else {
-            return Ok(Descended::Leaf(EngineResult::owned(clone_owned(cursor))));
+            return Ok(Descended::Leaf(EngineResult::owned(cursor.clone())));
         };
         let global = base + at;
         let nav = match step.access() {
@@ -332,8 +333,8 @@ pub(crate) fn descend_borrowed<'source>(
                 ValueKind::Array | ValueKind::Object => {
                     return Ok(Descended::Descend {
                         next_at: at,
-                        container: Container::Owned(clone_owned(cursor)),
-                        value: EngineResult::owned(clone_owned(cursor)),
+                        container: Container::Owned(cursor.clone()),
+                        value: EngineResult::owned(cursor.clone()),
                         at: at + 1,
                     });
                 }
@@ -473,7 +474,7 @@ fn each_owned_step<'source>(
     match owned_kind(value) {
         ValueKind::Array | ValueKind::Object => Ok(Descended::FanOut {
             next_at,
-            container: Container::Owned(clone_owned(value)),
+            container: Container::Owned(value.clone()),
         }),
         _ if optional => Ok(Descended::Skip),
         kind => Err(EngineRunError::IterateMismatch {
@@ -515,7 +516,7 @@ fn descend_step(value: EngineResult<'_>, at: usize) -> Result<DescendStep<'_>, E
     }
     let container = match &value {
         EngineResult::Located(located) => Container::Located(located.try_clone().map_err(EngineRunError::Codec)?),
-        EngineResult::Owned(owned) => Container::Owned(clone_owned(owned)),
+        EngineResult::Owned(owned) => Container::Owned(owned.clone()),
     };
     Ok(DescendStep::FanOut(Descended::Descend {
         next_at: at,
@@ -606,7 +607,7 @@ fn slice_owned(
                 let child = array
                     .get(position)
                     .ok_or_else(|| internal("owned slice ran past its own clamped range"))?;
-                out.try_push(clone_owned(child))
+                out.try_push(child.clone())
                     .map_err(|_| EngineRunError::allocation_failure())?;
             }
             Ok(Sliced::Value(Value::Array(out)))
@@ -868,9 +869,9 @@ fn authored_bound(
 ) -> Result<Value, EngineRunError> {
     match bound {
         SliceBound::Open => Ok(Value::Null),
-        SliceBound::Literal(value) => Ok(clone_owned(value)),
+        SliceBound::Literal(value) => Ok(value.clone()),
         SliceBound::Var(slot) => match slot_result(env, *slot)? {
-            EngineResult::Owned(value) => Ok(clone_owned(value)),
+            EngineResult::Owned(value) => Ok(value.clone()),
             EngineResult::Located(located) => {
                 let document = located.product().document();
                 scratch.materialize(document, located.node())
@@ -1324,7 +1325,7 @@ fn navigate_key<'d, 'source>(
             }
             Value::Object(object) => {
                 return match object.get(key) {
-                    Some(child) => Ok(Nav::Value(EngineResult::owned(clone_owned(child)))),
+                    Some(child) => Ok(Nav::Value(EngineResult::owned(child.clone()))),
                     None => mismatch::resolve_at(
                         scratch.resources(),
                         mismatch::MismatchCell::MissingKey,
@@ -1501,45 +1502,28 @@ pub(crate) fn markup_member_step(
                 }));
             }
         };
-        let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal("markup fact batch limit"))?;
-        loop {
-            let poll = reader
-                .poll_batch(limit, scratch.resources_mut())
-                .map_err(|_| internal("attached-fact read over a valid document"))?;
-            match poll {
-                jqf_data::ReaderPoll::Batch(batch) => {
-                    for fact in batch.iter() {
-                        if !accessor_matches_fact(fact.role().as_str(), "name") {
-                            continue;
-                        }
-                        let jqf_data::FactPayloadView::Text(text) = fact.payload() else {
-                            continue;
-                        };
-                        let jqf_data::LocalOwnerRef::Node(owner) = fact.owner() else {
-                            continue;
-                        };
-                        if owner == node_id {
-                            self_is_element = true;
-                            self_name = Some(alloc::string::String::from(text));
-                        } else {
-                            // Record every name fact; the child filter below keeps
-                            // only the array's own members.
-                            names.push((owner, alloc::string::String::from(text)));
-                        }
-                    }
+        let _ = reader
+            .drain(scratch.resources_mut(), |fact| {
+                if !accessor_matches_fact(fact.role().as_str(), "name") {
+                    return ControlFlow::Continue(());
                 }
-                jqf_data::ReaderPoll::Pending => {
-                    // The cooperative entry's work credits are exhausted; refill
-                    // so the scan can continue — spinning without refilling would
-                    // loop forever once the per-entry budget is gone.
-                    scratch
-                        .resources_mut()
-                        .try_begin_next_cooperative_entry(4096)
-                        .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
+                let jqf_data::FactPayloadView::Text(text) = fact.payload() else {
+                    return ControlFlow::Continue(());
+                };
+                let jqf_data::LocalOwnerRef::Node(owner) = fact.owner() else {
+                    return ControlFlow::Continue(());
+                };
+                if owner == node_id {
+                    self_is_element = true;
+                    self_name = Some(alloc::string::String::from(text));
+                } else {
+                    // Record every name fact; the child filter below keeps
+                    // only the array's own members.
+                    names.push((owner, alloc::string::String::from(text)));
                 }
-                jqf_data::ReaderPoll::End(_) => break,
-            }
-        }
+                ControlFlow::<()>::Continue(())
+            })
+            .map_err(|_| internal("attached-fact read over a valid document"))?;
     }
     if !self_is_element {
         return Ok(MarkupStep::NotMarkup);
@@ -1632,37 +1616,25 @@ fn markup_miss_hint(
             }));
         }
     };
-    let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal("markup fact batch limit"))?;
     let owner = jqf_data::LocalOwnerRef::Node(node_id);
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|_| internal("attached-fact read over a valid document"))?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    // The `.&name` accessor law: role `attribute`, kind the
-                    // expanded name.
-                    if fact.owner() == owner
-                        && fact.role().as_str() == jqf_codec_core::markup::ATTRIBUTE_FACT
-                        && fact.kind().as_str() == key
-                    {
-                        return Ok(Some(jqf_codec_core::markup::attribute_miss_hint(key)));
-                    }
-                }
+    match reader
+        .drain(resources, |fact| {
+            // The `.&name` accessor law: role `attribute`, kind the
+            // expanded name.
+            if fact.owner() == owner
+                && fact.role().as_str() == jqf_codec_core::markup::ATTRIBUTE_FACT
+                && fact.kind().as_str() == key
+            {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-            jqf_data::ReaderPoll::Pending => {
-                // The cooperative entry's work credits are exhausted; refill
-                // so the scan can continue — spinning without refilling would
-                // loop forever once the per-entry budget is gone.
-                resources
-                    .try_begin_next_cooperative_entry(4096)
-                    .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
-            }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
+        })
+        .map_err(|_| internal("attached-fact read over a valid document"))?
+    {
+        ControlFlow::Break(()) => Ok(Some(jqf_codec_core::markup::attribute_miss_hint(key))),
+        ControlFlow::Continue(()) => Ok(None),
     }
-    Ok(None)
 }
 
 /// Navigates one signed array index over `value` (null precedence, out of
@@ -1687,7 +1659,7 @@ fn navigate_index<'source>(
             }
             Value::Array(array) => {
                 return match jqf_data::resolve_index(array.len(), index).and_then(|position| array.get(position)) {
-                    Some(child) => Ok(Nav::Value(EngineResult::owned(clone_owned(child)))),
+                    Some(child) => Ok(Nav::Value(EngineResult::owned(child.clone()))),
                     None => mismatch::resolve_at(
                         scratch.resources(),
                         mismatch::MismatchCell::IndexOutOfRange,
@@ -1825,7 +1797,7 @@ fn next_owned_child<'source>(
         _ => return Err(internal("engine frame over a non-container owned value")),
     };
     match child {
-        Some(child) => Ok(Some(EngineResult::owned(clone_owned(child)))),
+        Some(child) => Ok(Some(EngineResult::owned(child.clone()))),
         None => Ok(None),
     }
 }
@@ -2161,44 +2133,27 @@ fn element_name_facts(
                 }));
             }
         };
-        let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal("fact batch limit"))?;
-        loop {
-            let poll = reader
-                .poll_batch(limit, resources)
-                .map_err(|_| internal("attached-fact read over a valid document"))?;
-            match poll {
-                jqf_data::ReaderPoll::Batch(batch) => {
-                    for fact in batch.iter() {
-                        if !accessor_matches_fact(fact.role().as_str(), "name") {
-                            continue;
-                        }
-                        let jqf_data::FactPayloadView::Text(text) = fact.payload() else {
-                            continue;
-                        };
-                        let jqf_data::LocalOwnerRef::Node(owner) = fact.owner() else {
-                            continue;
-                        };
-                        if owner == node_id {
-                            self_is_element = true;
-                        } else {
-                            // Record every name fact; the match below keeps
-                            // only this array's own members.
-                            names.push((owner, String::from(text)));
-                        }
-                    }
+        let _ = reader
+            .drain(resources, |fact| {
+                if !accessor_matches_fact(fact.role().as_str(), "name") {
+                    return ControlFlow::Continue(());
                 }
-                jqf_data::ReaderPoll::Pending => {
-                    // The cooperative entry's work credits are exhausted;
-                    // refill so the scan can continue — spinning without
-                    // refilling would loop forever once the per-entry budget
-                    // is gone.
-                    resources
-                        .try_begin_next_cooperative_entry(4096)
-                        .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
+                let jqf_data::FactPayloadView::Text(text) = fact.payload() else {
+                    return ControlFlow::Continue(());
+                };
+                let jqf_data::LocalOwnerRef::Node(owner) = fact.owner() else {
+                    return ControlFlow::Continue(());
+                };
+                if owner == node_id {
+                    self_is_element = true;
+                } else {
+                    // Record every name fact; the match below keeps
+                    // only this array's own members.
+                    names.push((owner, String::from(text)));
                 }
-                jqf_data::ReaderPoll::End(_) => break,
-            }
-        }
+                ControlFlow::<()>::Continue(())
+            })
+            .map_err(|_| internal("attached-fact read over a valid document"))?;
         if !self_is_element {
             return Ok(None);
         }

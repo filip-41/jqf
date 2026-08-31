@@ -152,7 +152,7 @@ pub fn run() -> Result<(), String> {
     assert_route_inventory()?;
     assert_schema_laws()?;
     assert_number_law()?;
-    assert_key_equivalence()?;
+    assert_key_equivalence();
     assert_round_trip()?;
     assert_encode_byte_law()?;
     assert_block_round_trip()?;
@@ -391,8 +391,7 @@ fn assert_number_law() -> Result<(), String> {
 }
 
 /// yaml.key-equivalence@1: duplicate keys rejected through the law.
-#[allow(clippy::unnecessary_wraps)]
-fn assert_key_equivalence() -> Result<(), String> {
+fn assert_key_equivalence() {
     // Exact text duplicates are rejected.
     assert!(whole_value(b"a: 1\na: 2\n").is_err(), "exact duplicate rejected");
     // `1` and `01` are the same integer key under core — both fail the
@@ -410,7 +409,6 @@ fn assert_key_equivalence() -> Result<(), String> {
         whole_value(b"1: a\n1.0: b\n").is_err(),
         "non-string keys are never coerced"
     );
-    Ok(())
 }
 
 /// decode -> encode -> decode round-trip identity over representative shapes.

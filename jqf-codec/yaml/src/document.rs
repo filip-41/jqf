@@ -19,7 +19,8 @@ use jqf_codec_core::{CodecError, CodecFailureKind};
 pub(crate) use jqf_codec_core::{PRUNE_ALL, PruneLookup, PruneRef};
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode, BuilderCoverage,
-    DataError, DocumentSchemaRecipe, FactPayload, LocalOwnerRef, NodeId, PreparedDocumentSchema, ValueKind,
+    DataError, DocumentCapacity, DocumentSchemaRecipe, FactPayload, LocalOwnerRef, NodeId, PreparedDocumentSchema,
+    ValueKind,
 };
 use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, Span};
@@ -88,14 +89,7 @@ fn yaml_schema_recipe() -> Result<DocumentSchemaRecipe<'static>, DataError> {
 }
 
 pub(crate) fn map_data(error: DataError) -> CodecError {
-    // A builder can raise an UNREPRESENTABLE shape on the YAML graph; that arm is the codec's own, everything else is
-    // the shared mapping.
-    match error {
-        DataError::UnrepresentableSemantic | DataError::CyclicSemanticGraph => {
-            CodecError::new(CodecFailureKind::UnsupportedRepresentation)
-        }
-        other => jqf_codec_core::map_data(other, "YAML builder rejected document construction"),
-    }
+    jqf_codec_core::map_data(error, "YAML builder rejected document construction")
 }
 
 pub(crate) fn data_contract() -> CodecError {
@@ -288,8 +282,21 @@ impl<'graph> Walker<'graph> {
         want_tags: bool,
         resources: &mut ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
-        let (builder, schema) = fresh_builder(coverage, resources)?;
-        let equality = KeyEquality::try_new(graph, source, dialect)?;
+        let (mut builder, schema) = fresh_builder(coverage, resources)?;
+        let _ = builder.try_reserve(
+            DocumentCapacity {
+                nodes: graph.len(),
+                occurrences: graph.occurrence_count(),
+                facts: if coverage.attached_facts() {
+                    graph.comments().len().saturating_add(graph.merge_hosts().len())
+                } else {
+                    0
+                },
+                ..DocumentCapacity::default()
+            },
+            resources,
+        );
+        let equality = KeyEquality::new(graph, source, dialect);
         let mut alias_shared = alloc::vec![false; graph.len()];
         for target in graph.alias_targets() {
             alias_shared[target.index()] = true;

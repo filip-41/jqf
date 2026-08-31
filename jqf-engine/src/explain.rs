@@ -69,6 +69,16 @@ pub struct ExplainPlan<'program> {
     /// on the `sort | .[0:k]` spelling family, which the executor answers
     /// with the bounded-heap partial sort instead of a full sort.
     pub topk_rows: usize,
+    /// Whether finish cached a count-table row for this program.
+    pub count_route: bool,
+    /// Whether finish cached an element-boundary row.
+    pub element_route: bool,
+    /// Whether finish cached a keys-publish row.
+    pub keys_route: bool,
+    /// Whether finish cached a type-class row.
+    pub type_route: bool,
+    /// Whether the compiled program reads the ~inputs resident cursor.
+    pub uses_inputs_cursor: bool,
 }
 
 /// Reads the explain plan off a compiled program.
@@ -88,5 +98,10 @@ pub fn plan(compiled: &CompiledProgram) -> ExplainPlan<'_> {
         },
         boundary_consumer: compiled.element_boundary_consumer(),
         topk_rows: compiled.topk_rows(),
+        count_route: compiled.count_demand().is_some(),
+        element_route: compiled.element_demand().is_some(),
+        keys_route: compiled.keys_demand().is_some(),
+        type_route: compiled.type_demand(),
+        uses_inputs_cursor: compiled.uses_inputs_cursor(),
     }
 }

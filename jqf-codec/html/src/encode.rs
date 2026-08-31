@@ -26,8 +26,8 @@ use jqf_codec_core::{
     PreservationReport, PreservationRequest, RecycledSessionState,
 };
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedSemanticNode, BatchLimit, DecimalText, Document, DocumentFact, FactPayload,
-    FactPayloadView, LocalOwnerRef, MaterializeWorkspace, NodeHandle, NodeId, ReaderPoll, Value, ValueKind,
+    AccountedDocumentBuilder, AccountedSemanticNode, DecimalText, Document, DocumentFact, FactPayload, FactPayloadView,
+    LocalOwnerRef, MaterializeWorkspace, NodeHandle, NodeId, ReaderPoll, Value, ValueKind, unbounded_batch_limit,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::Namespace;
@@ -580,11 +580,7 @@ impl ElementFacts {
             }
             return Ok(facts);
         }
-        let limit = BatchLimit::new(usize::MAX).ok_or_else(|| {
-            CodecError::new(CodecFailureKind::InternalContractViolation {
-                contract: "HTML serializer limit",
-            })
-        })?;
+        let limit = unbounded_batch_limit();
         let mut reader = document
             .fact_reader(resources)
             .map_err(|_| CodecError::new(CodecFailureKind::UnsupportedRepresentation))?;

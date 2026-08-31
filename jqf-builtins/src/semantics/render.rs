@@ -196,7 +196,12 @@ pub fn temporal_text(value: &Value) -> Result<Option<String>, EngineRunError> {
         Value::OffsetDateTime(datetime) => datetime.write_text(&mut out),
         _ => return Ok(None),
     };
-    written.map_err(|_| EngineRunError::allocation_failure())?;
+    written.map_err(|error| {
+        EngineRunError::from_temporal(error, || {
+            Value::try_string("temporal value cannot be written")
+                .map_or_else(|_| EngineRunError::allocation_failure(), EngineRunError::Raised)
+        })
+    })?;
     Ok(Some(out))
 }
 
@@ -243,7 +248,12 @@ fn temporal_scalar_text(
     write: impl FnOnce(&mut String) -> Result<(), jqf_data::TemporalError>,
 ) -> Result<String, EngineRunError> {
     let mut out = String::new();
-    write(&mut out).map_err(|_| EngineRunError::allocation_failure())?;
+    write(&mut out).map_err(|error| {
+        EngineRunError::from_temporal(error, || {
+            Value::try_string("temporal value cannot be written")
+                .map_or_else(|_| EngineRunError::allocation_failure(), EngineRunError::Raised)
+        })
+    })?;
     Ok(out)
 }
 
@@ -434,6 +444,7 @@ fn push(buf: &mut String, text: &str) -> Result<(), EngineRunError> {
 #[cfg(test)]
 mod tests {
     use super::{bytes_text, temporal_text, to_json, write_number};
+    use crate::error::EngineRunError;
     use alloc::string::String;
     use jqf_data::{Array, Integer, LocalDate, Number, Value};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -470,6 +481,30 @@ mod tests {
             .try_push(Value::Number(Number::integer(jqf_data::Integer::from_i64(1))))
             .expect("push one");
         assert_eq!(to_json(&Value::Array(array)).expect("json"), "[\"YWJj\",1]");
+    }
+
+    #[test]
+    fn write_text_out_of_range_is_not_allocation_failure() {
+        use jqf_codec_core::CodecFailureKind;
+        use jqf_data::{LocalTimeView, ScalarView};
+
+        let mut buf = String::new();
+        let scalar = ScalarView::LocalTime(LocalTimeView {
+            hour: 24,
+            minute: 0,
+            second: 0,
+            fraction: "",
+        });
+        let error = super::write_extended_json(&mut buf, &scalar, usize::MAX).expect_err("hour 24 is out of range");
+        assert!(
+            !matches!(
+                error,
+                EngineRunError::Codec(ref codec) if codec.kind() == CodecFailureKind::AllocationFailure
+            ),
+            "a write-range failure must not read as the memory ceiling: {error:?}"
+        );
+        assert!(matches!(error, EngineRunError::Raised(_)));
+        assert!(buf.is_empty());
     }
 
     #[test]

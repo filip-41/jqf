@@ -12,12 +12,13 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use jqf_codec_core::markup;
 use jqf_codec_core::{CodecError, CodecFailureKind};
 use jqf_data::{
-    Array, BatchLimit, DataError, DocumentId, LocalOwnerRef, MaterializeWorkspace, NodeId, ObjectBuilder, ObjectKey,
-    ReaderPoll, ScalarView, TopologyBatch, Value, ValueKind,
+    Array, DataError, DataErrorClass, DocumentId, LocalOwnerRef, MaterializeWorkspace, NodeId, ObjectBuilder,
+    ObjectKey, ScalarView, Value, ValueKind,
 };
 use jqf_resource::ResourceContext;
 
@@ -242,43 +243,48 @@ fn read_facts(
     document: &jqf_data::Document<'_>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<Vec<Fact>, EngineRunError> {
-    let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal("facts batch limit"))?;
     let mut reader = match document.fact_reader(resources) {
         Ok(reader) => reader,
-        Err(jqf_data::DataError::CapabilityUnavailable {
-            capability: jqf_data::DocumentCapability::AttachedFacts,
-        }) => return Ok(Vec::new()),
-        Err(_) => return Err(internal("attached-fact reader over a valid document")),
+        Err(error) => match error.class() {
+            DataErrorClass::Absent
+                if matches!(
+                    error,
+                    DataError::CapabilityUnavailable {
+                        capability: jqf_data::DocumentCapability::AttachedFacts,
+                    }
+                ) =>
+            {
+                return Ok(Vec::new());
+            }
+            _ => return Err(map_fact_data(error, "attached-fact reader over a valid document")),
+        },
     };
     let mut facts = Vec::new();
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|_| internal("attached-fact read failed over a valid document"))?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    let LocalOwnerRef::Node(owner) = fact.owner() else {
-                        continue;
-                    };
-                    let payload = materialize_fact_payload(fact.payload())?;
+    let mut error = None;
+    let _ = reader
+        .drain(resources, |fact| {
+            let LocalOwnerRef::Node(owner) = fact.owner() else {
+                return ControlFlow::Continue(());
+            };
+            match materialize_fact_payload(fact.payload()) {
+                Ok(payload) => {
                     facts.push(Fact {
                         owner,
                         role: String::from(fact.role().as_str()),
                         kind: String::from(fact.kind().as_str()),
                         payload,
                     });
+                    ControlFlow::Continue(())
+                }
+                Err(err) => {
+                    error = Some(err);
+                    ControlFlow::Break(())
                 }
             }
-            jqf_data::ReaderPoll::Pending => {
-                // The cooperative entry's work credits are exhausted; refill so the scan can continue — spinning
-                // without refilling would loop forever once the per-entry budget is gone.
-                resources
-                    .try_begin_next_cooperative_entry(4096)
-                    .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
-            }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
+        })
+        .map_err(|error| map_fact_data(error, "attached-fact read failed over a valid document"))?;
+    if let Some(error) = error {
+        return Err(error);
     }
     Ok(facts)
 }
@@ -289,38 +295,31 @@ fn read_text_leaves(
     document: &jqf_data::Document<'_>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<BTreeSet<NodeId>, EngineRunError> {
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| internal("topology batch limit"))?;
     let mut reader = match document.topology_reader(resources) {
         Ok(reader) => reader,
-        Err(DataError::CapabilityUnavailable {
-            capability: jqf_data::DocumentCapability::Topology,
-        }) => return Ok(BTreeSet::new()),
-        Err(_) => return Err(internal("topology reader over a valid document")),
+        Err(error) => match error.class() {
+            DataErrorClass::Absent
+                if matches!(
+                    error,
+                    DataError::CapabilityUnavailable {
+                        capability: jqf_data::DocumentCapability::Topology,
+                    }
+                ) =>
+            {
+                return Ok(BTreeSet::new());
+            }
+            _ => return Err(map_fact_data(error, "topology reader over a valid document")),
+        },
     };
     let mut text_leaves = BTreeSet::new();
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|_| internal("topology read failed over a valid document"))?;
-        match poll {
-            ReaderPoll::Batch(TopologyBatch::Nodes(nodes)) => {
-                for view in &nodes {
-                    let view = view.map_err(internal_data)?;
-                    let kind = view.kind().as_str();
-                    if kind == markup::TEXT_KIND {
-                        text_leaves.insert(view.id());
-                    }
-                }
+    let _ = reader
+        .drain_nodes(resources, |view| {
+            if view.kind().as_str() == markup::TEXT_KIND {
+                text_leaves.insert(view.id());
             }
-            ReaderPoll::Batch(TopologyBatch::Occurrences(_)) => {}
-            ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4096)
-                    .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
-            }
-            ReaderPoll::End(_) => break,
-        }
-    }
+            ControlFlow::<()>::Continue(())
+        })
+        .map_err(internal_data)?;
     Ok(text_leaves)
 }
 
@@ -749,8 +748,16 @@ fn internal(contract: &'static str) -> EngineRunError {
     }))
 }
 
-fn internal_data(_: DataError) -> EngineRunError {
-    internal("facts projection over a valid document failed")
+fn map_fact_data(error: DataError, contract: &'static str) -> EngineRunError {
+    match error.class() {
+        DataErrorClass::Budget => EngineRunError::allocation_failure(),
+        DataErrorClass::Host => EngineRunError::Codec(jqf_codec_core::map_data(error, contract)),
+        _ => internal(contract),
+    }
+}
+
+fn internal_data(error: DataError) -> EngineRunError {
+    map_fact_data(error, "facts projection over a valid document failed")
 }
 
 #[cfg(test)]

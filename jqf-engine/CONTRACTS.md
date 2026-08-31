@@ -13,19 +13,23 @@ evaluators live in `jqf-builtins` and are re-exported here.
 
 ## Compile
 
-- `try_compile_program` is parse, lower, fuse, analyze, and charge. The
-  result is an opaque `CompiledProgram`.
-- `try_compile_program_for_edit` is the same compile under a named
-  entry. Fact assignment lowers in every compile.
-- `try_compile_program_split` is the only entry that binds `$index`. A
-  split expression sees no `--arg` family bindings.
+- `try_compile_program(source, policy, options, resources)` is gate,
+  preludes, parse, bind, lower, transform, analyze, and finish. The result is an
+  opaque `CompiledProgram`.
+- `CompileOptions` carries CLI bindings (`cli_vars`), lane flags
+  (`split_exp` for the `$index` split-expression compile), and a source
+  label (`source_label`, default `"<top-level>"`) for `$__loc__` and bind.
+  A split compile sees no `--arg` family bindings.
+- Stage 5 (`into_valid_syntax`) is the checked boundary: recoverable parse
+  debris is rejected with the first parser diagnostic; an empty diagnostic list
+  is an internal refusal, not a bound program.
 - `--arg` / `--argjson` values lower to a literal at every reference
   site. A program binder always beats a CLI binding. Later CLI entries
   shadow earlier ones.
 - `ParseRejection` and `UnsupportedConstruct` are owned by
   `jqf-builtins` and re-exported here.
-- Charging the compiled arena against the request account is fallible.
-  A refused charge is `EngineCompileError::Resource`.
+- Arena allocation for the compiled program against the request account is
+  fallible. A refused allocation is `EngineCompileError::Resource`.
 
 ## Analysis
 

@@ -56,6 +56,16 @@ pub struct PlanRecord {
     pub boundary_consumer: Option<BoundaryConsumer>,
     /// How many rows of the closed partial-sort table this program matches.
     pub topk_rows: u64,
+    /// Whether finish cached a count-table row.
+    pub count_route: bool,
+    /// Whether finish cached an element-boundary row.
+    pub element_route: bool,
+    /// Whether finish cached a keys-publish row.
+    pub keys_route: bool,
+    /// Whether finish cached a type-class row.
+    pub type_route: bool,
+    /// Whether the compiled program reads the ~inputs resident cursor.
+    pub uses_inputs_cursor: bool,
 }
 
 /// The owned form of a per-element demand class.
@@ -143,6 +153,11 @@ impl PlanRecord {
             rungs: plan.rungs,
             boundary_consumer: plan.boundary_consumer,
             topk_rows: plan.topk_rows as u64,
+            count_route: plan.count_route,
+            element_route: plan.element_route,
+            keys_route: plan.keys_route,
+            type_route: plan.type_route,
+            uses_inputs_cursor: plan.uses_inputs_cursor,
         }
     }
 
@@ -163,6 +178,11 @@ impl PlanRecord {
         w.bool(self.rungs.morsel);
         w.opt_consumer(self.boundary_consumer);
         w.u64(self.topk_rows);
+        w.bool(self.count_route);
+        w.bool(self.element_route);
+        w.bool(self.keys_route);
+        w.bool(self.type_route);
+        w.bool(self.uses_inputs_cursor);
         w.finish()
     }
 
@@ -177,7 +197,7 @@ impl PlanRecord {
             return Err(PlanError::BadMagic);
         }
         let version = r.u32().map_err(|_| PlanError::Truncated)?;
-        if version != VERSION {
+        if version != VERSION && version != 7 {
             return Err(PlanError::BadVersion(version));
         }
         let record = Self {
@@ -194,6 +214,11 @@ impl PlanRecord {
             },
             boundary_consumer: r.opt_consumer()?,
             topk_rows: r.u64()?,
+            count_route: if version == 7 { false } else { r.bool()? },
+            element_route: if version == 7 { false } else { r.bool()? },
+            keys_route: if version == 7 { false } else { r.bool()? },
+            type_route: if version == 7 { false } else { r.bool()? },
+            uses_inputs_cursor: if version == 7 { false } else { r.bool()? },
         };
         if !r.finished() {
             return Err(PlanError::Overrun);
@@ -231,10 +256,10 @@ impl StepRecord {
 
 /// The format magic: the four bytes `JQFP`.
 const MAGIC: &[u8; 4] = b"JQFP";
-/// The current format version. Bump when the field layout changes; the decoder
-/// rejects any other version. v7 adds the closed partial-sort table's row
-/// count (`topk_rows`).
-const VERSION: u32 = 7;
+/// The current format version. Bump when the field layout changes. v8 adds
+/// finish-cached route flags; v7 added `topk_rows`. The decoder accepts v7
+/// and defaults the five v8 route flags to false.
+const VERSION: u32 = 8;
 
 /// The length-prefix byte width of the plan format.
 const LEN_BYTES: usize = 4;
@@ -519,6 +544,11 @@ mod tests {
             },
             boundary_consumer: Some(BoundaryConsumer::Residual),
             topk_rows: 3,
+            count_route: true,
+            element_route: false,
+            keys_route: false,
+            type_route: false,
+            uses_inputs_cursor: false,
         }
     }
 
@@ -546,6 +576,11 @@ mod tests {
             },
             boundary_consumer: None,
             topk_rows: 0,
+            count_route: false,
+            element_route: false,
+            keys_route: false,
+            type_route: false,
+            uses_inputs_cursor: false,
         };
         let bytes = record.serialize();
         let decoded = PlanRecord::deserialize(&bytes).expect("decode should succeed");
@@ -593,6 +628,23 @@ mod tests {
     fn rejects_bad_magic() {
         let error = PlanRecord::deserialize(b"NOPE").expect_err("bad magic must fail");
         assert_eq!(error, PlanError::BadMagic);
+    }
+
+    #[test]
+    fn v7_payload_decodes_with_route_flags_false() {
+        let mut bytes = populated().serialize();
+        assert!(bytes.len() >= 5);
+        bytes.truncate(bytes.len() - 5);
+        bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
+        let decoded = PlanRecord::deserialize(&bytes).expect("v7 decodes");
+        assert!(!decoded.count_route);
+        assert!(!decoded.element_route);
+        assert!(!decoded.keys_route);
+        assert!(!decoded.type_route);
+        assert!(!decoded.uses_inputs_cursor);
+        assert_eq!(decoded.topk_rows, populated().topk_rows);
+        assert_eq!(decoded.identity, populated().identity);
+        assert_eq!(decoded.modifies, populated().modifies);
     }
 
     #[test]

@@ -67,7 +67,7 @@ use crate::registry::record::{
 use crate::semantics::depth::{self, Guarded};
 use crate::semantics::index_owned;
 use crate::semantics::owned_kind;
-use crate::semantics::path::{raise, try_clone};
+use crate::semantics::path::raise;
 use crate::semantics::{contain, text};
 
 /// The argument-taking text family records.
@@ -325,7 +325,7 @@ fn last_slice_fallback(value: &Value, resources: &ResourceContext<'_>) -> Result
         Value::Array(array) => {
             let mut out = Array::try_new().map_err(|_| EngineRunError::allocation_failure())?;
             if let Some(last) = array.get(array.len().wrapping_sub(1)) {
-                out.try_push(try_clone(last))
+                out.try_push(last.clone())
                     .map_err(|_| EngineRunError::allocation_failure())?;
             }
             Ok(Value::Array(out))
@@ -392,7 +392,7 @@ fn cut(input: &Value, argument: &Value, resources: &ResourceContext<'_>) -> Resu
 fn one_element(element: &Value, _resources: &ResourceContext<'_>) -> Result<Array, EngineRunError> {
     let mut needle = Array::try_new().map_err(|_| EngineRunError::allocation_failure())?;
     needle
-        .try_push(try_clone(element))
+        .try_push(element.clone())
         .map_err(|_| EngineRunError::allocation_failure())?;
     Ok(needle)
 }

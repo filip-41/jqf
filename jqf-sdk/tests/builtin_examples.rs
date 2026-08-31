@@ -35,8 +35,8 @@ use core::ops::Range;
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
 use jqf_engine::{
-    BuiltinExample, BuiltinExecution, BuiltinOverloadRecord, CodecRequirementPolicy, ParameterKind, builtin_overloads,
-    try_compile_program,
+    BuiltinExample, BuiltinExecution, BuiltinOverloadRecord, CodecRequirementPolicy, CompileOptions, ParameterKind,
+    builtin_overloads, try_compile_program,
 };
 use jqf_resource::{Control, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, PipelinePolicy, Request};
@@ -205,7 +205,7 @@ fn run_program(program: &str, input: &str) -> Outcome {
     let mut resources = resources(&control, &stderr);
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
 
-    let Ok(compiled) = try_compile_program(program, policy, &resources) else {
+    let Ok(compiled) = try_compile_program(program, policy, CompileOptions::new(), &resources) else {
         return Outcome::Inconclusive;
     };
     let Ok(requirement) = compiled.try_requirement(&resources) else {

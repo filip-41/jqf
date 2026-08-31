@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_codec_json::ndjson::{NdjsonDecodeOptions, NdjsonEncodeOptions, NdjsonProfile, NdjsonTerminator};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelinePolicy, Report, Request,
@@ -77,7 +77,7 @@ fn run_ndjson(input: &[u8], program: &str) -> Result<Vec<u8>, String> {
     let output_dialect = DialectId::try_new(jqf_codec_json::ndjson::STRICT_DIALECT_ID).expect("dialect");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, &resources).expect("compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), &resources).expect("compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),

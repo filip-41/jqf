@@ -54,15 +54,22 @@
   outline-offset: 2px;
 }
 html {
-  color-scheme: light only;
+  /* `only` must come first. The invalid `light only` was ignored, so Safari
+   * guessed a scheme from page contents — a console block then retinted the
+   * cream paper, and a prose page did not. */
+  color-scheme: only light;
   background: var(--paper);
-  /* the gutter stays put across short and long pages — no horizontal shift
-   * when the scrollbar comes and goes */
+  /* Reserve the vertical gutter on every page so short docs (Serve mode) and
+   * long ones (Streaming) paint the same width — without this, macOS toggles
+   * the overlay scrollbar and the whole frame, rail included, shifts ~15px. */
+  overflow-y: scroll;
   scrollbar-gutter: stable;
-  scroll-behavior: smooth;
-}
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
+  /* Instant, not `smooth`: smooth scrolling promotes the root to a GPU layer
+   * for the animation, which drops subpixel AA. The rail then paints a cooler
+   * paper and a heavier face until the layer tears down. */
+  scroll-behavior: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 body {
   margin: 0;
@@ -75,6 +82,7 @@ body {
   color: var(--ink-800);
   background: var(--paper);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 code, pre, kbd { font-family: var(--font-mono); }
 :not(pre) > code {
@@ -123,8 +131,11 @@ kbd {
   align-items: center;
   gap: 6px;
   font-size: 14px;
-  color: var(--ink-500);
   text-decoration: none;
+}
+.header-links a:link,
+.header-links a:visited {
+  color: var(--ink-500);
 }
 .header-links a:hover { color: var(--ink-900); }
 
@@ -143,7 +154,16 @@ kbd {
   position: sticky;
   top: 76px;
   max-height: calc(100vh - 96px);
-  overflow: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  /* Opaque paper. A transparent sticky rail composites over whatever the
+   * content column just painted, so a page of dark console blocks cools the
+   * cream and a prose page does not. */
+  background: var(--paper);
+  color: var(--ink-700);
+  color-scheme: only light;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .nav-section { margin-bottom: 22px; }
 .eyebrow {
@@ -166,16 +186,38 @@ kbd {
   border-left: 2px solid transparent;
   border-radius: 0 3px 3px 0;
   text-decoration: none;
-  color: var(--ink-700);
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.45;
+  font-weight: 400;
+  font-synthesis: none;
 }
-.nav-tree a:hover { background: var(--ink-050); color: var(--ink-900); }
-.nav-tree a.active {
+/* `:visited` is the same specificity as `.nav-tree a`. Without an explicit
+ * visited color, clicking a hash link (CSV → CBOR) lets the UA purple/darken
+ * every title you've already opened — a slight font-color shift on navigate. */
+.nav-tree a:link,
+.nav-tree a:visited,
+.nav-tree a:active {
+  color: var(--ink-700);
+}
+.nav-tree a:hover {
+  background: var(--ink-050);
+  color: var(--ink-900);
+}
+.nav-tree a.active,
+.nav-tree a.active:visited,
+.nav-tree a.active:hover {
   background: var(--ink-100);
   border-left-color: var(--rust-600);
-  color: var(--ink-900);
-  font-weight: 500;
+  color: var(--ink-700);
+}
+.nav-tree.nav-nested {
+  margin: 2px 0 6px 10px;
+  padding-left: 8px;
+  border-left: 1px solid var(--ink-200);
+}
+.nav-tree a.active-parent,
+.nav-tree a.active-parent:visited {
+  color: var(--ink-700);
 }
 .menu-toggle {
   display: none;
@@ -281,7 +323,9 @@ kbd {
 .content p { margin: 0 0 1.1em; }
 .content ul, .content ol { margin: 0 0 1.1em; padding-left: 1.3em; }
 .content li { margin: 0.25em 0; }
-.content a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.content a { text-decoration: underline; text-underline-offset: 2px; }
+.content a:link,
+.content a:visited { color: var(--link); }
 .content a:hover { color: var(--rust-600); }
 .content hr { border: 0; border-top: 1px solid var(--ink-200); margin: 32px 0; }
 .content table {
@@ -346,5 +390,7 @@ kbd {
 }
 .site-footer .mark { display: inline-flex; line-height: 0; }
 .footer-links { display: flex; gap: 20px; }
-.footer-links a { color: var(--ink-500); text-decoration: none; }
+.footer-links a { text-decoration: none; }
+.footer-links a:link,
+.footer-links a:visited { color: var(--ink-500); }
 .footer-links a:hover { color: var(--ink-900); }

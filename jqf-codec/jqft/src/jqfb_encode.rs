@@ -790,7 +790,7 @@ fn snapshot_facts(
         }) => return Ok(out),
         Err(_) => return Err(data_contract()),
     };
-    let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(data_contract)?;
+    let limit = jqf_data::unbounded_batch_limit();
     loop {
         let poll = reader.poll_batch(limit, resources).map_err(|_| data_contract())?;
         match poll {

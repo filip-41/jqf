@@ -1,5 +1,6 @@
 //! Object keys: short text inline, longer text shared.
 
+use crate::Value;
 use crate::value::ValueAllocationError;
 use crate::value::shared::Shared;
 
@@ -16,7 +17,7 @@ const INLINE_KEY_CAP: usize = 22;
 /// allocation.
 ///
 /// Do not turn a key into a [`Value::String`](crate::Value::String) by sharing its allocation — that string could
-/// outlive the object. Copy it with [`Value::try_string`](crate::Value::try_string) instead.
+/// outlive the object. Copy it with [`Self::try_to_value_string`].
 ///
 /// The test-only `shares_text_with` is identity, not equality: two inline keys with the same text return `false`.
 #[derive(Debug)]
@@ -59,6 +60,13 @@ impl ObjectKey {
             }
             ObjectKeyRepr::Boxed(shared) => shared.as_str(),
         }
+    }
+
+    /// Charged copy of this key as a string value.
+    ///
+    /// Never shares the key allocation — that string could outlive the object.
+    pub fn try_to_value_string(&self) -> Result<Value, ValueAllocationError> {
+        Value::try_string(self.as_str())
     }
 
     /// Another handle on the same key. Inline keys copy; long keys share.
@@ -161,5 +169,27 @@ mod tests {
         let boxed = ObjectKey::try_from_str(&past_cap).expect("boxed key");
         assert!(!boxed.is_inline());
         assert_eq!(boxed.as_str(), past_cap);
+    }
+
+    #[test]
+    fn try_to_value_string_copies_and_does_not_share_a_boxed_key() {
+        use crate::Value;
+
+        let inline = ObjectKey::try_from_str("short").expect("inline key");
+        let Value::String(text) = inline.try_to_value_string().expect("inline copy") else {
+            panic!("expected a string value");
+        };
+        assert_eq!(text.as_str(), "short");
+
+        let boxed = ObjectKey::try_from_str(&"k".repeat(INLINE_KEY_CAP + 1)).expect("boxed key");
+        let value = boxed.try_to_value_string().expect("boxed copy");
+        let Value::String(text) = &value else {
+            panic!("expected a string value");
+        };
+        assert_eq!(text.as_str(), boxed.as_str());
+        let ObjectKeyRepr::Boxed(key_text) = &boxed.0 else {
+            panic!("expected a boxed key");
+        };
+        assert!(!key_text.shares_allocation_with(text));
     }
 }

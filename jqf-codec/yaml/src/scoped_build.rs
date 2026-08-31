@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use jqf_codec_core::{CodecError, CodecFailureKind};
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode, BuilderCoverage,
-    DocumentSchemaRecipe, LocalOwnerRef, NodeId, ValueKind,
+    DocumentCapacity, DocumentSchemaRecipe, LocalOwnerRef, NodeId, ValueKind,
 };
 use jqf_resource::ResourceContext;
 use jqf_source::ResolvedSource;
@@ -45,6 +45,19 @@ pub(crate) fn build_subtree_document(
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let mut builder = fresh_subtree_builder(coverage, resources)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: graph.len(),
+            occurrences: graph.occurrence_count(),
+            facts: if coverage.attached_facts() {
+                graph.comments().len().saturating_add(graph.merge_hosts().len())
+            } else {
+                0
+            },
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
     let mut memo: Vec<Option<NodeId>> = Vec::new();
     let mut in_progress: Vec<GraphNode> = Vec::new();
     let alias_shared = alias_shared_marks(graph, prune.is_some());
@@ -208,7 +221,7 @@ fn dummy_scalar(category: ScalarCategory) -> AccountedSemanticNode<'static> {
 
 fn fresh_subtree_builder(
     coverage: BuilderCoverage,
-    _resources: &ResourceContext<'_>,
+    resources: &ResourceContext<'_>,
 ) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = DocumentSchemaRecipe::try_new(
         "yaml",
@@ -219,7 +232,16 @@ fn fresh_subtree_builder(
         &[],
     )
     .map_err(map_data)?;
-    AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), coverage).map_err(map_data)
+    let mut builder = AccountedDocumentBuilder::try_new_with_coverage(recipe.format(), recipe.dialect(), coverage)
+        .map_err(map_data)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: 1,
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
+    Ok(builder)
 }
 
 fn alias_shared_marks(graph: &YamlGraph, pruning: bool) -> Vec<bool> {
@@ -539,6 +561,14 @@ pub(crate) fn build_range_document(
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let mut builder = fresh_subtree_builder(coverage, resources)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: graph.len().saturating_add(1),
+            occurrences: elements.len().saturating_add(graph.occurrence_count()),
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
     let root = builder
         .add_node(
             SEQ_KIND,

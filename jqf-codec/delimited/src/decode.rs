@@ -36,8 +36,8 @@ use jqf_codec_core::{
 };
 use jqf_data::{
     AccountedDocumentBuilder, AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage,
-    DocumentCapabilityFamily, DocumentSchemaPrototype, DocumentSchemaRecipe, NodeId, PreparedDocumentSchema,
-    PreparedNodeKind, PreparedOccurrenceRole, PreparedSemanticNode,
+    DocumentCapabilityFamily, DocumentCapacity, DocumentSchemaPrototype, DocumentSchemaRecipe, NodeId,
+    PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole, PreparedSemanticNode,
 };
 use jqf_resource::ResourceContext;
 use jqf_source::ResolvedSource;
@@ -211,6 +211,15 @@ pub(crate) fn build_document(
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let (mut builder, schema, handles) = prepare_document(prototype, resources)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: fields.len().saturating_add(1),
+            occurrences: fields.len(),
+            stored_text_bytes: fields.iter().map(String::len).sum(),
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
     let Some(names) = header else {
         let root = builder
             .add_prepared_node(

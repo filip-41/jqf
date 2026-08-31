@@ -68,7 +68,6 @@ use crate::registry::record::{
 };
 use crate::semantics::binary::BinaryKind;
 use crate::semantics::order;
-use crate::semantics::path;
 use crate::semantics::path::{get_component, raise};
 
 /// The reshaping family records.
@@ -217,7 +216,7 @@ fn add_children<'value>(
             let width = children.clone().filter_map(as_array).map(Array::len).sum();
             let mut out = Array::try_with_capacity(width).map_err(|_| EngineRunError::allocation_failure())?;
             for element in children.filter_map(as_array).flatten() {
-                out.try_push(path::try_clone(element))
+                out.try_push(element.clone())
                     .map_err(|_| EngineRunError::allocation_failure())?;
             }
             Ok(Value::Array(out))
@@ -235,7 +234,7 @@ fn add_children<'value>(
                 ObjectBuilder::try_with_capacity(width).map_err(|_| EngineRunError::allocation_failure())?;
             for entry in children.filter_map(as_object).flatten() {
                 builder
-                    .try_insert_last(entry.clone_key(), path::try_clone(entry.value()))
+                    .try_insert_last(entry.clone_key(), entry.value().clone())
                     .map_err(|_| EngineRunError::allocation_failure())?;
             }
             // `try_finish`, not `try_finish_unique`: two children may carry the same key, and this is where `+`'s

@@ -10,10 +10,10 @@ requirements. It does not parse documents, encode output, or open files.
 
 What it has:
 
-- `try_compile_program` / `try_compile_program_with_args` — parse, lower,
-  analyze, and charge one program
-- `try_compile_program_for_edit` — the same compile, named for the edit lane
-- `try_compile_program_split` — the `$index`-binding split expression
+- `try_compile_program` — gate, preludes, parse, bind, lower, transform,
+  analyze, and finish
+- `CompileOptions` — CLI bindings (`cli_vars`), compile-lane flags
+  (`split_exp`), and source label (`source_label`, default `"<top-level>"`)
 - `CompiledProgram` — the opaque arena, plus `try_requirement` and `try_run`
 - `CodecRequirementPolicy` — validation and diagnostic axes the lowering keeps
 - `EngineRun` / `EngineRunStream` / `RunPoll` — one interpreted result stream
@@ -23,13 +23,14 @@ What it has:
 
 ## Compile
 
-`try_compile_program` is the public compile entry. It refuses source the
+`try_compile_program` is the public compile entry: gate, preludes, parse,
+bind, lower, transform, analyze, and finish. It refuses source the
 syntax crate refuses, constructs outside the landed subset, and a
 ledger that cannot charge the arena.
 
 ```rust
 use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
 static CONTROL: ContinueControl = ContinueControl;
@@ -42,7 +43,7 @@ let resources = ResourceContext::new(
 .unwrap();
 
 let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-let compiled = try_compile_program(". + 1", policy, &resources).unwrap();
+let compiled = try_compile_program(". + 1", policy, CompileOptions::new(), &resources).unwrap();
 assert!(!compiled.uses_inputs_cursor());
 let _ = compiled.try_requirement(&resources).unwrap();
 ```

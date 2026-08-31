@@ -14,7 +14,7 @@ fn json_dialect() -> &'static DialectId {
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_codec_json::{JsonEncodeOptions, JsonIndent};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelinePolicy, Report, Request,
@@ -60,7 +60,7 @@ fn render(input: &[u8], indent: Option<JsonIndent>) -> String {
     )
     .expect("resources start");
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(".", policy, CompileOptions::new(), &resources).expect("program compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),

@@ -28,7 +28,7 @@ use jqf_codec_core::{
 };
 use jqf_data::{
     AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError,
-    DiagnosticCoverage, DocumentCapabilityFamily, DocumentFinalizationPoll, TagId, ValueKind,
+    DiagnosticCoverage, DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, TagId, ValueKind,
 };
 use jqf_resource::{ResourceContext, ResourceError, WorkAdmission};
 use jqf_source::ResolvedSource;
@@ -666,11 +666,18 @@ fn locate(image: &JqfbImage, chunks: &CoreChunks<'_>, steps: &[Step]) -> Result<
 /// observations (missing / kind mismatch) carry a null stand-in and no facts; a located VALUE goes through
 /// [`JqfbDecodeState::try_new_scoped`], which validates FACT records on the subtree and attaches them when coverage
 /// demanded facts.
-fn fresh_builder(_resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
+fn fresh_builder(resources: &ResourceContext<'_>) -> Result<AccountedDocumentBuilder<'static>, CodecError> {
     let recipe = provider::jqfb_recipe().map_err(map_data)?;
     let (mut builder, _schema) =
         AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, BuilderCoverage::minimal_semantic())
             .map_err(map_data)?;
+    let _ = builder.try_reserve(
+        DocumentCapacity {
+            nodes: 1,
+            ..DocumentCapacity::default()
+        },
+        resources,
+    );
     builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
         DocumentCapabilityFamily::Attributes,
     ));

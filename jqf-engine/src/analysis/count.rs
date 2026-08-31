@@ -522,7 +522,8 @@ fn is_keys_then_length(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
     is_keys_count_call(nodes, *upstream) && is_length_call(nodes, *body)
 }
 
-/// The recognized TYPE demand of one compiled program: a kind-only read.
+/// The static path a type-class program names, or `None` when it is not a row.
+/// Empty is the document root.
 ///
 /// Rows: a bare-root `type` call (empty path) and `PATH | type` where PATH is a
 /// static Current Key/Index stage with no trailing slice. A trailing slice
@@ -531,12 +532,6 @@ fn is_keys_then_length(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
 /// stay off the table — the floor serves them. The path rides the requirement
 /// so a codec can skip building the named node's payload; XML's
 /// measure-skeleton still only opens on the empty path.
-pub(crate) fn type_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> bool {
-    type_demand_path(nodes, root).is_some()
-}
-
-/// The static path a type-class program names, or `None` when it is not a row.
-/// Empty is the document root.
 pub(crate) fn type_demand_path(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Vec<CountStep>> {
     path_then_call(nodes, root, is_type_call)
 }
@@ -555,7 +550,20 @@ fn is_type_call(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
 /// (`PATH | keys | length`) stay on the count table — they match first at
 /// requirement lowering. `keys?` declines (a Try root).
 pub(crate) fn keys_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<Vec<CountStep>> {
+    if !keys_builtin_present(nodes) {
+        return None;
+    }
     path_then_call(nodes, root, is_keys_sorted_call)
+}
+
+pub(crate) fn keys_builtin_present(nodes: &[ProgramNode]) -> bool {
+    nodes.iter().any(|node| {
+        matches!(
+            node,
+            ProgramNode::Call { overload, args, .. }
+                if args.is_empty() && overload.get() == jqf_builtins::registry::builtins::id::KEYS
+        )
+    })
 }
 
 fn path_then_call(
@@ -644,7 +652,7 @@ pub(crate) fn count_prune_tree(demand: &CountDemand) -> Option<PruneNode> {
 mod tests {
     use super::*;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use alloc::vec;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -664,7 +672,7 @@ mod tests {
     fn compiled(source: &str) -> crate::compile::CompiledProgram {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        try_compile_program(source, policy, &resources).expect("compiles")
+        try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles")
     }
 
     fn demand(source: &str) -> Option<CountDemand> {
@@ -945,7 +953,7 @@ mod tests {
 #[cfg(test)]
 mod requirement_tests {
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
@@ -961,7 +969,7 @@ mod requirement_tests {
         )
         .expect("resources");
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program("length", policy, &resources).expect("compiles");
+        let program = try_compile_program("length", policy, CompileOptions::new(), &resources).expect("compiles");
         let requirement = program.try_requirement(&resources).expect("lowers");
         assert!(requirement.count().is_some(), "length must carry the count hint");
         assert!(requirement.footprint().is_whole());
@@ -972,7 +980,7 @@ mod requirement_tests {
 #[cfg(test)]
 mod prune_tests {
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
@@ -993,7 +1001,7 @@ mod prune_tests {
             ("[.catalog[] | .name] | length", true),
             ("length", true),
         ] {
-            let program = try_compile_program(source, policy, &resources).expect("compiles");
+            let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
             let requirement = program.try_requirement(&resources).expect("lowers");
             assert!(requirement.count().is_some(), "{source} must carry the count hint");
             assert_eq!(requirement.prune().is_some(), should_prune, "{source} prune presence");

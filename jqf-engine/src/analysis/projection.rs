@@ -847,7 +847,7 @@ pub fn is_static_literal_key(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
 mod tests {
     use super::{INLINE_FIELDS, MAX_PROJECTED_FIELDS, ProjectedFields, ProjectionClass};
     use crate::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use alloc::format;
     use alloc::string::String;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
@@ -871,7 +871,8 @@ mod tests {
     fn class_of(source: &str) -> String {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("probe program compiles");
+        let program =
+            try_compile_program(source, policy, CompileOptions::new(), &resources).expect("probe program compiles");
         match program.projection_class() {
             ProjectionClass::Structure => String::from("Structure"),
             ProjectionClass::Subtree => String::from("Subtree"),

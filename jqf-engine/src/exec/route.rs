@@ -819,7 +819,7 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
     /// 4,032,010 owned nodes built for 864,004 logical ones, because every
     /// ancestor re-materializes its entire subtree. The promoted frame turns the
     /// 863,996 descendant materializations into `Arc` bumps — the parent's owned
-    /// form already contains every child, and `clone_owned` now shares it.
+    /// form already contains every child, and `Value::clone` shares it.
     ///
     /// Nothing is built speculatively. The owned container is not materialized
     /// FOR the frame; it is the value the barrier had to build anyway, retained

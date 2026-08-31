@@ -1,9 +1,9 @@
 //! Feed residency, linear push, and pause-not-kill — plus the finalize law: `finish` delivers the held tail as the
 //! stream's FINAL record under the profile's own tail law instead of silently dropping it.
 
-use jqf_codec_core::DiagnosticPolicy;
+use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 use jqf_codec_json::ndjson::NdjsonProfile;
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{
     ContinueControl, RequestAccount, ResourceContext, ResourceError, ResourceLimit, ResourceLimits, WorkMeter,
     diag::codes,
@@ -103,7 +103,8 @@ fn identity() -> jqf_engine::CompiledProgram {
     let resources = poll_resources();
     try_compile_program(
         ".",
-        CodecRequirementPolicy::new(jqf_codec_core::ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("program compiles")

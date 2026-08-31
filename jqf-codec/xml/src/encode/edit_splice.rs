@@ -10,8 +10,8 @@ use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 
-use jqf_codec_core::{CodecError, CodecFailureKind, EditInsertion, EditRemoval, EditRemoveMembers};
-use jqf_data::{BatchLimit, Document, LocalOwnerRef, NodeId, ReaderPoll, TopologyBatch, Value, ValueKind};
+use jqf_codec_core::{CodecError, EditInsertion, EditRemoval, EditRemoveMembers};
+use jqf_data::{Document, LocalOwnerRef, NodeId, ReaderPoll, TopologyBatch, Value, ValueKind, unbounded_batch_limit};
 use jqf_resource::ResourceContext;
 
 use crate::document::COMMENT_KIND;
@@ -313,7 +313,7 @@ fn element_has_attribute(
         return Ok(false);
     }
     let owner = LocalOwnerRef::Node(element);
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+    let limit = unbounded_batch_limit();
     let mut reader = match document.fact_reader(resources) {
         Ok(reader) => reader,
         Err(jqf_data::DataError::CapabilityUnavailable {
@@ -466,9 +466,7 @@ fn comment_children(
     element: NodeId,
     resources: &mut ResourceContext<'_>,
 ) -> Result<CommentChildren, CodecError> {
-    let limit = BatchLimit::new(usize::MAX)
-        .ok_or(jqf_data::DataError::ArithmeticOverflow)
-        .map_err(crate::document::map_data)?;
+    let limit = unbounded_batch_limit();
     let Ok(mut reader) = document.topology_reader(resources) else {
         return Err(jqf_codec_core::data_contract(
             "XML comment-write topology read over a valid document",

@@ -137,7 +137,7 @@ fn collect_comment_facts(
     resources: &mut ResourceContext<'_>,
 ) -> alloc::vec::Vec<(jqf_data::NodeId, alloc::vec::Vec<alloc::string::String>)> {
     let document = product.document();
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let limit = jqf_data::unbounded_batch_limit();
     let mut reader = document.fact_reader(resources).expect("reader");
     let mut out = alloc::vec::Vec::new();
     loop {

@@ -26,8 +26,9 @@ contract, the detail under
 
 ## Filter pushdown
 
-The [pushdown split](engine-ir.md) names the maximal static prefix of the
-program before its first `.[]`. That prefix becomes the codec's
+The [pushdown split](engine-ir.md#the-pushdown-split) names the maximal
+static prefix of the program before its first `.[]`. That prefix becomes the
+codec's
 `AccessRequirement` and the residual starts from the iteration. Two footprints
 exist:
 
@@ -89,6 +90,7 @@ plan engaged. `--explain` prints both:
 ```console
 $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name' 2>&1 | grep -E 'demand|pushdown|ladder|route'
 jqf: explain: demand: class=Fields(name) boundary=residual
+jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: route: stream

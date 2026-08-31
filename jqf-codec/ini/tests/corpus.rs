@@ -974,7 +974,7 @@ fn comment_fact_texts(document: &jqf_data::Document<'_>, node: jqf_data::NodeId)
     let mut reader = document.fact_reader(&mut resources()).map_err(|e| format!("{e:?}"))?;
     loop {
         let poll = reader
-            .poll_batch(jqf_data::BatchLimit::new(usize::MAX).expect("limit"), &mut resources())
+            .poll_batch(jqf_data::unbounded_batch_limit(), &mut resources())
             .map_err(|e| format!("{e:?}"))?;
         match poll {
             jqf_data::ReaderPoll::Batch(batch) => {

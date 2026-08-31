@@ -719,23 +719,28 @@ pub fn apply_unary(law: TimeLaw, subject: &Value, resources: &ResourceContext<'_
                 Value::String(s) => jqf_data::parse_rfc3339(s),
                 Value::LocalDateTime(dt) => {
                     let mut out = alloc::string::String::new();
-                    dt.write_text(&mut out)
-                        .map_err(|_| EngineRunError::allocation_failure())?;
+                    dt.write_text(&mut out).map_err(|error| {
+                        EngineRunError::from_temporal(error, || {
+                            raise("date cannot be formatted as RFC 3339", resources)
+                        })
+                    })?;
                     jqf_data::parse_rfc3339(&out)
                 }
                 Value::OffsetDateTime(odt) => {
                     let mut out = alloc::string::String::new();
-                    odt.write_text(&mut out)
-                        .map_err(|_| EngineRunError::allocation_failure())?;
+                    odt.write_text(&mut out).map_err(|error| {
+                        EngineRunError::from_temporal(error, || {
+                            raise("date cannot be formatted as RFC 3339", resources)
+                        })
+                    })?;
                     jqf_data::parse_rfc3339(&out)
                 }
                 _ => {
                     return Err(raise("fromrfc3339 requires a string or datetime input", resources));
                 }
             }
-            .map_err(|error| match error {
-                jqf_data::TemporalError::Allocation => EngineRunError::allocation_failure(),
-                _ => raise("date does not match RFC 3339 format", resources),
+            .map_err(|error| {
+                EngineRunError::from_temporal(error, || raise("date does not match RFC 3339 format", resources))
             })?;
             let parsed_value = Value::OffsetDateTime(parsed);
             let (secs, fraction) =
@@ -744,9 +749,8 @@ pub fn apply_unary(law: TimeLaw, subject: &Value, resources: &ResourceContext<'_
         }
         TimeLaw::Torfc3339 => {
             let (whole, fraction_str) = seconds_and_fraction_from_subject(subject, resources)?;
-            let text = jqf_data::write_epoch_rfc3339(whole, &fraction_str).map_err(|error| match error {
-                jqf_data::TemporalError::Allocation => EngineRunError::allocation_failure(),
-                _ => raise("date cannot be formatted as RFC 3339", resources),
+            let text = jqf_data::write_epoch_rfc3339(whole, &fraction_str).map_err(|error| {
+                EngineRunError::from_temporal(error, || raise("date cannot be formatted as RFC 3339", resources))
             })?;
             Value::try_string(&text).map_err(|_| EngineRunError::allocation_failure())
         }
@@ -759,21 +763,24 @@ fn todate_law(subject: &Value, resources: &ResourceContext<'_>) -> Result<Value,
     match subject.untagged() {
         Value::LocalDateTime(dt) => {
             let mut out = alloc::string::String::new();
-            dt.write_text(&mut out)
-                .map_err(|_| EngineRunError::allocation_failure())?;
+            dt.write_text(&mut out).map_err(|error| {
+                EngineRunError::from_temporal(error, || raise("date cannot be formatted as RFC 3339", resources))
+            })?;
             out.push('Z');
             Ok(Value::try_string(&out).map_err(|_| EngineRunError::allocation_failure())?)
         }
         Value::OffsetDateTime(odt) => {
             let mut out = alloc::string::String::new();
-            odt.write_text(&mut out)
-                .map_err(|_| EngineRunError::allocation_failure())?;
+            odt.write_text(&mut out).map_err(|error| {
+                EngineRunError::from_temporal(error, || raise("date cannot be formatted as RFC 3339", resources))
+            })?;
             Ok(Value::try_string(&out).map_err(|_| EngineRunError::allocation_failure())?)
         }
         Value::LocalDate(date) => {
             let mut out = alloc::string::String::new();
-            date.write_text(&mut out)
-                .map_err(|_| EngineRunError::allocation_failure())?;
+            date.write_text(&mut out).map_err(|error| {
+                EngineRunError::from_temporal(error, || raise("date cannot be formatted as RFC 3339", resources))
+            })?;
             Ok(Value::try_string(&out).map_err(|_| EngineRunError::allocation_failure())?)
         }
         _ => {

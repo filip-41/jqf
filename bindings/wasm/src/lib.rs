@@ -41,7 +41,7 @@ use jqf_codec_core::{
 };
 use jqf_codec_json::{JsonEncodeOptions, JsonIndent};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program_with_args};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, EnvironmentSnapshot, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, Diagnostics, FacadeFraming, Input, ItemSink, PipelineFailure, PipelinePolicy, Request, record_json,
@@ -417,9 +417,7 @@ fn parse_indent(indent: i32) -> Result<JsonIndent, String> {
     match indent {
         -1 => Ok(JsonIndent::Tabs),
         0 => Ok(JsonIndent::Compact),
-        // The match arm bounds it 1..=7, so the cast cannot truncate or lose the sign; i32 is what crosses the ABI.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        width @ 1..=7 => Ok(JsonIndent::Spaces(width as u8)),
+        width @ 1..=7 => Ok(JsonIndent::Spaces(u8::try_from(width).expect("1..=7 fits u8"))),
         _ => Err(String::from("--indent takes a number between -1 and 7")),
     }
 }
@@ -662,7 +660,16 @@ fn run(
 
         // Compile. $ARGS binds empty, like the FFI's plain jqf_compile.
         let args: Vec<(String, jqf_data::Value)> = Vec::new();
-        let compiled = match try_compile_program_with_args(program, POLICY, &args, &session.resources) {
+        let compiled = match try_compile_program(
+            program,
+            POLICY,
+            CompileOptions {
+                cli_vars: &args,
+                split_exp: false,
+                ..Default::default()
+            },
+            &session.resources,
+        ) {
             Ok(compiled) => compiled,
             Err(error) => {
                 let message = format!("{error}");

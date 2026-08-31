@@ -36,7 +36,7 @@ fn json_dialect() -> &'static DialectId {
 use core::sync::atomic::{AtomicU64, Ordering};
 use jqf_codec_core::{CodecFailureKind, DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{BuiltinExecution, CodecRequirementPolicy, builtin_overloads, try_compile_program};
+use jqf_engine::{BuiltinExecution, CodecRequirementPolicy, CompileOptions, builtin_overloads, try_compile_program};
 
 use jqf_resource::{Control, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
@@ -190,7 +190,7 @@ fn contract_violation(program_text: &str) -> Result<Option<&'static str>, ()> {
     let mut resources = resources(&control);
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
 
-    let Ok(program) = try_compile_program(program_text, policy, &resources) else {
+    let Ok(program) = try_compile_program(program_text, policy, CompileOptions::new(), &resources) else {
         return Err(());
     };
     let Ok(requirement) = program.try_requirement(&resources) else {

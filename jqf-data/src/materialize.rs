@@ -62,8 +62,10 @@ enum Frame<'document> {
 /// Cycle-detection scratch that does not borrow a document.
 ///
 /// Holds a node-index bitmap and a small key cache. Reuse it across documents with
+/// [`Document::materialize_root_with`](crate::Document::materialize_root_with) or
 /// [`Document::materialize_node_with`](crate::Document::materialize_node_with). After each call (success or error) the
-/// bitmap is clear again; a panic unwinds with stale bits, and the next call clears them at entry.
+/// bitmap is clear again; a panic unwinds with stale bits, and the next call clears them at entry. `materialize_root`
+/// and `materialize_node` allocate a fresh workspace each time.
 pub struct MaterializeWorkspace {
     active: Vec<bool>,
     /// Raised while a walk is (or was) in flight; every normal exit — success or error — lowers it, because both

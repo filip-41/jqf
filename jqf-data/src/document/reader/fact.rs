@@ -2,10 +2,15 @@
 //!
 //! [`FactReader`] walks the document's fact table in bounded batches. See [`super`] for the poll contract.
 
+use core::ops::ControlFlow;
+
 use crate::{DataError, Document, DocumentFact};
 use jqf_resource::ResourceContext;
 
-use super::{BatchLimit, ReaderCompletion, ReaderDemand, ReaderPoll, admitted_items};
+use super::{
+    BatchLimit, ReaderCompletion, ReaderDemand, ReaderPoll, UNBOUNDED_READER_REPLENISH, admitted_items,
+    unbounded_batch_limit,
+};
 
 /// Active until the fact table is exhausted, then complete only if the terminal progress check admits the transition;
 /// any error latches `Failed`.
@@ -82,6 +87,32 @@ impl<'document, 'source> FactReader<'document, 'source> {
             document: self.document,
             range: start..end,
         }))
+    }
+
+    /// Walk every remaining fact. [`ReaderPoll::Pending`] refills
+    /// [`UNBOUNDED_READER_REPLENISH`] work credits. `Break` stops without
+    /// finishing the table.
+    pub fn drain<B>(
+        &mut self,
+        resources: &mut ResourceContext<'_>,
+        mut visit: impl FnMut(DocumentFact<'_>) -> ControlFlow<B>,
+    ) -> Result<ControlFlow<B>, DataError> {
+        let limit = unbounded_batch_limit();
+        loop {
+            match self.poll_batch(limit, resources)? {
+                ReaderPoll::Batch(batch) => {
+                    for fact in batch.iter() {
+                        if let ControlFlow::Break(stopped) = visit(fact) {
+                            return Ok(ControlFlow::Break(stopped));
+                        }
+                    }
+                }
+                ReaderPoll::Pending => {
+                    resources.try_begin_next_cooperative_entry(UNBOUNDED_READER_REPLENISH)?;
+                }
+                ReaderPoll::End(_) => return Ok(ControlFlow::Continue(())),
+            }
+        }
     }
 }
 

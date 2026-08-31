@@ -7,7 +7,7 @@
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{CodecCatalog, Diagnostics, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -60,6 +60,7 @@ fn run_to_json(program: &str, input: &str) -> String {
     let compiled = try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compile");
@@ -118,6 +119,7 @@ fn run_expect_error(program: &str, input: &str) -> String {
     let compiled = try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compile");
@@ -222,12 +224,14 @@ fn accessor_holes_compile() {
     try_compile_program(
         r#""\(.a.@tag)""#,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources(),
     )
     .expect(r#""\(.a.@tag)" must compile"#);
     try_compile_program(
         r#""\(.a.&href)""#,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources(),
     )
     .expect(r#""\(.a.&href)" must compile"#);

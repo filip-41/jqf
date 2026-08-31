@@ -34,7 +34,7 @@ pub mod truth;
 
 pub use facts::{accessor_matches_fact, materialize_fact_payload};
 pub use owned::{
-    DynAccess, OwnedNav, clone_owned, dyn_index, index_owned, navigate_owned_index, navigate_owned_key, owned_kind,
+    DynAccess, OwnedNav, dyn_index, index_owned, navigate_owned_index, navigate_owned_key, owned_kind,
     resolve_slice_bound, unrepresentable_index,
 };
 pub use rand::{Prng, rand_float, with_prng};

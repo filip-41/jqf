@@ -986,7 +986,7 @@ impl YamlEncoder {
                     self.push_indent(indent + 2);
                     self.push(b"? ");
                     self.render_owned_node(
-                        &Value::try_string(entry.key()).map_err(|_| unrepresentable())?,
+                        &entry.try_to_value_string().map_err(|_| unrepresentable())?,
                         indent + 4,
                         resources,
                     )?;
@@ -1058,7 +1058,7 @@ impl YamlEncoder {
                     self.push_indent(indent + 2);
                     self.push(b"? ");
                     self.render_owned_node(
-                        &Value::try_string(entry.key()).map_err(|_| unrepresentable())?,
+                        &entry.try_to_value_string().map_err(|_| unrepresentable())?,
                         indent + 4,
                         resources,
                     )?;

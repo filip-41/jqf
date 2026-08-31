@@ -3,7 +3,7 @@
 //! These are the correction's "value helpers whose home is semantics": the owned index step (`index_owned`), the owned
 //! key/index navigation it drives (`navigate_owned_key`/`navigate_owned_index`/`unrepresentable_index`), the
 //! dynamic-position law (`DynAccess`/`dyn_index`), the payload-transparent kind probe (`owned_kind`), the slice bound
-//! law (`resolve_slice_bound`), and the shared-value clone (`clone_owned`). The executor's step walk imports them from
+//! law (`resolve_slice_bound`), and owned-value sharing (`Value::clone`). The executor's step walk imports them from
 //! here; nothing here touches the executor.
 
 use jqf_data::{Value, ValueKind};
@@ -142,18 +142,6 @@ pub fn dyn_index<'env>(value: f64) -> DynAccess<'env> {
     DynAccess::Index(truncated as i64)
 }
 
-/// One owned value's share, detached from its source allocation.
-///
-/// An owned `Value`'s `clone` is itself a SHARE on every heap-backed variant — elements, entries, string, bytes, tag
-/// payload — rather than a deep copy.
-/// There is one mechanism here, not two: an owned re-derivation is refcount bumps at the handle, and it is sound
-/// because every mutator routes through a `try_*_mut` that detaches a non-unique allocation before writing, so a shared
-/// re-derivation is observationally identical to a detached one.
-/// (The deep copy this used to be was QUADRATIC on the descent.)
-pub fn clone_owned(value: &Value) -> Value {
-    value.clone()
-}
-
 /// The payload-transparent kind category of one owned value.
 ///
 /// A tagged value reports its PAYLOAD's category (`Value::kind()` sees through the wrapper), so a refusal over a tagged
@@ -216,7 +204,7 @@ pub fn index_owned(input: &Value, key: &Value, resources: &ResourceContext<'_>) 
         _ => OwnedNav::Mismatch(owned_kind(container)),
     };
     match nav {
-        OwnedNav::Value(child) => Ok(clone_owned(child)),
+        OwnedNav::Value(child) => Ok(child.clone()),
         OwnedNav::Null => Ok(Value::Null),
         OwnedNav::Mismatch(kind) => {
             let rendered = message::render_owned_key(key)?;

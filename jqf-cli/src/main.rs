@@ -44,9 +44,7 @@ use jqf_codec_json::JsonEncodeOptions;
 use jqf_codec_json::ndjson::NdjsonEncodeOptions;
 use jqf_codec_yaml::YamlTargetSchema;
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{
-    CodecRequirementPolicy, EngineCompileError, try_compile_program_for_edit_with_args, try_compile_program_with_args,
-};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, EngineCompileError, try_compile_program};
 use jqf_resource::policy::ProjectionKind;
 use jqf_resource::{RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{CodecCatalog, FacadeFraming, PipelinePolicy};
@@ -1252,6 +1250,9 @@ fn run_with_catalog(catalog: CodecCatalog<'_, '_>) -> Result<u8, CliFailure> {
         program = Some(rewritten);
     }
     let source_program = program.as_deref().unwrap_or(".");
+    let source_label: String = program_file
+        .as_ref()
+        .map_or_else(|| String::from("<top-level>"), |path| path.display().to_string());
     // the adopted `--arg`/`--argjson`/`--slurpfile`/`--rawfile` bindings, in CLI order: `--arg` is the raw string
     // value, `--argjson` must be exactly one strict JSON value (any parse failure — malformed text or trailing content
     // — is the adopted `invalid JSON text passed to --argjson`, exit 2), `--slurpfile` reads every adjacent JSON value
@@ -1407,15 +1408,18 @@ fn run_with_catalog(catalog: CodecCatalog<'_, '_>) -> Result<u8, CliFailure> {
     value_bindings.retain(|(key, _)| key != "$ARGS");
     value_bindings.push((String::from("$ARGS"), args_value));
     let compile_started = std::time::Instant::now();
-    // The edit lane compiles in EDIT mode: the one mode whose lowering accepts a fact assignment (`.@comment = …`).
-    // Every other request compiles the ordinary way, which keeps the accessor-write rejection in force.
-    let compiled = if edit {
-        try_compile_program_for_edit_with_args(source_program, policy, &value_bindings, &resources)
-            .map_err(|error| compile_failure_maybe_explain(&error, source_program, explain))?
-    } else {
-        try_compile_program_with_args(source_program, policy, &value_bindings, &resources)
-            .map_err(|error| compile_failure_maybe_explain(&error, source_program, explain))?
-    };
+    // Fact assignment lowers in every compile; `--edit` selects the edit route, not a distinct compile mode.
+    let compiled = try_compile_program(
+        source_program,
+        policy,
+        CompileOptions {
+            cli_vars: &value_bindings,
+            split_exp: false,
+            source_label: &source_label,
+        },
+        &resources,
+    )
+    .map_err(|error| compile_failure_maybe_explain(&error, source_program, explain))?;
     let compile_elapsed = compile_started.elapsed();
     // The `--split-exp` destination: the expression comes from the argument or from `--split-exp-file PATH` (read like
     // `-f`, with the same `Could not open` message at exit 2). It compiles ONCE through the split entry, which resolves
@@ -1431,11 +1435,19 @@ fn run_with_catalog(catalog: CodecCatalog<'_, '_>) -> Result<u8, CliFailure> {
         // internal inconsistency.
         _ => None,
     };
+    let split_source_label = split_exp_file.as_ref().map(|path| path.display().to_string());
     let split_program: Option<jqf_engine::CompiledProgram> = match &split_exp_text {
-        Some(expr) => Some(
-            jqf_engine::try_compile_program_split(expr, policy, &resources)
-                .map_err(|error| compile_failure_maybe_explain(&error, expr, explain))?,
-        ),
+        Some(expr) => {
+            let options = CompileOptions {
+                split_exp: true,
+                source_label: split_source_label.as_deref().unwrap_or("<top-level>"),
+                ..CompileOptions::new()
+            };
+            Some(
+                jqf_engine::try_compile_program(expr, policy, options, &resources)
+                    .map_err(|error| compile_failure_maybe_explain(&error, expr, explain))?,
+            )
+        }
         None => None,
     };
     // The second CLI decision point: the compiled program arena is live now. The follow route owns its own per-cycle

@@ -80,20 +80,9 @@ pub(crate) fn html_schema_recipe() -> Result<DocumentSchemaRecipe<'static>, Data
 }
 
 pub(crate) fn map_data(error: DataError) -> CodecError {
-    // A builder can raise an UNREPRESENTABLE shape on the HTML tree; that arm is the codec's own, everything else is
-    // the shared mapping.
-    match error {
-        DataError::UnrepresentableSemantic | DataError::CyclicSemanticGraph => {
-            CodecError::new(CodecFailureKind::UnsupportedRepresentation)
-        }
-        other => {
-            #[cfg(jqf_trace)]
-            std::eprintln!("HTML builder data error: {other:?}");
-            #[cfg(not(jqf_trace))]
-            let _ = &other;
-            jqf_codec_core::map_data(other, "HTML builder rejected document construction")
-        }
-    }
+    #[cfg(jqf_trace)]
+    std::eprintln!("HTML builder data error: {error:?}");
+    jqf_codec_core::map_data(error, "HTML builder rejected document construction")
 }
 
 /// Builds the semantic document from the recovered tree. The root is the document element (the `html` element). The

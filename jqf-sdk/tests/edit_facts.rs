@@ -27,7 +27,7 @@ fn json_dialect() -> &'static DialectId {
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program, try_compile_program_for_edit};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelineError, PipelinePolicy, Report,
@@ -134,7 +134,8 @@ fn run_fact_edit(
         || DialectId::try_new(jqf_codec_toml::TOML_JQF_1_0_DIALECT_ID).expect("output dialect is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program_for_edit(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.toml",
@@ -200,7 +201,8 @@ fn run_json_fact_edit(
     };
     let mut resources = resources();
     let requirement = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program_for_edit(program_source, requirement, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, requirement, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.json",
@@ -498,7 +500,7 @@ fn json_fact_write_is_a_clean_refusal() {
 fn fact_write_without_edit_mode_compiles() {
     let resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".port.@comment = [\"x\"]", policy, &resources)
+    let compiled = try_compile_program(".port.@comment = [\"x\"]", policy, CompileOptions::new(), &resources)
         .expect("a fact write without --edit must compile");
     assert!(
         compiled.fact_writes(),
@@ -506,26 +508,25 @@ fn fact_write_without_edit_mode_compiles() {
     );
 }
 
-/// A non-admitted accessor write stays rejected even under edit-mode
-/// compilation (a `.@bogus` selector names no writable fact role), while a
-/// `.&attr` ATTRIBUTE write now compiles to a [`FactAssign`] with the
-/// markup attribute role (lane I1's assignment surface for markup
-/// accessors). The four METADATA roles (`style`, `tag`, `anchor`, `alias`)
-/// are admitted by the grammar (145 C5) and refused or served later, in the
-/// codec seam, per the encode-or-report-a-loss law.
+/// A non-admitted accessor write stays rejected (a `.@bogus` selector names
+/// no writable fact role), while a `.&attr` attribute write compiles to a
+/// [`FactAssign`] with the markup attribute role. The four metadata roles
+/// (`style`, `tag`, `anchor`, `alias`) are admitted by the grammar and
+/// refused or served later, in the codec seam, per the encode-or-report-a-loss
+/// law.
 #[test]
-fn non_admitted_writes_stay_rejected_and_attribute_writes_compile_under_edit() {
+fn non_admitted_writes_stay_rejected_and_attribute_writes_compile() {
     let resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let error = try_compile_program_for_edit(".port.@bogus = \"x\"", policy, &resources)
+    let error = try_compile_program(".port.@bogus = \"x\"", policy, CompileOptions::new(), &resources)
         .expect_err("a non-admitted accessor write must not compile");
     let rendered = format!("{error}");
     assert!(
         rendered.contains("assignment/update over a node or attribute accessor"),
         "{rendered}"
     );
-    let attribute = try_compile_program_for_edit(".port.&href = \"x\"", policy, &resources)
-        .expect("an attribute write must compile under edit mode");
+    let attribute = try_compile_program(".port.&href = \"x\"", policy, CompileOptions::new(), &resources)
+        .expect("an attribute write must compile");
     assert!(
         attribute.fact_writes(),
         "the attribute write must lower to a FactAssign"
@@ -662,7 +663,7 @@ fn colliding_fact_only_writes_are_a_clean_refusal() {
 fn non_static_fact_path_is_rejected() {
     let resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let error = try_compile_program_for_edit(".port[].@comment = [\"x\"]", policy, &resources)
+    let error = try_compile_program(".port[].@comment = [\"x\"]", policy, CompileOptions::new(), &resources)
         .expect_err("a non-static fact path must not compile");
     let rendered = format!("{error}");
     assert!(rendered.contains("non-static path"), "{rendered}");
@@ -890,7 +891,8 @@ fn run_xml_fact_edit(
     let output_dialect = || DialectId::try_new(jqf_codec_xml::XML_SOURCE_DIALECT_ID).expect("output dialect is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program_for_edit(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
         "test.xml",

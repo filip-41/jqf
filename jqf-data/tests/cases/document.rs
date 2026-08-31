@@ -1,7 +1,10 @@
+use core::ops::ControlFlow;
+
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode,
     AuthoritativeEmptyFamilies, BatchLimit, DataError, DiagnosticCoverage, Document, DocumentCapability,
-    DocumentCapabilityFamily, FactPayload, LocalOwnerRef, ReaderDemand, ReaderPoll, TopologyBatch, Value, ValueKind,
+    DocumentCapabilityFamily, DocumentCapacity, FactPayload, LocalOwnerRef, MaterializeWorkspace, ReaderDemand,
+    ReaderPoll, TopologyBatch, Value, ValueKind, unbounded_batch_limit,
 };
 use jqf_resource::{
     ContinueControl, Control, ControlError, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits,
@@ -377,6 +380,36 @@ fn reusable_materializer_recovers_after_cycle_failure() {
     ));
 }
 
+#[test]
+fn try_reserve_and_root_workspace_reuse_are_callable() {
+    let mut resources = unlimited_resources();
+    let mut builder = AccountedDocumentBuilder::try_new("test", None).expect("builder starts");
+    builder
+        .try_reserve(
+            DocumentCapacity {
+                nodes: 1,
+                occurrences: 0,
+                stored_text_bytes: 0,
+                facts: 0,
+            },
+            &resources,
+        )
+        .expect("reserve is a hint");
+    let root = builder
+        .add_node("test.bool", AccountedSemanticNode::Bool(true), None, &resources)
+        .expect("root is added");
+    let document = builder.finish(root, &resources).expect("document finishes");
+    let mut workspace = MaterializeWorkspace::new();
+    assert!(matches!(
+        document.materialize_root_with(&mut workspace, &mut resources),
+        Ok(Value::Bool(true))
+    ));
+    assert!(matches!(
+        document.materialize_root_with(&mut workspace, &mut resources),
+        Ok(Value::Bool(true))
+    ));
+}
+
 /// An unrepresentable node has no value projection at all, so materialization fails TERMINALLY rather than substituting
 /// null or skipping the node: a reader may not project a value for semantics that have none.
 #[test]
@@ -478,6 +511,60 @@ fn exhausted_slice_ends_a_started_batch_partially_then_resumes() {
         reader.poll_batch(limit, &mut resources),
         Ok(ReaderPoll::End(_))
     ));
+}
+
+#[test]
+fn facts_drain_visits_every_attached_fact() {
+    let document = document_with_facts(2);
+    let mut resources = unlimited_resources();
+    let mut reader = document.fact_reader(&mut resources).expect("fact reader starts");
+    let mut seen = 0;
+    let walked = reader
+        .drain(&mut resources, |_| {
+            seen += 1;
+            ControlFlow::<()>::Continue(())
+        })
+        .expect("facts drain");
+    assert_eq!(walked, ControlFlow::Continue(()));
+    assert_eq!(seen, 2);
+}
+
+#[test]
+fn facts_drain_replenishes_a_pending_unbounded_walk() {
+    let document = document_with_facts(2);
+    let mut resources = slice_resources(1);
+    assert!(matches!(resources.admit_work_bytes(1), Ok(WorkAdmission::Granted(1))));
+    let mut reader = document.fact_reader(&mut resources).expect("fact reader starts");
+    let mut seen = 0;
+    let walked = reader
+        .drain(&mut resources, |_| {
+            seen += 1;
+            ControlFlow::<()>::Continue(())
+        })
+        .expect("pending drain resumes");
+    assert_eq!(walked, ControlFlow::Continue(()));
+    assert_eq!(seen, 2);
+}
+
+#[test]
+fn fact_drain_break_stops_before_the_rest() {
+    let document = document_with_facts(3);
+    let mut resources = unlimited_resources();
+    let mut reader = document.fact_reader(&mut resources).expect("fact reader starts");
+    let mut seen = 0;
+    let stopped = reader
+        .drain(&mut resources, |_| {
+            seen += 1;
+            ControlFlow::Break(seen)
+        })
+        .expect("drain starts");
+    assert_eq!(stopped, ControlFlow::Break(1));
+    assert_eq!(seen, 1);
+}
+
+#[test]
+fn unbounded_batch_limit_is_the_nonzero_max() {
+    assert_eq!(unbounded_batch_limit().get(), usize::MAX);
 }
 
 /// A control error latches a reader terminal: even once the host stops cancelling, every later poll reports

@@ -10,7 +10,7 @@ fn json_dialect() -> &'static DialectId {
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, MemoryCategory, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelineFailure, PipelinePolicy,
@@ -121,7 +121,8 @@ fn run_sequence_reporting_usage(
         let format = || FormatId::try_new(jqf_codec_json::FORMAT_ID).expect("format id is valid");
         let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = try_compile_program(program_source, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
         let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
         let source = ResolvedSource::new(
             SourceRef::new(SourceId::new(1), SourceKind::Input),
@@ -180,7 +181,8 @@ fn run_sequence_under(
     let format = || FormatId::try_new(jqf_codec_json::FORMAT_ID).expect("format id is valid");
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program_source, policy, resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), resources).expect("program compiles");
     let requirement = compiled.try_requirement(resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
@@ -913,7 +915,7 @@ fn run_streaming_chunks(input: &[u8], cut: usize) -> Result<Vec<u8>, jqf_sdk::Pi
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(".", policy, CompileOptions::new(), &resources).expect("program compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let mut chunks: Vec<Vec<u8>> = vec![input[..cut].to_vec(), input[cut..].to_vec()];
     let mut sink = CollectingSink::new();
@@ -1060,7 +1062,7 @@ fn a_small_held_value_publishes_on_the_completing_read() {
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(".", policy, CompileOptions::new(), &resources).expect("program compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let mut sink = SharedSink {
         bytes: Rc::clone(&published),
@@ -1139,8 +1141,9 @@ fn a_split_destination_collision_refuses_the_second_writer() {
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(".", policy, &resources).expect("program compiles");
-    let split = try_compile_program("\"same.json\"", policy, &resources).expect("split compiles");
+    let compiled = try_compile_program(".", policy, CompileOptions::new(), &resources).expect("program compiles");
+    let split =
+        try_compile_program("\"same.json\"", policy, CompileOptions::split_exp(), &resources).expect("split compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let input = b"1\n2\n";
     let source = ResolvedSource::new(

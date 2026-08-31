@@ -52,12 +52,10 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
-use jqf_codec_core::{CodecError, CodecFailureKind, DocumentProduct, NativeSpellings, ProjectionSink, classify_scalar};
-use jqf_data::{
-    BatchLimit, Document, FactPayloadView, IntrinsicTagSemantics, NodeId, ReaderPoll, ScalarView, Value, ValueKind,
-    ValueView,
-};
+use jqf_codec_core::{CodecError, DocumentProduct, NativeSpellings, ProjectionSink, classify_scalar};
+use jqf_data::{Document, FactPayloadView, IntrinsicTagSemantics, NodeId, ScalarView, Value, ValueKind, ValueView};
 use jqf_resource::ResourceContext;
 
 use crate::document::{ANCHOR_FACT, COMMENT_FACT, COMMENT_FOOT_FACT, COMMENT_INLINE_FACT};
@@ -157,25 +155,12 @@ fn fold_document_facts<S>(
         // this walk's contract violation.
         Err(error) => return Err(jqf_codec_core::map_data(error, contract)),
     };
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|error| jqf_codec_core::map_data(error, contract))?;
-        match poll {
-            ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    ingest(fact, state);
-                }
-            }
-            ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(CodecError::from)?;
-            }
-            ReaderPoll::End(_) => break,
-        }
-    }
+    let _ = reader
+        .drain(resources, |fact| {
+            ingest(fact, state);
+            ControlFlow::<()>::Continue(())
+        })
+        .map_err(|error| jqf_codec_core::map_data(error, contract))?;
     Ok(())
 }
 

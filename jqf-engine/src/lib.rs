@@ -30,9 +30,7 @@ pub use codec_requirement::{
     CodecRequirementPolicy, StaticForwardStep, try_lower_forward_requirement, try_lower_root_requirement,
 };
 pub use compile::{
-    CompiledProgram, EngineCompileError, ParseRejection, UnsupportedConstruct, try_compile_program,
-    try_compile_program_for_edit, try_compile_program_for_edit_with_args, try_compile_program_split,
-    try_compile_program_with_args,
+    CompileOptions, CompiledProgram, EngineCompileError, ParseRejection, UnsupportedConstruct, try_compile_program,
 };
 pub use exec::{EngineRun, EngineRunStream, FactDelta, RunInput, RunPoll};
 pub use exec::{
@@ -55,6 +53,9 @@ pub use jqf_builtins::semantics::rawtext::is_raw_text;
 pub use jqf_builtins::semantics::stream_events::{EventParser, StreamEvent};
 pub use jqf_builtins::semantics::truth::{PublicationFacts, is_empty_array, is_truthy, publication_facts};
 pub use plan::{PlanError, PlanRecord};
+
+#[doc(hidden)]
+pub use compile::{PreludeGate, scan_prelude_gate};
 
 /// Compiles the README examples as doctests.
 #[cfg(doctest)]

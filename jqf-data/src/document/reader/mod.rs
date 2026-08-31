@@ -20,6 +20,17 @@ use crate::{DataError, Document, DocumentCapability};
 /// Work admission from `jqf-resource` also caps the batch. There is no caller-chosen byte budget.
 pub type BatchLimit = core::num::NonZeroUsize;
 
+/// Item cap that does not itself stop the reader. Work credits still bound each poll.
+#[must_use]
+pub const fn unbounded_batch_limit() -> BatchLimit {
+    BatchLimit::MAX
+}
+
+/// Work-slice refill used when an unbounded drain hits [`ReaderPoll::Pending`].
+///
+/// This is the maximum budget one cooperative entry will accept.
+pub const UNBOUNDED_READER_REPLENISH: u32 = 4096;
+
 /// Which reader produced a [`ReaderCompletion`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReaderDemand {

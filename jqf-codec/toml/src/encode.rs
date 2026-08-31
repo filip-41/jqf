@@ -1085,7 +1085,8 @@ fn build_comment_index(
     document: &jqf_data::Document<'_>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<CommentIndex, CodecError> {
-    use jqf_data::{BatchLimit, FactPayloadView, ReaderPoll};
+    use core::ops::ControlFlow;
+    use jqf_data::FactPayloadView;
 
     let mut index = CommentIndex::new();
     let mut reader = match document.fact_reader(resources) {
@@ -1106,47 +1107,36 @@ fn build_comment_index(
         // the contract violation.
         Err(error) => return Err(map_data(error)),
     };
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
-    loop {
-        let poll = reader.poll_batch(limit, resources).map_err(map_data)?;
-        match poll {
-            ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    let jqf_data::LocalOwnerRef::Node(node) = fact.owner() else {
-                        continue;
-                    };
-                    let map = if fact.role().as_str() == crate::parse::COMMENT_FACT {
-                        &mut index.leading
-                    } else if fact.role().as_str() == crate::parse::COMMENT_INLINE_FACT {
-                        &mut index.inline
-                    } else if fact.role().as_str() == crate::parse::COMMENT_FOOT_FACT {
-                        &mut index.foot
-                    } else {
-                        continue;
-                    };
-                    let FactPayloadView::List(texts) = fact.payload() else {
-                        continue;
-                    };
-                    let texts: Vec<String> = texts
-                        .iter()
-                        .filter_map(|entry| match entry {
-                            FactPayloadView::Text(text) => Some(String::from(text)),
-                            _ => None,
-                        })
-                        .collect();
-                    if !texts.is_empty() {
-                        map.insert(node, texts);
-                    }
-                }
+    let _ = reader
+        .drain(resources, |fact| {
+            let jqf_data::LocalOwnerRef::Node(node) = fact.owner() else {
+                return ControlFlow::Continue(());
+            };
+            let map = if fact.role().as_str() == crate::parse::COMMENT_FACT {
+                &mut index.leading
+            } else if fact.role().as_str() == crate::parse::COMMENT_INLINE_FACT {
+                &mut index.inline
+            } else if fact.role().as_str() == crate::parse::COMMENT_FOOT_FACT {
+                &mut index.foot
+            } else {
+                return ControlFlow::Continue(());
+            };
+            let FactPayloadView::List(texts) = fact.payload() else {
+                return ControlFlow::Continue(());
+            };
+            let texts: Vec<String> = texts
+                .iter()
+                .filter_map(|entry| match entry {
+                    FactPayloadView::Text(text) => Some(String::from(text)),
+                    _ => None,
+                })
+                .collect();
+            if !texts.is_empty() {
+                map.insert(node, texts);
             }
-            ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(CodecError::from)?;
-            }
-            ReaderPoll::End(_) => break,
-        }
-    }
+            ControlFlow::<()>::Continue(())
+        })
+        .map_err(map_data)?;
     jqf_codec_core::comment::apply_encode_overlay(&mut index.leading, &mut index.inline, &mut index.foot, resources);
     Ok(index)
 }

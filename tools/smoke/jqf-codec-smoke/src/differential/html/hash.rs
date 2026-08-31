@@ -8,7 +8,8 @@
 //! selected the wrong same-shaped sibling would pass a name-blind compare.
 
 use jqf_data::{
-    BatchLimit, Document, FactPayloadView, LocalOwnerRef, NodeHandle, NodeId, ReaderPoll, ScalarView, ValueKind,
+    Document, FactPayloadView, LocalOwnerRef, NodeHandle, NodeId, ReaderPoll, ScalarView, ValueKind,
+    unbounded_batch_limit,
 };
 use jqf_resource::ResourceContext;
 
@@ -39,9 +40,7 @@ pub(crate) fn document_names(document: &Document<'_>, resources: &mut ResourceCo
     let Ok(mut reader) = document.fact_reader(resources) else {
         return names;
     };
-    let Some(limit) = BatchLimit::new(usize::MAX) else {
-        return names;
-    };
+    let limit = unbounded_batch_limit();
     loop {
         match reader.poll_batch(limit, resources) {
             Ok(ReaderPoll::Batch(batch)) => {

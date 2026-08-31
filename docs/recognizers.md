@@ -1,7 +1,8 @@
 # Shape recognizers
 
-After [fusion](engine-ir.md), analysis walks the arena against **closed tables**
-of program shapes. A shape that matches a row lets the executor do less work
+After [fusion](engine-ir.md#fusion-and-path-normal-form), analysis walks
+the arena against **closed tables** of program shapes. A shape that matches a
+row lets the executor do less work
 (visit fewer children, keep a bounded heap, answer from spans), and a shape that
 isn't a row takes the ordinary floor, byte for byte. This page is the detail
 under [Architecture § Shape recognizers](architecture.md#shape-recognizers).
@@ -120,6 +121,7 @@ $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
+jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: topk: rows=0
@@ -132,6 +134,7 @@ jqf: explain: cost: peak=174489 input=25 output=4 spill_disk=0
 | ----------- | ------------------------------------------------------------------------------------------------- |
 | `class:`    | program shape — identity, assignment, whole-document, `inputs`, static per-record path            |
 | `demand:`   | the projection class and its boundary consumer (`none`, `residual`, `fold`, `binding`, `collect`) |
+| `routes:`   | finish-cached count, element, keys, type, and `inputs` cursor                                     |
 | `pushdown:` | the static prefix the codec serves, see [Demand](demand.md)                                       |
 | `ladder:`   | parallel eligibility and range-locate, see [Parallelism](parallelism.md)                          |
 | `topk:`     | partial-sort rows matched                                                                         |

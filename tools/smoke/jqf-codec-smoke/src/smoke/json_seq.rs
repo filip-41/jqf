@@ -309,7 +309,7 @@ fn framing_corpus() -> Result<(), String> {
 
 fn program_for(source_text: &str, resources: &ResourceContext<'_>) -> Result<CompiledProgram, String> {
     let policy = jqf_engine::CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    jqf_engine::try_compile_program(source_text, policy, resources)
+    jqf_engine::try_compile_program(source_text, policy, jqf_engine::CompileOptions::new(), resources)
         .map_err(|error| format!("compile {source_text:?}: {error}"))
 }
 

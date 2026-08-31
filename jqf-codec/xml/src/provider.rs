@@ -137,7 +137,7 @@ mod measure_provider_tests {
                 source(b"<catalog><item id=\"0\"/><item id=\"1\"/></catalog>"),
                 DecodeRequest {
                     validation: jqf_codec_core::ValidationMode::Strict,
-                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    diagnostics: jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
                     dialect: &DialectId::try_new(crate::XML_DETERMINISTIC_DIALECT_ID).expect("dialect"),
                     options: None,
                     allow_adjacent_values: false,
@@ -193,7 +193,7 @@ mod measure_provider_tests {
                 source(b"<catalog><item id=\"0\"/><item id=\"1\"/></catalog>"),
                 DecodeRequest {
                     validation: jqf_codec_core::ValidationMode::Strict,
-                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    diagnostics: jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
                     dialect: &DialectId::try_new(crate::XML_DETERMINISTIC_DIALECT_ID).expect("dialect"),
                     options: None,
                     allow_adjacent_values: false,

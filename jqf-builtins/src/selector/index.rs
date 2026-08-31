@@ -7,7 +7,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use jqf_data::{BatchLimit, Document, FactPayloadView, LocalOwnerRef, NodeId, ReaderPoll};
+use jqf_data::{Document, FactPayloadView, LocalOwnerRef, NodeId, ReaderPoll, unbounded_batch_limit};
 use jqf_resource::ResourceContext;
 
 use jqf_codec_core::markup;
@@ -113,9 +113,7 @@ impl MarkupIndex {
             Ok(())
         };
 
-        let limit = BatchLimit::new(usize::MAX).ok_or_else(|| SelectorError::Internal {
-            contract: "batch limit",
-        })?;
+        let limit = unbounded_batch_limit();
         let mut name_by_node: Vec<Option<alloc::string::String>> = vec![None; node_count];
         let mut attrs_by_node: Vec<Option<Vec<(alloc::string::String, alloc::string::String)>>> =
             vec![None; node_count];

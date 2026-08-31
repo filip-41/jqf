@@ -810,7 +810,7 @@ fn container_path_and_range(steps: &[StageStep], boundary: usize) -> Option<(Vec
 mod tests {
     use super::*;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use alloc::vec;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -830,14 +830,14 @@ mod tests {
     fn demand(source: &str) -> Option<ElementDemand> {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("compiles");
+        let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
         program.element_demand().cloned()
     }
 
     fn compiled_fields(source: &str) -> Option<Vec<(alloc::string::String, Vec<CountStep>)>> {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("compiles");
+        let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
         program
             .element_construct_fields()
             .map(<[(alloc::string::String, alloc::vec::Vec<jqf_data::CountStep>)]>::to_vec)
@@ -916,7 +916,7 @@ mod tests {
     fn collect(source: &str) -> bool {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program = try_compile_program(source, policy, &resources).expect("compiles");
+        let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
         program.element_collect()
     }
 

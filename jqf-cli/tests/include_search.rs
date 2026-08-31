@@ -1,8 +1,9 @@
-//! Integration coverage for 068 §2.5 — an `include` with an authored `{search: …}` resolves through THAT list, exactly
-//! like an `import` and exactly as does (with `-L` at the DEFAULT dir, the authored search wins). Pre-fix
-//! `process_include` computed the search list and discarded it, resolving through the `-L` chain instead.
+//! Authored-search-wins: an `include` with an authored `{search: …}` resolves
+//! through that list, the same way `import` does. A `-L` default directory does
+//! not override an authored search. Pre-fix `process_include` computed the
+//! search list and discarded it, resolving through the `-L` chain instead.
 //!
-//! The corpus's `include-search` kind pins the same law byte-for-byte against jq; this test pins it without jq, on
+//! The corpus's `include-search` kind pins the same law; this test pins it on
 //! every host.
 
 use std::io::Write;
@@ -55,6 +56,21 @@ fn include_with_authored_search_wins_over_the_l_chain() {
     assert!(output.status.success(), "authored search: {output:?}");
     assert_eq!(output.stdout, b"\"custom\"\n");
     assert!(output.stderr.is_empty(), "stderr: {output:?}");
+}
+
+#[test]
+fn include_with_empty_authored_search_fails_module_not_found() {
+    let output = run_include_search(
+        "def found: \"custom\";",
+        "def found: \"default\";",
+        "include \"m\" {search: []}; found",
+    );
+    assert!(!output.status.success(), "empty search must refuse: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("module not found"),
+        "expected module-not-found refusal, got {stderr}"
+    );
 }
 
 #[test]

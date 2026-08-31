@@ -18,7 +18,7 @@ use jqf_codec_core::{
 use jqf_codec_json::ndjson::{NdjsonDecodeOptions, NdjsonEncodeOptions, NdjsonProfile, NdjsonTerminator};
 use jqf_data::{DialectId, FormatId};
 use jqf_sdk::{
-    CodecCatalog, CodecRequirementPolicy, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
+    CodecCatalog, CodecRequirementPolicy, CompileOptions, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
     RecordIssueReport, RecordSequenceReport, SequenceValueError, try_compile_program,
 };
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -185,7 +185,7 @@ fn run_records<S: ItemSink<Error = &'static str>>(input: &[u8], sink: &mut S, op
     };
     let mut resources = common::resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(options.program, policy, &resources).expect("compiles");
+    let compiled = try_compile_program(options.program, policy, CompileOptions::new(), &resources).expect("compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
@@ -264,7 +264,7 @@ fn run_adjacent(input: &[u8], sink: &mut CollectingSink, program: &str) {
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = common::resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, &resources).expect("compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), &resources).expect("compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),

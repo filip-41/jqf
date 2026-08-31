@@ -5,6 +5,8 @@
 //! evaluator calls. Graph-machine methods live in `eval`, `fold`,
 //! `dispatch`, `pathmode`, and `route` so this file stays types-and-helpers.
 
+use core::ops::ControlFlow;
+
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
@@ -3237,7 +3239,6 @@ impl<'machine, 'resources> StepScratch<'machine, 'resources> {
         }
         // Fallback: a document whose fact-owner index did not run scans
         // the whole fact arena.
-        let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal_contract("fact batch limit"))?;
         let mut reader = match document.fact_reader(self.resources) {
             Ok(reader) => reader,
             // A document that does not retain attached facts has none: the
@@ -3250,37 +3251,22 @@ impl<'machine, 'resources> StepScratch<'machine, 'resources> {
                 return Err(internal_contract("attached-fact reader over a valid document"));
             }
         };
-        // The reader does not retain the resource borrow: `poll_batch` releases
-        // it before returning a batch, so a matched payload can be materialized
-        // with the immutable borrow in the same iteration.
-        loop {
-            let poll = reader
-                .poll_batch(limit, self.resources)
-                .map_err(|_| internal_contract("attached-fact read failed over a valid document"))?;
-            match poll {
-                jqf_data::ReaderPoll::Batch(batch) => {
-                    for fact in batch.iter() {
-                        if fact.owner() != owner {
-                            continue;
-                        }
-                        if roles.iter().any(|role| fact.role_binding() == *role)
-                            && kind.is_none_or(|kind| fact.kind_binding() == kind)
-                        {
-                            return materialize_fact_payload(fact.payload());
-                        }
-                    }
+        match reader
+            .drain(self.resources, |fact| {
+                if fact.owner() != owner {
+                    return ControlFlow::Continue(());
                 }
-                jqf_data::ReaderPoll::Pending => {
-                    // The cooperative entry's work credits are exhausted;
-                    // refill so the scan can continue — spinning without
-                    // refilling would loop forever once the per-entry budget
-                    // is gone.
-                    self.resources_mut()
-                        .try_begin_next_cooperative_entry(4096)
-                        .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
+                if roles.iter().any(|role| fact.role_binding() == *role)
+                    && kind.is_none_or(|kind| fact.kind_binding() == kind)
+                {
+                    return ControlFlow::Break(materialize_fact_payload(fact.payload()));
                 }
-                jqf_data::ReaderPoll::End(_) => break,
-            }
+                ControlFlow::Continue(())
+            })
+            .map_err(|_| internal_contract("attached-fact read failed over a valid document"))?
+        {
+            ControlFlow::Break(result) => return result,
+            ControlFlow::Continue(()) => {}
         }
         if !attribute && attrs_map_selector(selector) {
             return self.read_attrs_map(document, node_id);
@@ -3307,7 +3293,6 @@ impl<'machine, 'resources> StepScratch<'machine, 'resources> {
             }
         } else {
             let owner = jqf_data::LocalOwnerRef::Node(node_id);
-            let limit = jqf_data::BatchLimit::new(usize::MAX).ok_or_else(|| internal_contract("fact batch limit"))?;
             let mut reader = match document.fact_reader(self.resources) {
                 Ok(reader) => reader,
                 Err(jqf_data::DataError::CapabilityUnavailable {
@@ -3317,33 +3302,21 @@ impl<'machine, 'resources> StepScratch<'machine, 'resources> {
                     return Err(internal_contract("attached-fact reader over a valid document"));
                 }
             };
-            loop {
-                let poll = reader
-                    .poll_batch(limit, self.resources)
-                    .map_err(|_| internal_contract("attached-fact read failed over a valid document"))?;
-                match poll {
-                    jqf_data::ReaderPoll::Batch(batch) => {
-                        for fact in batch.iter() {
-                            if fact.owner() != owner {
-                                continue;
-                            }
-                            if accessor_matches_fact(fact.role().as_str(), "name") {
-                                is_element = true;
-                            }
-                            if let Some(pair) = attribute_name_and_payload(fact) {
-                                is_element = true;
-                                entries.push(pair);
-                            }
-                        }
+            let _ = reader
+                .drain(self.resources, |fact| {
+                    if fact.owner() != owner {
+                        return ControlFlow::Continue(());
                     }
-                    jqf_data::ReaderPoll::Pending => {
-                        self.resources_mut()
-                            .try_begin_next_cooperative_entry(4096)
-                            .map_err(|error| EngineRunError::Codec(CodecError::from(error)))?;
+                    if accessor_matches_fact(fact.role().as_str(), "name") {
+                        is_element = true;
                     }
-                    jqf_data::ReaderPoll::End(_) => break,
-                }
-            }
+                    if let Some(pair) = attribute_name_and_payload(fact) {
+                        is_element = true;
+                        entries.push(pair);
+                    }
+                    ControlFlow::<()>::Continue(())
+                })
+                .map_err(|_| internal_contract("attached-fact read failed over a valid document"))?;
         }
         let overlay_attrs = self
             .deltas
@@ -3933,31 +3906,6 @@ pub(crate) fn constant_operand(nodes: &[ProgramNode], node: ProgramNodeId) -> Op
     }
 }
 
-/// Fills [`ObjectMemberNode::static_key`] when the key graph is a step-less
-/// string literal. Conservative: anything else stays dynamic.
-pub(crate) fn mark_static_object_keys(nodes: &mut [ProgramNode]) {
-    let keys: Vec<Vec<Option<String>>> = nodes
-        .iter()
-        .map(|node| match node {
-            ProgramNode::ConstructObject { members, .. } => members
-                .iter()
-                .map(|member| match constant_operand(nodes, member.key) {
-                    Some(Value::String(text)) => Some(alloc::string::String::from(text.as_str())),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    for (node, keys) in nodes.iter_mut().zip(keys) {
-        if let ProgramNode::ConstructObject { members, .. } = node {
-            for (member, key) in members.iter_mut().zip(keys) {
-                member.static_key = key;
-            }
-        }
-    }
-}
-
 /// Conservative: a graph whose every path is at most one output. `Each` and
 /// `Descend` are many; an unlisted node family stays unproven.
 pub(crate) fn graph_at_most_one(nodes: &[ProgramNode], node: ProgramNodeId) -> bool {
@@ -4374,42 +4322,49 @@ fn collect_read_slots_walk(
     }
 }
 
-/// Fills [`BinaryShape`] on every `Binary` after fuse. Identity × literal/slot
-/// is the frame-free pair; everything else stays `Framed`.
-pub(crate) fn mark_binary_shapes(nodes: &mut [ProgramNode]) {
-    let shapes: Vec<Option<crate::program::BinaryShape>> = nodes
-        .iter()
-        .map(|node| match node {
-            ProgramNode::Binary { left, right, .. } => {
-                if !identity_stage(nodes, *left) {
-                    Some(crate::program::BinaryShape::Framed)
-                } else if constant_operand(nodes, *right).is_some() {
-                    Some(crate::program::BinaryShape::IdentityLiteral)
-                } else if matches!(
-                    &nodes[right.index()],
-                    ProgramNode::Stage {
-                        start: StageStart::Variable(_),
-                        steps,
-                    } if steps.is_empty()
-                ) {
-                    let ProgramNode::Stage {
-                        start: StageStart::Variable(slot),
-                        ..
-                    } = &nodes[right.index()]
-                    else {
-                        unreachable!("just matched");
-                    };
-                    Some(crate::program::BinaryShape::IdentitySlot(*slot))
-                } else {
-                    Some(crate::program::BinaryShape::Framed)
+/// Marks binary shapes and static object keys in one arena pass.
+pub(crate) fn mark_post_fuse_facts(nodes: &mut [ProgramNode]) {
+    for index in 0..nodes.len() {
+        if let ProgramNode::Binary { left, right, .. } = &nodes[index] {
+            let shape = if !identity_stage(nodes, *left) {
+                crate::program::BinaryShape::Framed
+            } else if constant_operand(nodes, *right).is_some() {
+                crate::program::BinaryShape::IdentityLiteral
+            } else if matches!(
+                &nodes[right.index()],
+                ProgramNode::Stage {
+                    start: StageStart::Variable(_),
+                    steps,
+                } if steps.is_empty()
+            ) {
+                let ProgramNode::Stage {
+                    start: StageStart::Variable(slot),
+                    ..
+                } = &nodes[right.index()]
+                else {
+                    unreachable!("just matched");
+                };
+                crate::program::BinaryShape::IdentitySlot(*slot)
+            } else {
+                crate::program::BinaryShape::Framed
+            };
+            if let ProgramNode::Binary { shape: slot, .. } = &mut nodes[index] {
+                *slot = shape;
+            }
+        }
+        if let ProgramNode::ConstructObject { members, .. } = &nodes[index] {
+            let keys: Vec<Option<String>> = members
+                .iter()
+                .map(|member| match constant_operand(nodes, member.key) {
+                    Some(Value::String(text)) => Some(alloc::string::String::from(text.as_str())),
+                    _ => None,
+                })
+                .collect();
+            if let ProgramNode::ConstructObject { members, .. } = &mut nodes[index] {
+                for (member, key) in members.iter_mut().zip(keys) {
+                    member.static_key = key;
                 }
             }
-            _ => None,
-        })
-        .collect();
-    for (node, shape) in nodes.iter_mut().zip(shapes) {
-        if let (ProgramNode::Binary { shape: slot, .. }, Some(shape)) = (node, shape) {
-            *slot = shape;
         }
     }
 }

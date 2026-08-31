@@ -5,7 +5,7 @@
 
 use alloc::boxed::Box;
 
-use jqf_data::DataError;
+use jqf_data::{DataError, DataErrorClass};
 use jqf_resource::{ControlError, ResourceError};
 use jqf_source::{Label, Namespace, ResolvedSource, Severity, Span};
 
@@ -181,35 +181,25 @@ pub fn data_contract(contract: &'static str) -> CodecError {
 
 /// Maps one document-construction [`DataError`] onto the codec failure vocabulary.
 ///
-/// Resource and control failures pass through. Every other variant is unreachable in a correct decoder — the builder
-/// only rejects a graph the codec's own parser constructed — so it collapses to the caller's `contract` string, which
-/// is the only per-codec difference (the [`data_contract`] pattern). A codec whose construction path can raise an
-/// UNREPRESENTABLE shape maps that arm itself before delegating.
+/// Classification follows [`DataError::class`]: host pressure passes through, budget stays budget, an unrepresentable
+/// or cyclic graph is [`CodecFailureKind::UnsupportedRepresentation`], and absent/broken document contracts collapse
+/// to the caller's `contract` string (the [`data_contract`] pattern). A future [`DataError`] variant that classifies as
+/// [`DataErrorClass::Broken`] lands on that same contract rather than silently as corrupt input or host pressure.
 #[must_use]
-#[allow(clippy::match_same_arms)]
 pub fn map_data(error: DataError, contract: &'static str) -> CodecError {
-    match error {
-        DataError::Resource(error) => error.into(),
-        DataError::Control(error) => error.into(),
-        DataError::ArithmeticOverflow => CodecError::new(CodecFailureKind::Overflow),
-        DataError::Allocation => CodecError::new(CodecFailureKind::AllocationFailure),
-        // Every remaining CURRENT kind is spelled explicitly so its classification is a visible decision, not an
-        // accident of a catch-all: today they are all "unreachable in a correct decoder" (see the fn doc), so they
-        // share one contract collapse.
-        DataError::CapabilityUnavailable { .. }
-        | DataError::ContradictoryCoverage { .. }
-        | DataError::InvalidNode
-        | DataError::InvalidOccurrence
-        | DataError::InvalidFact
-        | DataError::StaleOrForeignHandle
-        | DataError::UnrepresentableSemantic
-        | DataError::UnmaterializedContainerSpan
-        | DataError::CyclicSemanticGraph
-        | DataError::InvalidDocument
-        | DataError::ReaderFailed => CodecError::new(CodecFailureKind::InternalContractViolation { contract }),
-        // `DataError` is #[non_exhaustive], so this arm cannot be compiled away: a FUTURE variant lands here
-        // unclassified and reads as the caller's contract violation rather than silently as corrupt input or host
-        // pressure. When a new variant's meaning is decided, move it to an explicit arm above.
+    match error.class() {
+        DataErrorClass::Host => match error {
+            DataError::Resource(error) => error.into(),
+            DataError::Control(error) => error.into(),
+            _ => CodecError::new(CodecFailureKind::InternalContractViolation { contract }),
+        },
+        DataErrorClass::Budget => match error {
+            DataError::ArithmeticOverflow => CodecError::new(CodecFailureKind::Overflow),
+            DataError::Allocation => CodecError::new(CodecFailureKind::AllocationFailure),
+            _ => CodecError::new(CodecFailureKind::InternalContractViolation { contract }),
+        },
+        DataErrorClass::Unrepresentable => CodecError::new(CodecFailureKind::UnsupportedRepresentation),
+        // Absent, Broken, and any future class fail closed as the caller's contract rather than as host pressure.
         _ => CodecError::new(CodecFailureKind::InternalContractViolation { contract }),
     }
 }
@@ -414,5 +404,45 @@ mod tests {
     fn test_source(bytes: &[u8]) -> ResolvedSource<'_> {
         use jqf_source::{SourceId, SourceKind, SourceRef};
         ResolvedSource::new(SourceRef::new(SourceId::new(1), SourceKind::Input), "test", bytes, 0)
+    }
+
+    #[test]
+    fn map_data_classifies_unrepresentable_budget_and_absent() {
+        use jqf_data::DocumentCapability;
+
+        assert_eq!(
+            map_data(DataError::UnrepresentableSemantic, "test contract").kind(),
+            CodecFailureKind::UnsupportedRepresentation
+        );
+        assert_eq!(
+            map_data(DataError::CyclicSemanticGraph, "test contract").kind(),
+            CodecFailureKind::UnsupportedRepresentation
+        );
+        assert_eq!(
+            map_data(DataError::Allocation, "test contract").kind(),
+            CodecFailureKind::AllocationFailure
+        );
+        assert_eq!(
+            map_data(DataError::ArithmeticOverflow, "test contract").kind(),
+            CodecFailureKind::Overflow
+        );
+        assert!(matches!(
+            map_data(
+                DataError::CapabilityUnavailable {
+                    capability: DocumentCapability::AttachedFacts,
+                },
+                "test contract"
+            )
+            .kind(),
+            CodecFailureKind::InternalContractViolation {
+                contract: "test contract"
+            }
+        ));
+        assert!(matches!(
+            map_data(DataError::InvalidDocument, "test contract").kind(),
+            CodecFailureKind::InternalContractViolation {
+                contract: "test contract"
+            }
+        ));
     }
 }

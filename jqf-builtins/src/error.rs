@@ -250,6 +250,15 @@ impl EngineRunError {
         EngineRunError::Codec(CodecError::new(CodecFailureKind::AllocationFailure))
     }
 
+    /// Maps a [`jqf_data::TemporalError`]: allocation stays the memory ceiling; range, syntax, and fraction failures
+    /// are the caller's domain error.
+    pub fn from_temporal(error: jqf_data::TemporalError, domain: impl FnOnce() -> Self) -> Self {
+        match error {
+            jqf_data::TemporalError::Allocation => Self::allocation_failure(),
+            _ => domain(),
+        }
+    }
+
     /// A broken-internal-contract error naming the violated invariant.
     pub fn internal_contract(contract: &'static str) -> Self {
         EngineRunError::Codec(CodecError::new(CodecFailureKind::InternalContractViolation {

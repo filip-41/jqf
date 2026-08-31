@@ -263,7 +263,7 @@ fn exact_preserves_leading_comment_on_an_unquoted_key() {
         panic!("node")
     };
     let document = located.product().document();
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let limit = jqf_data::unbounded_batch_limit();
     let mut reader = document.fact_reader(&mut resources).expect("reader");
     let mut found = alloc::vec::Vec::new();
     loop {
@@ -334,7 +334,7 @@ fn comments_attach_as_leading_facts() {
         panic!("expected full document")
     };
     let document = product.document();
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let limit = jqf_data::unbounded_batch_limit();
     let mut reader = document.fact_reader(&mut resources).expect("reader");
     let mut found = alloc::vec::Vec::new();
     loop {

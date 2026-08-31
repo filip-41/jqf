@@ -130,7 +130,7 @@ fn comment_facts(
     resources: &mut jqf_resource::ResourceContext<'_>,
 ) -> Vec<(jqf_data::NodeId, Vec<String>)> {
     let document = product.document();
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let limit = jqf_data::unbounded_batch_limit();
     let mut reader = document.fact_reader(resources).expect("reader");
     let mut out = Vec::new();
     loop {

@@ -6,7 +6,7 @@
 use jqf_codec_json::ndjson::{NdjsonProfile, NdjsonTerminator};
 use jqf_codec_json::seq::JsonSeqProfile;
 use jqf_codec_json::{JsonEncodeOptions, JsonIndent};
-use jqf_engine::{CodecRequirementPolicy, CompiledProgram, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_runtime::records::{
     OutputTarget, PlanDecision, RecordDriveError, RecordDriveSpec, RecordInputKind, RecordOutputSpec, RecordRunModel,
@@ -80,6 +80,7 @@ fn compile(source: &str, resources: &ResourceContext<'_>) -> CompiledProgram {
             jqf_codec_core::ValidationMode::Strict,
             jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
         ),
+        CompileOptions::new(),
         resources,
     )
     .expect("program compiles")

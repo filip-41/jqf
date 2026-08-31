@@ -19,8 +19,8 @@ use jqf_codec_core::{
 };
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedIntrinsicTag, AccountedOccurrenceKey,
-    AccountedSemanticNode, BuilderCoverage, DataError, DocumentFinalizationPoll, DocumentTextId, FactPayload,
-    LocalOwnerRef, NodeId, TagId,
+    AccountedSemanticNode, BuilderCoverage, DataError, DocumentCapacity, DocumentFinalizationPoll, DocumentTextId,
+    FactPayload, LocalOwnerRef, NodeId, TagId,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::ResolvedSource;
@@ -353,11 +353,21 @@ impl JqfbDecodeState {
     fn new_with_image(
         image: JqfbImage,
         coverage: BuilderCoverage,
-        _resources: &mut ResourceContext<'_>,
+        resources: &mut ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
         let recipe = jqfb_recipe().map_err(map_data)?;
         let (mut builder, _schema) =
             AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
+        if image.node_count > 0 {
+            let _ = builder.try_reserve(
+                DocumentCapacity {
+                    nodes: image.node_count,
+                    occurrences: image.node_count.saturating_sub(1),
+                    ..DocumentCapacity::default()
+                },
+                resources,
+            );
+        }
         builder.set_authoritative_empty_families(jqf_data::AuthoritativeEmptyFamilies::from_family(
             jqf_data::DocumentCapabilityFamily::Attributes,
         ));

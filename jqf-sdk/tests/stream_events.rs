@@ -4,7 +4,7 @@ use core::any::Any;
 
 use jqf_codec_core::{CodecFailureKind, DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Failure, Input, ItemSink, PipelineFailure, PipelinePolicy,
@@ -63,6 +63,7 @@ fn compile(program: &str, resources: &ResourceContext<'_>) -> jqf_engine::Compil
     try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         resources,
     )
     .expect("program compiles")

@@ -775,7 +775,7 @@ fn build_comment_index(
     grammar: Grammar,
     resources: &mut ResourceContext<'_>,
 ) -> Result<CommentIndex, CodecError> {
-    use jqf_data::{BatchLimit, FactPayloadView, ReaderPoll};
+    use jqf_data::{FactPayloadView, ReaderPoll, unbounded_batch_limit};
 
     let mut index = CommentIndex::default();
     let mut reader = match document.fact_reader(resources) {
@@ -788,7 +788,7 @@ fn build_comment_index(
         // the contract violation.
         Err(error) => return Err(map_data(error)),
     };
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+    let limit = unbounded_batch_limit();
     loop {
         let poll = reader.poll_batch(limit, resources).map_err(map_data)?;
         match poll {

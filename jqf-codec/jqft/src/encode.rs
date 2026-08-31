@@ -17,8 +17,8 @@ use jqf_codec_core::{
     RecycledSessionState,
 };
 use jqf_data::{
-    ArrayView, BatchLimit, Document, FactPayloadView, IntrinsicTagSemantics, NodeId, NumberView, ObjectView,
-    ReaderPoll, ScalarView, Value, ValueView, format_binary64,
+    ArrayView, Document, FactPayloadView, IntrinsicTagSemantics, NodeId, NumberView, ObjectView, ReaderPoll,
+    ScalarView, Value, ValueView, format_binary64, unbounded_batch_limit,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 
@@ -411,7 +411,7 @@ impl JqftEncoder {
                 }));
             }
         };
-        let limit = BatchLimit::new(usize::MAX).ok_or_else(|| CodecError::new(CodecFailureKind::Overflow))?;
+        let limit = unbounded_batch_limit();
         loop {
             let poll = reader.poll_batch(limit, resources).map_err(|_| {
                 CodecError::new(CodecFailureKind::InternalContractViolation {

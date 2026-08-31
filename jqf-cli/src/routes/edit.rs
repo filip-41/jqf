@@ -7,7 +7,7 @@
 use std::io::Write as IoWrite;
 
 use jqf_codec_core::{DecodeRequest, ItemByteOwner, RouteCapability};
-use jqf_engine::try_compile_program_with_args;
+use jqf_engine::{CompileOptions, try_compile_program};
 use jqf_sdk::{FacadeFraming, Input, Outcome, PipelinePolicy, Report};
 
 use crate::args::CliInputSelection;
@@ -132,10 +132,14 @@ pub(crate) fn diff(ctx: &mut RouteContext<'_, '_>) -> Result<RouteOutcome, CliFa
     let old = parse_diff_document(old_path, ctx.diff_old_selection, ctx.catalog, old_policy, ctx.resources)?;
     let new = parse_diff_document(new_path, ctx.diff_new_selection, ctx.catalog, new_policy, ctx.resources)?;
     let diff_bindings = vec![(String::from("$__old"), old), (String::from("$__new"), new)];
-    let compiled = try_compile_program_with_args(
+    let compiled = try_compile_program(
         "diff($__old; $__new)",
         ctx.compile_policy,
-        &diff_bindings,
+        CompileOptions {
+            cli_vars: &diff_bindings,
+            split_exp: false,
+            ..Default::default()
+        },
         ctx.resources,
     )
     .map_err(|error| compile_failure(&error, "diff($__old; $__new)"))?;

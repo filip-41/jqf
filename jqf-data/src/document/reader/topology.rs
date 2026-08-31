@@ -3,16 +3,17 @@
 //! One poll sequence emits every node batch, then every occurrence batch. A failed reader is terminal. See [`super`]
 //! for the poll contract.
 
-use core::ops::Range;
+use core::ops::{ControlFlow, Range};
 
 use jqf_resource::ResourceContext;
 
-use crate::{
-    DataError, Document, DocumentNodeKindId, IntrinsicTag, LocalOwnerRef, NodeId, OccurrenceId, OccurrenceRoleId,
-    ValueView,
-};
+use crate::document::DocumentNodeKindId;
+use crate::{DataError, Document, IntrinsicTag, LocalOwnerRef, NodeId, OccurrenceId, OccurrenceRoleId, ValueView};
 
-use super::{BatchLimit, ReaderCompletion, ReaderDemand, ReaderPoll, admitted_items};
+use super::{
+    BatchLimit, ReaderCompletion, ReaderDemand, ReaderPoll, UNBOUNDED_READER_REPLENISH, admitted_items,
+    unbounded_batch_limit,
+};
 
 enum Phase {
     Nodes,
@@ -102,6 +103,32 @@ impl<'document, 'source> TopologyReader<'document, 'source> {
                 }),
                 Phase::Complete | Phase::Failed => unreachable!(),
             }));
+        }
+    }
+
+    /// Walk every logical node. Occurrence batches are consumed and ignored.
+    /// [`ReaderPoll::Pending`] refills [`UNBOUNDED_READER_REPLENISH`] work credits.
+    pub fn drain_nodes<B>(
+        &mut self,
+        resources: &mut ResourceContext<'_>,
+        mut visit: impl FnMut(DocumentNodeView<'_, '_>) -> ControlFlow<B>,
+    ) -> Result<ControlFlow<B>, DataError> {
+        let limit = unbounded_batch_limit();
+        loop {
+            match self.poll_batch(limit, resources)? {
+                ReaderPoll::Batch(TopologyBatch::Nodes(nodes)) => {
+                    for node in &nodes {
+                        if let ControlFlow::Break(stopped) = visit(node?) {
+                            return Ok(ControlFlow::Break(stopped));
+                        }
+                    }
+                }
+                ReaderPoll::Batch(TopologyBatch::Occurrences(_)) => {}
+                ReaderPoll::Pending => {
+                    resources.try_begin_next_cooperative_entry(UNBOUNDED_READER_REPLENISH)?;
+                }
+                ReaderPoll::End(_) => return Ok(ControlFlow::Continue(())),
+            }
         }
     }
 }

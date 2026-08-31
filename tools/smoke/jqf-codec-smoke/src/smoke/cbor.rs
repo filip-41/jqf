@@ -205,8 +205,8 @@ fn sequence_rows() -> Result<(), String> {
         let output_dialect =
             jqf_data::DialectId::try_new(jqf_codec_cbor::seq::JQF_DIALECT_ID).map_err(|e| e.to_string())?;
         let policy = jqf_engine::CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let program =
-            jqf_engine::try_compile_program(".", policy, &resources).map_err(|error| format!("compile: {error}"))?;
+        let program = jqf_engine::try_compile_program(".", policy, jqf_engine::CompileOptions::new(), &resources)
+            .map_err(|error| format!("compile: {error}"))?;
         let requirement = program
             .try_requirement(&resources)
             .map_err(|error| format!("requirement: {:?}", error.kind()))?;

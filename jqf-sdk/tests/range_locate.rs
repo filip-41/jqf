@@ -16,7 +16,7 @@ fn json_dialect() -> &'static DialectId {
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelinePolicy, PublicationStatus,
@@ -104,7 +104,8 @@ fn run_locate(
     let dialect = || DialectId::try_new(jqf_codec_json::RFC8259_DIALECT_ID).expect("dialect id is valid");
     let mut resources = resources(memory_bytes, credits);
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program_source, policy, &resources).expect("program compiles");
+    let compiled =
+        try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     assert!(
         compiled.range_locate_eligible(),
         "{program_source} must be range-locate eligible"
@@ -294,7 +295,8 @@ fn a_computed_constant_bound_is_byte_identical_to_its_authored_literal() {
     // is never handed the rung.
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let resources = resources(64 << 20, 4_096);
-    let compiled = try_compile_program(".catalog[(1*2):]", policy, &resources).expect("compiles");
+    let compiled =
+        try_compile_program(".catalog[(1*2):]", policy, CompileOptions::new(), &resources).expect("compiles");
     assert!(!compiled.range_locate_eligible());
 }
 

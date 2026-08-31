@@ -108,14 +108,7 @@ fn route_schema_recipe() -> Result<DocumentSchemaRecipe<'static>, DataError> {
 }
 
 pub(crate) fn map_data(error: DataError) -> CodecError {
-    // A builder can raise an UNREPRESENTABLE shape on the XML tree; that arm
-    // is the codec's own, everything else is the shared mapping.
-    match error {
-        DataError::UnrepresentableSemantic | DataError::CyclicSemanticGraph => {
-            CodecError::new(CodecFailureKind::UnsupportedRepresentation)
-        }
-        other => jqf_codec_core::map_data(other, "XML builder rejected document construction"),
-    }
+    jqf_codec_core::map_data(error, "XML builder rejected document construction")
 }
 
 /// Builds the semantic document from the parsed tree. The root is

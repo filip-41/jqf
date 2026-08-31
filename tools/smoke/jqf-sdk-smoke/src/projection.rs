@@ -88,7 +88,7 @@ pub(crate) fn assert_explain_plan() -> Result<(), String> {
         (
             ".",
             "identity=1 modifies=0 whole=1 morsel_path=1 input_family=0 class=Subtree \
-             pushdown=[] rungs=rl:0 m:1 consumer=none",
+             pushdown=[] rungs=rl:0 m:1 consumer=none routes=c:0 e:0 k:0 t:0 ic=0",
         ),
         // The element count of a static container: served by the whole-document
         // route now (the element-stream count fold was deleted with the
@@ -96,33 +96,33 @@ pub(crate) fn assert_explain_plan() -> Result<(), String> {
         (
             "[.catalog[]] | length",
             "identity=0 modifies=0 whole=1 morsel_path=0 input_family=0 class=Structure \
-             pushdown=.catalog rungs=rl:0 m:1 consumer=Collect",
+             pushdown=.catalog rungs=rl:0 m:1 consumer=Collect routes=c:1 e:0 k:0 t:0 ic=0",
         ),
         // The select-projection union case: the count is whole-document now.
         // The BACKWARD lattice class stays Fields[id].
         (
             "[.catalog[] | select(.id > 35990) | .name] | length",
             "identity=0 modifies=0 whole=1 morsel_path=0 input_family=0 class=Fields[id] \
-             pushdown=.catalog rungs=rl:0 m:1 consumer=Collect",
+             pushdown=.catalog rungs=rl:0 m:1 consumer=Collect routes=c:0 e:0 k:0 t:0 ic=0",
         ),
         // A fold over a static container: the whole-document floor serves it.
         // `whole=1` — the fold visits every element its generator yields.
         (
             "reduce .catalog[].id as $i (0; . + $i)",
             "identity=0 modifies=0 whole=1 morsel_path=0 input_family=0 class=Fields[id] \
-             pushdown=[] rungs=rl:0 m:1 consumer=Fold",
+             pushdown=[] rungs=rl:0 m:1 consumer=Fold routes=c:0 e:0 k:0 t:0 ic=0",
         ),
         // A fan-out over a WHOLE element, consumer Residual.
         (
             ".catalog[].name",
             "identity=0 modifies=0 whole=1 morsel_path=0 input_family=0 class=Fields[name] \
-             pushdown=.catalog rungs=rl:0 m:1 consumer=Residual",
+             pushdown=.catalog rungs=rl:0 m:1 consumer=Residual routes=c:0 e:1 k:0 t:0 ic=0",
         ),
         // A shallow answer: no rung below the morsel lane applies.
         (
             ".catalog | keys",
             "identity=0 modifies=0 whole=0 morsel_path=0 input_family=0 class=Subtree \
-             pushdown=.catalog rungs=rl:0 m:1 consumer=none",
+             pushdown=.catalog rungs=rl:0 m:1 consumer=none routes=c:0 e:0 k:1 t:0 ic=0",
         ),
         // A collect whose BODY is a bound-handle escape: `$x` reads the whole
         // element, so no per-element shape row admits it and the route is the
@@ -131,14 +131,14 @@ pub(crate) fn assert_explain_plan() -> Result<(), String> {
         (
             "[.catalog[] as $x | $x]",
             "identity=0 modifies=0 whole=1 morsel_path=0 input_family=0 class=Subtree \
-             pushdown=[] rungs=rl:0 m:1 consumer=Binding",
+             pushdown=[] rungs=rl:0 m:1 consumer=Binding routes=c:0 e:0 k:0 t:0 ic=0",
         ),
         // A plain located static path: the whole chain pushes down, no rung
         // below the morsel lane applies.
         (
             ".catalog[0].id",
             "identity=0 modifies=0 whole=0 morsel_path=1 input_family=0 class=Subtree \
-             pushdown=.catalog[0].id rungs=rl:0 m:1 consumer=none",
+             pushdown=.catalog[0].id rungs=rl:0 m:1 consumer=none routes=c:0 e:0 k:0 t:0 ic=0",
         ),
     ];
 
@@ -289,6 +289,15 @@ fn explain_label(plan: &ExplainPlan<'_>) -> String {
         None => "none".to_owned(),
     };
     let _ = write!(out, " consumer={consumer}");
+    let _ = write!(
+        out,
+        " routes=c:{} e:{} k:{} t:{} ic={}",
+        bool_as_int(plan.count_route),
+        bool_as_int(plan.element_route),
+        bool_as_int(plan.keys_route),
+        bool_as_int(plan.type_route),
+        bool_as_int(plan.uses_inputs_cursor),
+    );
     out
 }
 

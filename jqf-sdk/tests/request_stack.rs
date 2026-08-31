@@ -3,8 +3,8 @@
 //! this test spawns first and compiles on that thread.
 
 use jqf_sdk::{
-    ContinueControl, DiagnosticPolicy, RequestAccount, ResourceContext, ResourceLimits, ValidationMode, WorkMeter,
-    try_compile_program,
+    CompileOptions, ContinueControl, DiagnosticPolicy, RequestAccount, ResourceContext, ResourceLimits, ValidationMode,
+    WorkMeter, try_compile_program,
 };
 
 #[test]
@@ -24,10 +24,11 @@ fn deep_nesting_refuses_on_a_sized_thread() {
             .expect("resources start");
             let policy = jqf_sdk::CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
             let deep = format!("{} .{}", "(".repeat(2000), ")".repeat(2000));
-            try_compile_program(&deep, policy, &resources).expect("2000 groups must compile on the sized thread");
+            try_compile_program(&deep, policy, CompileOptions::new(), &resources)
+                .expect("2000 groups must compile on the sized thread");
 
             let past = format!("{} .{}", "(".repeat(10_000), ")".repeat(10_000));
-            let error = try_compile_program(&past, policy, &resources)
+            let error = try_compile_program(&past, policy, CompileOptions::new(), &resources)
                 .expect_err("10_000 groups must refuse at the nesting ceiling");
             let text = format!("{error}");
             assert!(

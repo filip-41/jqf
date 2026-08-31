@@ -34,6 +34,11 @@ impl ObjectEntry {
         self.key.clone_shared()
     }
 
+    /// Charged copy of this entry's key as a string value. See [`ObjectKey::try_to_value_string`].
+    pub fn try_to_value_string(&self) -> Result<Value, ValueAllocationError> {
+        self.key.try_to_value_string()
+    }
+
     /// The value.
     #[must_use]
     pub const fn value(&self) -> &Value {
@@ -114,6 +119,16 @@ impl Object {
             .map(ObjectEntry::value_mut))
     }
 
+    /// Mutable access to the value for `key`.
+    ///
+    /// Copies first if another handle still sees this table. Missing key returns `Ok(None)` without copying.
+    pub fn try_get_mut(&mut self, key: &str) -> Result<Option<&mut Value>, ValueAllocationError> {
+        let Some(index) = self.key_position(key) else {
+            return Ok(None);
+        };
+        self.try_get_index_mut(index)
+    }
+
     /// Insert `key` only if it is new. Returns `false` if it already exists.
     pub fn try_insert_unique(&mut self, key: ObjectKey, value: Value) -> Result<bool, ValueAllocationError> {
         let storage = self.try_storage_mut(1)?;
@@ -136,6 +151,24 @@ impl Object {
         }
         storage.entries.push(ObjectEntry { key, value });
         Ok(true)
+    }
+
+    /// Insert `key`, or replace its value if it already exists.
+    ///
+    /// An existing key keeps its first-insertion position. Returns the previous value when replacing.
+    pub fn try_insert_or_replace(
+        &mut self,
+        key: ObjectKey,
+        value: Value,
+    ) -> Result<Option<Value>, ValueAllocationError> {
+        if let Some(index) = self.key_position(key.as_str()) {
+            let slot = self.try_get_index_mut(index)?.ok_or(ValueAllocationError)?;
+            return Ok(Some(core::mem::replace(slot, value)));
+        }
+        if !self.try_insert_unique(key, value)? {
+            return Err(ValueAllocationError);
+        }
+        Ok(None)
     }
 
     /// Entries in first-insertion order.
@@ -290,6 +323,10 @@ impl ObjectBuilder {
     /// `positions` is the caller's key order. Small objects keep no index; walking the list is cheaper than a second
     /// array.
     pub(crate) fn try_finish_unique_with_lookup(self, positions: Vec<usize>) -> Result<Object, ValueAllocationError> {
+        debug_assert!(
+            keys_are_unique(&self.entries),
+            "try_finish_unique_with_lookup requires unique keys"
+        );
         if positions.len() != self.entries.len() {
             // A key order that does not cover every entry is a caller bug. Debug builds assert; release falls back to
             // the crate's single fallible signal rather than publishing a half-built object.
@@ -320,7 +357,12 @@ impl ObjectBuilder {
     }
 
     /// Finish when keys are already unique and last-value-wins is already applied. Skips the duplicate scan.
+    ///
+    /// Public builders use [`Self::try_finish`]. This path is for codecs that already proved uniqueness; debug builds
+    /// assert it. Duplicate keys on this path are a caller bug.
+    #[doc(hidden)]
     pub fn try_finish_unique(self) -> Result<Object, ValueAllocationError> {
+        debug_assert!(keys_are_unique(&self.entries), "try_finish_unique requires unique keys");
         let index = if self.entries.len() > LINEAR_DEDUP_THRESHOLD {
             Some(ObjectStorageIndex::Lookup(
                 ObjectLookupIndex::try_from_unique_entries(&self.entries, 0).map_err(|_| ValueAllocationError)?,
@@ -334,6 +376,14 @@ impl ObjectBuilder {
         })
         .map(Object)
     }
+}
+
+fn keys_are_unique(entries: &[ObjectEntry]) -> bool {
+    entries.iter().enumerate().all(|(index, entry)| {
+        entries[..index]
+            .iter()
+            .all(|other| other.key.as_str() != entry.key.as_str())
+    })
 }
 
 fn finish_linear(mut entries: Vec<ObjectEntry>) -> Result<Object, ValueAllocationError> {
@@ -534,6 +584,22 @@ mod tests {
     }
 
     #[test]
+    fn public_finish_collapses_duplicate_keys_to_first_position_last_value() {
+        let mut builder = ObjectBuilder::new();
+        builder
+            .try_insert_last(key("a"), Value::Bool(false))
+            .expect("first insert");
+        builder
+            .try_insert_last(key("a"), Value::Bool(true))
+            .expect("duplicate append");
+        builder.try_insert_last(key("b"), Value::Null).expect("second key");
+        let object = builder.try_finish().expect("public finish last-value-wins");
+        assert_eq!(object.len(), 2);
+        assert!(matches!(object.get("a"), Some(Value::Bool(true))));
+        assert_eq!(object.into_iter().filter(|entry| entry.key.as_str() == "a").count(), 1);
+    }
+
+    #[test]
     fn unique_finish_skips_the_dedup_scan_and_builds_the_same_shapes() {
         // Below the threshold, the unique finish must produce the same index-free shape as the ordinary finish.
         let mut small = ObjectBuilder::try_with_capacity(4).expect("fixture reserves");
@@ -624,6 +690,46 @@ mod tests {
             .try_insert_unique(key("key-99"), Value::Bool(true))
             .expect("indexed insertion succeeds");
         assert!(matches!(detached.get("key-99"), Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn try_get_mut_missing_key_does_not_copy() {
+        let original = finish_unique(2);
+        let mut twin = original.clone();
+        assert!(twin.try_get_mut("missing").expect("lookup succeeds").is_none());
+        assert!(original.shares_storage_with(&twin));
+    }
+
+    #[test]
+    fn try_get_mut_detaches_a_shared_table() {
+        let original = finish_unique(2);
+        let mut twin = original.clone();
+        *twin
+            .try_get_mut("key-01")
+            .expect("lookup succeeds")
+            .expect("entry exists") = Value::Null;
+        assert!(!original.shares_storage_with(&twin));
+        assert!(matches!(twin.get("key-01"), Some(Value::Null)));
+        assert!(matches!(original.get("key-01"), Some(Value::Bool(false))));
+    }
+
+    #[test]
+    fn try_insert_or_replace_keeps_first_position() {
+        let mut object = finish_unique(2);
+        let previous = object
+            .try_insert_or_replace(key("key-01"), Value::Null)
+            .expect("replace succeeds");
+        assert!(matches!(previous, Some(Value::Bool(false))));
+        assert_eq!(object.len(), 2);
+        assert_eq!(object.get_index(0).expect("first entry").key(), "key-01");
+        assert!(matches!(object.get("key-01"), Some(Value::Null)));
+
+        let previous = object
+            .try_insert_or_replace(key("key-99"), Value::Bool(true))
+            .expect("insert succeeds");
+        assert!(previous.is_none());
+        assert_eq!(object.len(), 3);
+        assert_eq!(object.get_index(2).expect("appended entry").key(), "key-99");
     }
 
     #[test]

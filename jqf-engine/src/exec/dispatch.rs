@@ -67,7 +67,7 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
         // `. OP <single-valued operand>` needs NO frame: both operands produce
         // exactly one value, the left one being the input itself. Owned and
         // located inputs take the same exit; located materializes once first.
-        // Shape is a compile-time fact (mark_binary_shapes after fuse).
+        // Shape is a compile-time fact (mark_post_fuse_facts after fuse).
         match shape {
             BinaryShape::IdentityLiteral => {
                 let literal = constant_operand(self.nodes, right)

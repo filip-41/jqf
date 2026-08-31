@@ -35,8 +35,7 @@ use alloc::vec::Vec;
 use jqf_data::Value;
 
 use crate::analysis::{
-    AntiJoinScan, CorrelatedScan, ElementBoundary, PartialSort, ProjectionClass, PushdownSplit, anti_joins, classify,
-    correlated_scans, partial_sorts,
+    AntiJoinScan, CorrelatedScan, ElementBoundary, PartialSort, ProjectionClass, PushdownSplit, classify,
 };
 use jqf_builtins::registry::{BuiltinDispatch, BuiltinOverloadId, Evaluator, SemanticRevision, dispatch};
 
@@ -958,7 +957,7 @@ pub enum ProgramNode {
     /// container rather than delete every other element.
     ///
     /// The operator-specific half lives entirely in the LOWERING (see
-    /// `compile::lower`): `= op= //=` bind their right-hand side OUTSIDE this
+    /// [`crate::compile`]): `= op= //=` bind their right-hand side OUTSIDE this
     /// node, so a bound RHS emitting nothing kills the whole expression before a
     /// single path is visited, while `|= empty` reaches the deletion law above.
     Modify {
@@ -970,17 +969,18 @@ pub enum ProgramNode {
         /// Whether the update reads the value it replaces.
         mode: ModifyMode,
     },
-    /// The FACT-WRITE assignment (`PATH.@role = RHS` or `PATH.&name = RHS`
-    /// under `--edit`): the value path `paths` resolves to LOCATED nodes, each
-    /// node's fact `role` payload is replaced (or updated) by `update`, and the
-    /// run records one [`crate::exec::FactDelta`] per node BESIDE the unchanged
-    /// document — a fact write is a span operation, never a value mutation.
+    /// The FACT-WRITE assignment (`PATH.@role = RHS` or `PATH.&name = RHS`):
+    /// the value path `paths` resolves to LOCATED nodes, each node's fact
+    /// `role` payload is replaced (or updated) by `update`, and the run records
+    /// one [`crate::exec::FactDelta`] per node BESIDE the unchanged document —
+    /// a fact write is a span operation, never a value mutation.
     ///
-    /// Reachable only in edit-mode compiles (the CLI passes `--edit` into the
-    /// compile). The executor walks the original located document for the span
-    /// authority — a preceding value write emits an owned result, so the machine
-    /// keeps that document as origin. The edit lane merges the deltas with any
-    /// value-diff patches against the same retained source.
+    /// Fact assignment lowers in every compile; `--edit` is the splice into
+    /// retained source, not a compile gate. The executor walks the original
+    /// located document for the span authority — a preceding value write emits
+    /// an owned result, so the machine keeps that document as origin. The edit
+    /// lane merges the deltas with any value-diff patches against the same
+    /// retained source.
     FactAssign {
         /// The value path generator, lowered from the key/index chain before
         /// the accessor step — static Key/Index steps and runtime-resolved
@@ -1015,7 +1015,7 @@ pub enum ProgramNode {
 }
 
 impl ProgramNode {
-    /// A framed binary. [`crate::exec::mark_binary_shapes`] may rewrite `shape`.
+    /// A framed binary. [`crate::exec::mark_post_fuse_facts`] may rewrite `shape`.
     pub fn binary(op: BinaryKind, left: ProgramNodeId, right: ProgramNodeId) -> Self {
         Self::Binary {
             op,
@@ -1063,6 +1063,100 @@ pub struct Program {
     scans: Vec<CorrelatedScan>,
     topk: Vec<PartialSort>,
     anti: Vec<AntiJoinScan>,
+    has_reachable_flatmap: bool,
+}
+
+/// Whether the live graph reachable from `root` contains a [`ProgramNode::FlatMap`].
+///
+/// The walk is the compile-time fact later finish/codec/lazy readers consult
+/// without re-walking. It also gates [`crate::analysis::scan_tables`]: every
+/// closed scan/topk/anti row is a `FlatMap` shape, so a FlatMap-free graph
+/// cannot fill those tables.
+fn reachable_has_flatmap(nodes: &[ProgramNode], root: ProgramNodeId) -> bool {
+    fn walk(nodes: &[ProgramNode], id: ProgramNodeId, seen: &mut [bool]) -> bool {
+        let index = id.index();
+        if index >= seen.len() || seen[index] {
+            return false;
+        }
+        seen[index] = true;
+        match &nodes[index] {
+            ProgramNode::FlatMap { .. } => true,
+            ProgramNode::Binary { left, right, .. }
+            | ProgramNode::Choice { left, right }
+            | ProgramNode::Alternative { left, right }
+            | ProgramNode::Logical { left, right, .. } => walk(nodes, *left, seen) || walk(nodes, *right, seen),
+            ProgramNode::Concat { parts } => parts.iter().any(|part| walk(nodes, *part, seen)),
+            ProgramNode::Call { args, .. } => args.iter().any(|arg| walk(nodes, *arg, seen)),
+            ProgramNode::Stage { .. }
+            | ProgramNode::Empty
+            | ProgramNode::CallFilter { .. }
+            | ProgramNode::Break { .. }
+            | ProgramNode::EnginePull { .. } => false,
+            ProgramNode::CollectArray { body } | ProgramNode::CountCollect { body } => {
+                body.is_some_and(|body| walk(nodes, body, seen))
+            }
+            ProgramNode::ConstructObject { members } => members
+                .iter()
+                .any(|member| walk(nodes, member.key, seen) || walk(nodes, member.value, seen)),
+            ProgramNode::CallDef {
+                args,
+                filter_args,
+                body,
+                ..
+            } => {
+                walk(nodes, *body, seen)
+                    || args.iter().any(|arg| walk(nodes, *arg, seen))
+                    || filter_args.iter().any(|arg| walk(nodes, *arg, seen))
+            }
+            ProgramNode::Conditional {
+                condition,
+                consequent,
+                alternative,
+            } => walk(nodes, *condition, seen) || walk(nodes, *consequent, seen) || walk(nodes, *alternative, seen),
+            ProgramNode::Try { body, handler } => {
+                walk(nodes, *body, seen) || handler.is_some_and(|handler| walk(nodes, handler, seen))
+            }
+            ProgramNode::ChainBody { body } | ProgramNode::Label { body, .. } => walk(nodes, *body, seen),
+            ProgramNode::Bind { source, body, .. } | ProgramNode::EngineBind { source, body, .. } => {
+                walk(nodes, *source, seen) || walk(nodes, *body, seen)
+            }
+            ProgramNode::Reduce {
+                source,
+                init,
+                update,
+                keyed_collect,
+                ..
+            } => {
+                walk(nodes, *source, seen)
+                    || walk(nodes, *init, seen)
+                    || walk(nodes, *update, seen)
+                    || keyed_collect.is_some_and(|keyed| walk(nodes, keyed, seen))
+            }
+            ProgramNode::Foreach {
+                source,
+                init,
+                update,
+                extract,
+                ..
+            } => {
+                walk(nodes, *source, seen)
+                    || walk(nodes, *init, seen)
+                    || walk(nodes, *update, seen)
+                    || extract.is_some_and(|extract| walk(nodes, extract, seen))
+            }
+            ProgramNode::Counted { source, .. } => walk(nodes, *source, seen),
+            ProgramNode::Modify { paths, update, .. } | ProgramNode::FactAssign { paths, update, .. } => {
+                walk(nodes, *paths, seen) || walk(nodes, *update, seen)
+            }
+            ProgramNode::EngineGenerator { init, update, extract } => {
+                walk(nodes, *init, seen) || walk(nodes, *update, seen) || walk(nodes, *extract, seen)
+            }
+            ProgramNode::EngineRng { seed } => walk(nodes, *seed, seen),
+        }
+    }
+    let mut seen = Vec::new();
+    seen.resize(nodes.len(), false);
+    walk(nodes, root, &mut seen)
 }
 
 impl Program {
@@ -1078,9 +1172,12 @@ impl Program {
     /// per seed would charge every streamed element for a fact that cannot
     /// change between them.
     pub fn new(nodes: Vec<ProgramNode>, root: ProgramNodeId, split: PushdownSplit, slots: u32) -> Self {
-        let scans = correlated_scans(&nodes);
-        let topk = partial_sorts(&nodes);
-        let anti = anti_joins(&nodes);
+        let has_reachable_flatmap = reachable_has_flatmap(&nodes, root);
+        let (scans, topk, anti) = if has_reachable_flatmap {
+            crate::analysis::scan_tables(&nodes)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
         Self {
             nodes,
             root,
@@ -1089,7 +1186,17 @@ impl Program {
             scans,
             topk,
             anti,
+            has_reachable_flatmap,
         }
+    }
+
+    /// Whether the live graph reachable from the root contains a `FlatMap`.
+    ///
+    /// Derived once in [`Self::new`]. Scan/topk/anti tables stay empty when
+    /// this is false; later finish/codec/lazy readers reuse the same fact.
+    #[must_use]
+    pub const fn has_reachable_flatmap(&self) -> bool {
+        self.has_reachable_flatmap
     }
 
     /// The correlated `select` scans this program's executor may drive from a
@@ -1213,14 +1320,12 @@ impl Program {
     /// Whether this program is the MORSEL STATIC PATH class: the shape a record
     /// morsel worker may run.
     ///
-    /// Exactly the shape the record-route review pinned as the parallel lane:
-    /// the root is a bare
-    /// [`StageStart::Current`] [`Stage`] — no `Choice`, `FlatMap`, constructor,
-    /// `Call`, binder, or literal producer — whose every step is a STATIC
-    /// [`StepAccess::Key`] or [`StepAccess::Index`]. Identity (an empty step
-    /// list) qualifies. `.[]`, `..`, a slice, and a dynamic variable step do
-    /// not, so the class publishes at most one value per input and iterates
-    /// nothing.
+    /// Exactly the bare static path class: the root is a [`StageStart::Current`]
+    /// [`Stage`] — no `Choice`, `FlatMap`, constructor, `Call`, binder, or
+    /// literal producer — whose every step is a STATIC [`StepAccess::Key`] or
+    /// [`StepAccess::Index`]. Identity (an empty step list) qualifies. `.[]`,
+    /// `..`, a slice, and a dynamic variable step do not, so the class
+    /// publishes at most one value per input and iterates nothing.
     ///
     /// It is an ELIGIBILITY fact, not a correctness one: byte identity between
     /// the serial and the parallel record drives rests on the clean-morsel law

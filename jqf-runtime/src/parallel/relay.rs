@@ -640,7 +640,7 @@ mod tests {
     use super::*;
 
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    use jqf_engine::{CodecRequirementPolicy, CompiledProgram, try_compile_program};
+    use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
     use jqf_resource::{
         ContinueControl, Control, ControlError, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits,
         WorkMeter,
@@ -665,6 +665,7 @@ mod tests {
         try_compile_program(
             ".",
             CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+            CompileOptions::new(),
             resources,
         )
         .expect("identity compiles")

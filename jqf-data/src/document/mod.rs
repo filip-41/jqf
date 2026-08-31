@@ -39,19 +39,17 @@ pub use coverage::{
     DocumentCoverage,
 };
 pub use element::{ElementDemand, ElementProbe, ElementRow, ElementVerdict, owned_probe_value};
-pub use fact::{
-    DocumentFact, DocumentNodeKindId, FactKindId, FactPayload, FactPayloadList, FactPayloadMap, FactPayloadView,
-    FactRoleId, NamespacedIdError, OccurrenceRoleId,
-};
-pub(crate) use fact::{StoredDocumentFact, StoredFactPayload};
+pub use fact::{DocumentFact, FactKindId, FactPayload, FactPayloadView, FactRoleId, OccurrenceRoleId};
+pub(crate) use fact::{DocumentNodeKindId, StoredDocumentFact, StoredFactPayload};
 pub use handle::{DocumentId, FactId, NodeHandle, NodeId, OccurrenceId};
 pub use lazy::LazySpanMaterializer;
-pub use name::{ExpandedName, ExpandedNameError};
+pub use name::ExpandedName;
 pub use owner::LocalOwnerRef;
 pub use publish::{AccountedDocumentFinalizer, DocumentFinalizationPoll};
 pub use reader::{
     BatchLimit, DocumentNodeView, FactBatch, FactReader, NodeBatch, NodeIter, OccurrenceBatch, OccurrenceIter,
     OccurrenceView, ReaderCompletion, ReaderDemand, ReaderPoll, TopologyBatch, TopologyReader,
+    UNBOUNDED_READER_REPLENISH, unbounded_batch_limit,
 };
 pub use schema::{
     DocumentSchemaPrototype, DocumentSchemaRecipe, FactKindBindingId, FactRoleBindingId, PreparedDocumentSchema,
@@ -60,7 +58,7 @@ pub use schema::{
 #[cfg(feature = "benchmark-internals")]
 #[doc(hidden)]
 pub use storage::DocumentStorageLayoutStats;
-pub use storage::{ContainerSpanKind, DataError, Document, IntrinsicTag, IntrinsicTagSemantics};
+pub use storage::{ContainerSpanKind, DataError, DataErrorClass, Document, IntrinsicTag, IntrinsicTagSemantics};
 pub use text::{
     DocumentSourceBinding, DocumentSourceBindingPoll, DocumentSourceBindingStage, DocumentSourceText, DocumentTextId,
     DocumentTextStorageStats,

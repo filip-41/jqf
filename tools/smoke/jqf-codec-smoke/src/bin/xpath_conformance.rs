@@ -329,7 +329,7 @@ fn main() {
                         }
                     };
                     let owner = jqf_data::LocalOwnerRef::Node(node);
-                    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("batch limit");
+                    let limit = jqf_data::unbounded_batch_limit();
                     loop {
                         match reader.poll_batch(limit, &mut resources) {
                             Ok(jqf_data::ReaderPoll::Batch(batch)) => {

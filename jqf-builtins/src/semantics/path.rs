@@ -224,19 +224,19 @@ pub enum PathStep {
 /// spelling `getpath`/`setpath` read back.
 ///
 /// A key renders by RETAINING its text rather than copying it: the component is a second handle on the allocation the
-/// step holds, which is the same charge-once discipline [`Value::try_clone`] follows.
+/// step holds, which is the same charge-once discipline [`Value::clone`] follows.
 pub fn step_value(step: &PathStep, _resources: &ResourceContext<'_>) -> Result<Value, EngineRunError> {
     match step {
         PathStep::Key(name) => Ok(Value::String(name.clone_shared())),
         PathStep::Index(index) => Ok(integer(*index)),
         PathStep::IndexNaN => Ok(Value::Number(Number::float(Float::new(f64::NAN)))),
-        PathStep::Subsequence(needle) => Ok(try_clone(needle)),
-        PathStep::SliceObject(bounds) => Ok(try_clone(bounds)),
+        PathStep::Subsequence(needle) => Ok(needle.clone()),
+        PathStep::SliceObject(bounds) => Ok(bounds.clone()),
         PathStep::Slice { start, end } => {
             let mut builder = ObjectBuilder::try_with_capacity(2).map_err(|_| EngineRunError::allocation_failure())?;
             for (name, bound) in [(SLICE_START, start), (SLICE_END, end)] {
                 let bound = match bound {
-                    Some(bound) => try_clone(bound),
+                    Some(bound) => bound.clone(),
                     None => Value::Null,
                 };
                 builder
@@ -271,7 +271,7 @@ pub fn path_value(steps: &[PathStep], resources: &ResourceContext<'_>) -> Result
 /// this function's own.
 pub fn get_path(root: &Value, path: &Value, resources: &ResourceContext<'_>) -> Result<Value, EngineRunError> {
     let components = path_components(path, resources)?;
-    let mut current = try_clone(root);
+    let mut current = root.clone();
     for component in components {
         current = get_component(&current, component, resources)?;
     }
@@ -285,7 +285,7 @@ pub fn get_path(root: &Value, path: &Value, resources: &ResourceContext<'_>) -> 
 ///
 /// `root` is taken by VALUE, and that is the whole cost story: the descent VACATES each addressed slot
 /// ([`take_component`]) instead of reading a second handle out of it, so every container on the chain arrives at its
-/// write uniquely owned and the write lands in place. A caller that still needs its root passes a `try_clone` of it and
+/// write uniquely owned and the write lands in place. A caller that still needs its root clones it and
 /// pays exactly the copy-on-write detach it asked for; a caller that hands its only handle over — the assignment
 /// fold's accumulator — turns an O(container) rebuild per write into O(1).
 pub fn set_path(
@@ -511,7 +511,7 @@ pub fn get_component(
 ) -> Result<Value, EngineRunError> {
     match (container.untagged(), component.untagged()) {
         (Value::Object(object), Value::String(name)) => match object.get(name) {
-            Some(value) => Ok(try_clone(value)),
+            Some(value) => Ok(value.clone()),
             None => crate::error::mismatch::resolve_at(
                 resources,
                 crate::error::mismatch::MismatchCell::PathMiss,
@@ -521,7 +521,7 @@ pub fn get_component(
         },
         (Value::Array(array), Value::Number(number)) => match array_index(array.len(), number).position() {
             Some(position) => match array.get(position) {
-                Some(value) => Ok(try_clone(value)),
+                Some(value) => Ok(value.clone()),
                 None => crate::error::mismatch::resolve_at(
                     resources,
                     crate::error::mismatch::MismatchCell::PathMiss,
@@ -785,11 +785,10 @@ fn set_member(
     new: Value,
     resources: &ResourceContext<'_>,
 ) -> Result<Value, EngineRunError> {
-    if let Some(position) = object.key_position(name) {
-        let slot = object
-            .try_get_index_mut(position)
-            .map_err(|_| EngineRunError::allocation_failure())?
-            .ok_or_else(|| internal("object member vanished under a path write"))?;
+    if let Some(slot) = object
+        .try_get_mut(name)
+        .map_err(|_| EngineRunError::allocation_failure())?
+    {
         *slot = new;
     } else {
         crate::error::mismatch::resolve_at(
@@ -848,7 +847,7 @@ fn splice_array(
         values.push(clone_at(array, index)?);
     }
     for value in replacement {
-        values.push(try_clone(value));
+        values.push(value.clone());
     }
     for index in end..array.len() {
         values.push(clone_at(array, index)?);
@@ -901,7 +900,7 @@ fn slice_string(
 /// One element of `array`, duplicated by retaining its allocation.
 fn clone_at(array: &Array, index: usize) -> Result<Value, EngineRunError> {
     match array.get(index) {
-        Some(value) => Ok(try_clone(value)),
+        Some(value) => Ok(value.clone()),
         None => Err(internal("array element vanished under a path walk")),
     }
 }
@@ -1161,11 +1160,6 @@ pub fn invalid_iterate(container: &Value, resources: &ResourceContext<'_>) -> En
 /// second rendering path for text that is already final.
 pub fn raise(message: &str, _resources: &ResourceContext<'_>) -> EngineRunError {
     Value::try_string(message).map_or_else(|_| EngineRunError::allocation_failure(), EngineRunError::Raised)
-}
-
-/// Duplicates one owned value by retaining its allocations.
-pub fn try_clone(value: &Value) -> Value {
-    value.clone()
 }
 
 /// Fallibly allocates one shared object key.

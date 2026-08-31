@@ -104,7 +104,7 @@ use jqf_codec_core::{DiagnosticPolicy, RecordIssueSeverity, ValidationMode};
 use jqf_codec_json::JsonEncodeOptions;
 use jqf_codec_json::ndjson::{NdjsonProfile, NdjsonTerminator};
 use jqf_data::{ObjectBuilder, ObjectKey, Value};
-use jqf_engine::{CodecRequirementPolicy, CompiledProgram, try_compile_program_with_args};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
 use jqf_resource::{RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_runtime::records::{
     OutputTarget, RecordDriveError, RecordDriveSpec, RecordInputKind, RecordOutputSpec, RecordRunModel, WorkerRequest,
@@ -1058,13 +1058,21 @@ pub(crate) fn run_daemon(args: ServeArguments) -> Result<u8, CliFailure> {
         None => program.as_deref().unwrap_or("."),
     };
     let args_binding = empty_args_value()?;
+    let source_label: String = args
+        .program_file
+        .as_ref()
+        .map_or_else(|| String::from("<top-level>"), |path| path.display().to_string());
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     // COMPILED ONCE: the daemon's whole point is that the per-invocation fixed cost (compile, warm allocator, warm
     // planner) is paid a single time and every connection then answers against the same warm program.
-    let compiled = try_compile_program_with_args(
+    let compiled = try_compile_program(
         source_program,
         policy,
-        &[(String::from("$ARGS"), args_binding)],
+        CompileOptions {
+            cli_vars: &[(String::from("$ARGS"), args_binding)],
+            split_exp: false,
+            source_label: &source_label,
+        },
         &resources,
     )
     .map_err(|error| compile_failure(&error, source_program))?;

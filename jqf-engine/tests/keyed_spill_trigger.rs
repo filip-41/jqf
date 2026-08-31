@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
 use jqf_resource::{
     ContinueControl, RequestAccount, ResourceContext, ResourceError, ResourceLimits, RunCursorId, RunId, SpillStore,
     WorkMeter,
@@ -163,6 +163,7 @@ fn run_with_spill(program: &str, input: &str, budget: u64) -> (Vec<u8>, Counting
     let compiled = try_compile_program(
         program,
         CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compile");

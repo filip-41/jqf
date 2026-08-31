@@ -27,7 +27,7 @@ use crate::error::message;
 use crate::semantics::depth::{self, Guarded, TooDeep, comparison_error};
 use crate::semantics::order;
 use crate::semantics::owned_kind;
-use crate::semantics::path::{array_position, raise, slice_bounds, try_clone};
+use crate::semantics::path::{array_position, raise, slice_bounds};
 
 /// A trie of the paths one `delpaths` removes.
 #[derive(Default)]
@@ -103,7 +103,7 @@ impl DeleteTree {
                 };
                 spine.try_reserve(1).map_err(|_| EngineRunError::allocation_failure())?;
                 spine.push(Branch {
-                    component: try_clone(component),
+                    component: component.clone(),
                     children: Self::default(),
                 });
             }
@@ -177,7 +177,7 @@ pub fn delete_paths(root: &Value, paths: &Value, resources: &ResourceContext<'_>
     if tree.terminal {
         return Ok(Value::Null);
     }
-    apply(&tree, try_clone(root), resources)
+    apply(&tree, root.clone(), resources)
 }
 
 /// The per-element path rejection, which names the offending element's KIND (`Path must be specified as array, not
@@ -234,8 +234,8 @@ fn apply_to_object(
             .find(|branch| matches_key(&branch.component, entry.key()));
         let value = match branch {
             Some(branch) if branch.children.terminal => continue,
-            Some(branch) => apply(&branch.children, try_clone(entry.value()), resources)?,
-            None => try_clone(entry.value()),
+            Some(branch) => apply(&branch.children, entry.value().clone(), resources)?,
+            None => entry.value().clone(),
         };
         builder
             .try_insert_last(entry.clone_key(), value)
@@ -297,12 +297,12 @@ fn apply_to_array(tree: &DeleteTree, array: &Array, resources: &ResourceContext<
         .try_reserve_exact(array.len())
         .map_err(|_| EngineRunError::allocation_failure())?;
     for value in array {
-        working.push(try_clone(value));
+        working.push(value.clone());
     }
     let mut delkeys: Vec<Value> = Vec::new();
     for branch in &tree.entries {
         if branch.children.terminal {
-            delkeys.push(try_clone(&branch.component));
+            delkeys.push(branch.component.clone());
             continue;
         }
         match branch.component.untagged() {
@@ -321,7 +321,7 @@ fn apply_to_array(tree: &DeleteTree, array: &Array, resources: &ResourceContext<
                 let element = working
                     .get(position)
                     .ok_or_else(|| internal("a working array position vanished"))?;
-                let rebuilt = apply(&branch.children, try_clone(element), resources)?;
+                let rebuilt = apply(&branch.children, element.clone(), resources)?;
                 working[position] = rebuilt;
             }
             Value::Object(bounds) => {
@@ -333,7 +333,7 @@ fn apply_to_array(tree: &DeleteTree, array: &Array, resources: &ResourceContext<
                 };
                 let mut rebuilt_values = Vec::new();
                 for value in rebuilt {
-                    rebuilt_values.push(try_clone(value));
+                    rebuilt_values.push(value.clone());
                 }
                 working.splice(start..end, rebuilt_values);
             }
@@ -390,7 +390,7 @@ fn apply_to_array(tree: &DeleteTree, array: &Array, resources: &ResourceContext<
     for (index, element) in working.iter().enumerate() {
         covered += cut[index];
         if covered == 0 {
-            out.push(try_clone(element));
+            out.push(element.clone());
         }
     }
     Array::try_from_vec(out)
@@ -411,7 +411,7 @@ fn segment_of(
         .map_err(|_| EngineRunError::allocation_failure())?;
     for index in start..end {
         match working.get(index) {
-            Some(value) => values.push(try_clone(value)),
+            Some(value) => values.push(value.clone()),
             None => return Err(internal("a slice segment ran past its array")),
         }
     }

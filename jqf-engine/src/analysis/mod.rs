@@ -46,14 +46,18 @@ mod topk;
 
 pub use demand::{BoundaryConsumer, ElementBoundary};
 pub(crate) use demand::{PushdownSplit, analyze, fuse_with_callables};
-pub(crate) use join::{AntiJoinScan, CorrelatedScan, anti_joins, correlated_scans};
+#[cfg(test)]
+pub(crate) use join::correlated_scans;
+pub(crate) use join::{AntiJoinScan, CorrelatedScan, scan_tables};
 pub(crate) use lazy::consumes_whole_document;
 pub(crate) use locate::is_range_locate;
+pub(crate) use partial::PartialSort;
 pub use partial::TopKConsumer;
-pub(crate) use partial::{PartialSort, partial_sorts};
+#[cfg(test)]
+pub(crate) use partial::partial_sorts;
 pub use projection::ProjectionClass;
 pub(crate) use projection::classify;
-pub(crate) use prune::{PruneNode, prune_tree, pulled_record_prune_tree};
+pub(crate) use prune::{PruneNode, prune_trees};
 pub(crate) use tailcall::mark_tail_calls;
 pub(crate) use topk::topk_count;
 

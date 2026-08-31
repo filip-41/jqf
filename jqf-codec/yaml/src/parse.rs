@@ -1374,7 +1374,7 @@ impl YamlParser {
         // (minus the `<<` entry itself) or an already-accepted merged entry holds an equal key under
         // yaml.key-equivalence@1 — the SAME law the duplicate-key validation later applies to the expanded entries, so
         // a legal merge can never manufacture a duplicate-key rejection.
-        let mut equality = KeyEquality::try_new(&self.graph, source, self.dialect)?;
+        let mut equality = KeyEquality::new(&self.graph, source, self.dialect);
         let mut merged: Vec<(NodeId, NodeId)> = Vec::new();
         // One provenance pair per admitted entry: the merged VALUE node and the host mapping it landed in.
         let mut merged_into: Vec<(NodeId, NodeId)> = Vec::new();

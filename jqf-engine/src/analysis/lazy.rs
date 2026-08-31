@@ -287,7 +287,7 @@ fn call_consumes_whole_input(overload: u16) -> bool {
 mod tests {
     use super::consumes_whole_document;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
@@ -306,11 +306,11 @@ mod tests {
     fn consumes(program: &str) -> bool {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = try_compile_program(program, policy, &resources).expect("probe program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("probe program compiles");
         // The same precomputed-emptiness derivation the production caller
         // reads off the `Program`.
-        let has_indexed_scans = !crate::analysis::correlated_scans(compiled.arena()).is_empty()
-            || !crate::analysis::anti_joins(compiled.arena()).is_empty();
+        let has_indexed_scans = !compiled.program.scans().is_empty() || !compiled.program.anti_joins().is_empty();
         consumes_whole_document(compiled.arena(), compiled.root(), has_indexed_scans)
     }
 

@@ -1,11 +1,13 @@
 //! The edit drive family: source-preserving edit runs over one or many
 //! input documents.
 
+use core::ops::ControlFlow;
+
 use super::{
-    AccessRequirement, BatchLimit, BytePatch, CodecCatalog, CodecError, CodecInputOutcome, CodecRunContext,
-    CompiledProgram, DataError, DialectId, Document, DocumentProduct, EncodeItem, EncodeRequest, EncodedItemReport,
-    EngineResult, EngineRun, ErasedEncoderFactory, ErasedProvider, FacadeFraming, FactDelta, FactPayloadView, FormatId,
-    InputLines, ItemSink, LocalOwnerRef, NodeId, PatchError, PatchSet, PhysicalRouteId, PipelineError, PipelineFailure,
+    AccessRequirement, BytePatch, CodecCatalog, CodecError, CodecInputOutcome, CodecRunContext, CompiledProgram,
+    DataError, DialectId, Document, DocumentProduct, EncodeItem, EncodeRequest, EncodedItemReport, EngineResult,
+    EngineRun, ErasedEncoderFactory, ErasedProvider, FacadeFraming, FactDelta, FactPayloadView, FormatId, InputLines,
+    ItemSink, LocalOwnerRef, NodeId, PatchError, PatchSet, PhysicalRouteId, PipelineError, PipelineFailure,
     PipelinePolicy, PreservationRequest, Publication, ResolvedSource, ResourceContext, ReusableAccessSession,
     ReusableEncoderSession, RunError, RunPoll, RuntimeError, SequenceReport, String, ToOwned, Value, ValueKind,
     ValueView, Vec, access_input, admit_visible_boundary, checked_delta, decode_sequence_item, format, overflow,
@@ -2551,32 +2553,21 @@ fn attribute_value_span(
         }
         return Ok(None);
     }
-    let limit = BatchLimit::new(usize::MAX).ok_or(DataError::ArithmeticOverflow)?;
     let mut reader = document.fact_reader(resources)?;
     let owner = LocalOwnerRef::Node(element);
-    loop {
-        let poll = reader.poll_batch(limit, resources)?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    if fact.owner() != owner {
-                        continue;
-                    }
-                    if fact.role().as_str() != jqf_codec_core::markup::ATTRIBUTE_FACT || fact.kind().as_str() != kind {
-                        continue;
-                    }
-                    return Ok(fact.source_span());
-                }
-            }
-            jqf_data::ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(DataError::from)?;
-            }
-            jqf_data::ReaderPoll::End(_) => break,
+    match reader.drain(resources, |fact| {
+        if fact.owner() == owner
+            && fact.role().as_str() == jqf_codec_core::markup::ATTRIBUTE_FACT
+            && fact.kind().as_str() == kind
+        {
+            ControlFlow::Break(fact.source_span())
+        } else {
+            ControlFlow::Continue(())
         }
+    })? {
+        ControlFlow::Break(span) => Ok(span),
+        ControlFlow::Continue(()) => Ok(None),
     }
-    Ok(None)
 }
 
 /// The INLINE position's byte text: ` # text` at the value's line end, or an
@@ -3116,7 +3107,9 @@ pub(crate) fn resolve_value_path(document: &Document<'_>, path: &Value) -> Optio
             }
             Value::Number(number) => {
                 let array = view.array().ok()??;
-                let index = jqf_engine_index(array.len(), number)?;
+                let index = number
+                    .to_i64()
+                    .and_then(|index| jqf_data::resolve_index(array.len(), index))?;
                 let child = array.get(index)?;
                 node = document.node_handle(child.node()).ok()?;
             }
@@ -3126,8 +3119,7 @@ pub(crate) fn resolve_value_path(document: &Document<'_>, path: &Value) -> Optio
     document.resolve_node_handle(node).ok()
 }
 
-/// Resolves one signed jq index against a container length, wrapping negatives
-/// from the end; `None` for an out-of-range position.
+/// Walk `path` through `root` and unwrap a tag there, if the node is tagged.
 pub(crate) fn strip_tag_at_path(root: &mut Value, path: &Value, _resources: &mut ResourceContext<'_>) -> bool {
     let Value::Array(components) = path.untagged() else {
         return false;
@@ -3135,14 +3127,12 @@ pub(crate) fn strip_tag_at_path(root: &mut Value, path: &Value, _resources: &mut
     let mut current = root;
     for component in components {
         let Some(next) = (match (current, component.untagged()) {
-            (Value::Object(object), Value::String(key)) => {
-                let Some(index) = object.key_position(key.as_str()) else {
-                    return false;
-                };
-                object.try_get_index_mut(index).ok().flatten()
-            }
+            (Value::Object(object), Value::String(key)) => object.try_get_mut(key.as_str()).ok().flatten(),
             (Value::Array(array), Value::Number(number)) => {
-                let Some(index) = jqf_engine_index(array.len(), number) else {
+                let Some(index) = number
+                    .to_i64()
+                    .and_then(|index| jqf_data::resolve_index(array.len(), index))
+                else {
                     return false;
                 };
                 array.try_get_mut(index).ok().flatten()
@@ -3159,21 +3149,6 @@ pub(crate) fn strip_tag_at_path(root: &mut Value, path: &Value, _resources: &mut
     true
 }
 
-fn jqf_engine_index(len: usize, number: &jqf_data::Number) -> Option<usize> {
-    let index = number.to_i64()?;
-    let len = u64::try_from(len).ok()?;
-    let position = if index >= 0 {
-        u64::try_from(index).ok()?
-    } else {
-        len.checked_sub(index.unsigned_abs())?
-    };
-    if position < len {
-        usize::try_from(position).ok()
-    } else {
-        None
-    }
-}
-
 /// Whether a fact role is one of the metadata vocabulary's semantic segments
 /// (`style`/`tag`/`anchor`/`alias` — the YAML-side roles the write
 /// allow-list admits beside the comment positions).
@@ -3188,11 +3163,6 @@ pub(crate) fn read_metadata_fact_text<Sink: ItemSink>(
     resources: &mut ResourceContext<'_>,
     publication: &Publication,
 ) -> Result<Option<String>, PipelineError<Sink::Error>> {
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| {
-        publication.fail(PipelineFailure::Codec(CodecError::new(
-            jqf_codec_core::CodecFailureKind::Overflow,
-        )))
-    })?;
     let mut reader = match document.fact_reader(resources) {
         Ok(reader) => reader,
         Err(jqf_data::DataError::CapabilityUnavailable {
@@ -3203,34 +3173,24 @@ pub(crate) fn read_metadata_fact_text<Sink: ItemSink>(
         }
     };
     let owner = LocalOwnerRef::Node(node);
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|error| publication.fail(PipelineFailure::Codec(edit_data_error(error))))?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    if fact.owner() != owner {
-                        continue;
-                    }
-                    if !fact_role_serves(fact.role().as_str(), semantic) {
-                        continue;
-                    }
-                    let FactPayloadView::Text(text) = fact.payload() else {
-                        continue;
-                    };
-                    return Ok(Some(String::from(text)));
-                }
+    match reader
+        .drain(resources, |fact| {
+            if fact.owner() != owner {
+                return ControlFlow::Continue(());
             }
-            jqf_data::ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(|error| publication.fail(PipelineFailure::Codec(error.into())))?;
+            if !fact_role_serves(fact.role().as_str(), semantic) {
+                return ControlFlow::Continue(());
             }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
+            let FactPayloadView::Text(text) = fact.payload() else {
+                return ControlFlow::Continue(());
+            };
+            ControlFlow::Break(String::from(text))
+        })
+        .map_err(|error| publication.fail(PipelineFailure::Codec(edit_data_error(error))))?
+    {
+        ControlFlow::Break(text) => Ok(Some(text)),
+        ControlFlow::Continue(()) => Ok(None),
     }
-    Ok(None)
 }
 
 pub(crate) fn resolve_written_tag(payload: &str) -> String {
@@ -3253,34 +3213,24 @@ fn read_attribute_fact(
     kind: &str,
     resources: &mut ResourceContext<'_>,
 ) -> Option<String> {
-    let limit = BatchLimit::new(usize::MAX)?;
     let mut reader = document.fact_reader(resources).ok()?;
     let owner = LocalOwnerRef::Node(node);
-    loop {
-        let poll = reader.poll_batch(limit, resources).ok()?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    if fact.owner() != owner {
-                        continue;
-                    }
-                    if fact.role().as_str() != jqf_codec_core::markup::ATTRIBUTE_FACT || fact.kind().as_str() != kind {
-                        continue;
-                    }
-                    if let FactPayloadView::Text(text) = fact.payload() {
-                        return Some(String::from(text));
-                    }
-                }
+    match reader
+        .drain(resources, |fact| {
+            if fact.owner() == owner
+                && fact.role().as_str() == jqf_codec_core::markup::ATTRIBUTE_FACT
+                && fact.kind().as_str() == kind
+                && let FactPayloadView::Text(text) = fact.payload()
+            {
+                return ControlFlow::Break(String::from(text));
             }
-            jqf_data::ReaderPoll::Pending => {
-                if resources.try_begin_next_cooperative_entry(4_096).is_err() {
-                    return None;
-                }
-            }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
+            ControlFlow::Continue(())
+        })
+        .ok()?
+    {
+        ControlFlow::Break(text) => Some(text),
+        ControlFlow::Continue(()) => None,
     }
-    None
 }
 
 /// Reads the comment-fact texts attached to one node of a decoded document
@@ -3307,11 +3257,6 @@ pub(crate) fn read_comment_fact_texts_semantic<Sink: ItemSink>(
     resources: &mut ResourceContext<'_>,
     publication: &Publication,
 ) -> Result<Vec<String>, PipelineError<Sink::Error>> {
-    let limit = BatchLimit::new(usize::MAX).ok_or_else(|| {
-        publication.fail(PipelineFailure::Codec(CodecError::new(
-            jqf_codec_core::CodecFailureKind::Overflow,
-        )))
-    })?;
     let mut reader = match document.fact_reader(resources) {
         Ok(reader) => reader,
         Err(jqf_data::DataError::CapabilityUnavailable {
@@ -3322,40 +3267,30 @@ pub(crate) fn read_comment_fact_texts_semantic<Sink: ItemSink>(
         }
     };
     let owner = LocalOwnerRef::Node(node);
-    loop {
-        let poll = reader
-            .poll_batch(limit, resources)
-            .map_err(|error| publication.fail(PipelineFailure::Codec(edit_data_error(error))))?;
-        match poll {
-            jqf_data::ReaderPoll::Batch(batch) => {
-                for fact in batch.iter() {
-                    if fact.owner() != owner {
-                        continue;
-                    }
-                    if !fact_role_serves(fact.role().as_str(), semantic) {
-                        continue;
-                    }
-                    let FactPayloadView::List(texts) = fact.payload() else {
-                        continue;
-                    };
-                    let mut out = Vec::new();
-                    for entry in texts.iter() {
-                        if let FactPayloadView::Text(text) = entry {
-                            out.push(String::from(text));
-                        }
-                    }
-                    return Ok(out);
+    match reader
+        .drain(resources, |fact| {
+            if fact.owner() != owner {
+                return ControlFlow::Continue(());
+            }
+            if !fact_role_serves(fact.role().as_str(), semantic) {
+                return ControlFlow::Continue(());
+            }
+            let FactPayloadView::List(texts) = fact.payload() else {
+                return ControlFlow::Continue(());
+            };
+            let mut out = Vec::new();
+            for entry in texts.iter() {
+                if let FactPayloadView::Text(text) = entry {
+                    out.push(String::from(text));
                 }
             }
-            jqf_data::ReaderPoll::Pending => {
-                resources
-                    .try_begin_next_cooperative_entry(4_096)
-                    .map_err(|error| publication.fail(PipelineFailure::Codec(error.into())))?;
-            }
-            jqf_data::ReaderPoll::End(_) => break,
-        }
+            ControlFlow::Break(out)
+        })
+        .map_err(|error| publication.fail(PipelineFailure::Codec(edit_data_error(error))))?
+    {
+        ControlFlow::Break(out) => Ok(out),
+        ControlFlow::Continue(()) => Ok(Vec::new()),
     }
-    Ok(Vec::new())
 }
 
 /// Whether a fact role serves one semantic segment of the comment vocabulary:

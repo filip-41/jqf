@@ -13,8 +13,7 @@
 //!
 //! # Request-thread stack
 //!
-//! [`try_compile_program`], [`try_compile_program_with_args`], and
-//! [`execute`] recurse over the program tree on the call stack. The
+//! [`try_compile_program`] and [`execute`] recurse over the program tree on the call stack. The
 //! documented `10_000` nesting refusal needs a large stack (default 256 MiB).
 //! A default OS thread aborts far sooner. [`Request`] and
 //! [`ResourceContext`] are `!Send` (`PhantomData<Rc<()>>`), so they cannot
@@ -88,8 +87,8 @@ pub use drive::{
 pub use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 pub use jqf_data::{DialectId, FormatId};
 pub use jqf_engine::{
-    ArithFailure, ArithMismatchOp, CodecRequirementPolicy, CompiledProgram, PlanRecord, try_compile_program,
-    try_compile_program_with_args,
+    ArithFailure, ArithMismatchOp, CodecRequirementPolicy, CompileOptions, CompiledProgram, PlanRecord,
+    try_compile_program,
 };
 pub use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 pub use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};

@@ -41,8 +41,7 @@ Document building: `Document`, `DocumentId`, `NodeHandle`, `NodeId`,
 `AccountedSemanticNode`, `AccountedIntrinsicTag`, `AccountedOccurrenceKey`,
 `AccountedTextStage`, `PreparedSemanticNode`, `DocumentCapacity`,
 `DocumentTransients`, `AccountedDocumentFinalizer`,
-`DocumentFinalizationPoll`, `SliceRange`, `LocalOwnerRef`, `ExpandedName`,
-`ExpandedNameError`.
+`DocumentFinalizationPoll`, `SliceRange`, `LocalOwnerRef`, `ExpandedName`.
 
 Schemas and coverage: `DocumentSchemaRecipe`, `DocumentSchemaPrototype`,
 `PreparedDocumentSchema`, `PreparedNodeKind`, `PreparedOccurrenceRole`,
@@ -51,9 +50,8 @@ Schemas and coverage: `DocumentSchemaRecipe`, `DocumentSchemaPrototype`,
 `DocumentCapability`, `DocumentCapabilityFamily`, `FormatId`, `DialectId`,
 `FormatIdRef`, `DialectIdRef`, `FormatIdError`.
 
-Facts and tags: `DocumentFact`, `FactPayload`, `FactPayloadList`,
-`FactPayloadMap`, `FactPayloadView`, `FactRoleId`, `OccurrenceRoleId`,
-`FactKindId`, `DocumentNodeKindId`, `NamespacedIdError`, `IntrinsicTag`,
+Facts and tags: `DocumentFact`, `FactPayload`, `FactPayloadView`,
+`FactRoleId`, `OccurrenceRoleId`, `FactKindId`, `IntrinsicTag`,
 `IntrinsicTagSemantics`, `ContainerSpanKind`.
 
 Source: `DocumentSourceText`, `DocumentSourceBinding`,
@@ -68,8 +66,12 @@ Counts and elements: `CountDemand`, `CountStep`, `CountFilter`,
 Readers and materialization: `TopologyReader`, `TopologyBatch`,
 `NodeBatch`, `NodeIter`, `OccurrenceBatch`, `OccurrenceIter`,
 `DocumentNodeView`, `OccurrenceView`, `FactReader`, `FactBatch`,
-`BatchLimit`, `ReaderPoll`, `ReaderCompletion`, `ReaderDemand`,
-`MaterializeWorkspace`, `LazySpanMaterializer`, and `DataError`.
+`BatchLimit`, `unbounded_batch_limit`, `UNBOUNDED_READER_REPLENISH`,
+`ReaderPoll`, `ReaderCompletion`, `ReaderDemand`,
+`MaterializeWorkspace`, `LazySpanMaterializer`, `DataError`, and
+`DataErrorClass`.
+`FactReader::drain` and `TopologyReader::drain_nodes` walk an unbounded
+item cap and refill `UNBOUNDED_READER_REPLENISH` on `Pending`.
 
 Under the non-default `benchmark-internals` feature,
 `DocumentStorageLayoutStats` also joins this surface (`#[doc(hidden)]`).
@@ -80,6 +82,9 @@ incomplete change.
 ## Value
 
 - `Value` is the owned semantic value.
+- The borrowed atom form of an owned `Value` or a document scalar is
+  `ScalarView`. `NumberView` is `Number | Integer(&str) | Decimal |
+  Float`. There is no `Atom` type.
 - It has no `PartialEq`, `Hash`, or `Ord`. The caller that compares
   values owns that comparison.
 - Numbers are integer, exact finite decimal, or binary64.
@@ -143,7 +148,9 @@ delegate instead of copying them:
 
 - `Document` is one immutable document identified by a process-local
   `DocumentId`. There is no revision dimension; a successor would mint a
-  fresh document.
+  fresh document. Sharing is `try_clone` / `Clone`: Arc tables, not a
+  deep copy. `Value` is `Clone` (refcount bump). Document building
+  charges a resource context; value construction does not.
 - Node, occurrence, and fact ids are dense and document-local.
 - A handle checks the document id before resolving a local id.
 - The only handle type is `NodeHandle`: a document id paired with a dense
@@ -159,9 +166,16 @@ delegate instead of copying them:
   hold; `DocumentFact::source_span` reads it.
 - `AccountedDocumentBuilder::record_fact_authored_span` binds that span
   under the same source-seal law as `record_authored_span`.
-- `AccountedDocumentBuilder::try_reserve` may keep newly acquired
-  capacity after an allocation failure. It never changes content, ids,
-  or order.
+- `AccountedDocumentBuilder::try_reserve` reserves nodes, occurrences,
+  stored text, and facts. It does not reserve `wide`, `tags`, or
+  per-role `owner_positions` — the outer position table is bounded by
+  occurrence-role count, not node count, so co-reserving node-count
+  slots would over-admit. It may keep newly acquired capacity after an
+  allocation failure. It never changes content, ids, or order.
+- json, cbor, toml, xml, html, yaml, messagepack, delimited, and jqft
+  pass `DocumentCapacity` as a reservation hint. yaml scoped
+  kind-only/null/empty builders reserve a single node. Reservation is
+  a hint, not a completeness claim.
 
 ## Source
 
@@ -216,10 +230,16 @@ implement `Display` and `core::error::Error` and are `no_std`.
   `ContradictoryCoverage`, `InvalidDocument`, cycle, unrepresentable,
   and others). Also wraps `Resource(ResourceError)` and
   `Control(ControlError)`. Clone, Copy, Eq; `non_exhaustive`.
+  `DataError::class` maps each variant onto `DataErrorClass` (`Host`,
+  `Budget`, `Absent`, `Unrepresentable`, `Broken`) so a codec boundary
+  does not dump every remaining variant as one internal-contract class.
 - `ValueAllocationError` — value storage failures. Unit struct; Clone,
   Copy, Eq; `non_exhaustive`.
-- `TagError`, `FormatIdError`, `NamespacedIdError`, `ExpandedNameError`
-  — identity validation. Clone, Copy, Eq.
+- `TagError`, `FormatIdError` — identity validation. Clone, Copy, Eq.
+  `FactKindId::try_new`, `FactRoleId::try_new`,
+  `OccurrenceRoleId::try_new`, and `ExpandedName::try_new` still return
+  module error types that are not crate-root re-exports. Map them
+  without naming the type until a caller has to.
 - `NumericError` — number-grammar failures. `TemporalError` — RFC 3339
   syntax, year-range, and fraction failures. Both Clone, Copy, Eq.
 

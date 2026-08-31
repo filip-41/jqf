@@ -207,27 +207,6 @@ enum Fused {
     Node(ProgramNodeId),
 }
 
-/// Fuses a lowered arena into path-normal form with recursive-definition bodies
-/// resolved.
-///
-/// A bottom-up rewrite: `FlatMap(Stage, Stage)` concatenates into one `Stage`
-/// (upstream steps before body steps, optional flags intact); a `FlatMap` with a
-/// `Choice` on either side, and every `Choice`, is preserved with its children
-/// fused. The returned arena holds no `Stage∘Stage` `FlatMap`. Recursion depth is
-/// bounded by the query's syntactic nesting (compile-time, not evaluation).
-///
-/// Each callable's body is fused EXACTLY ONCE (memoized by callable index) and
-/// appended to the output arena before the main root, so every call site — the
-/// root's and the bodies' own — resolves to the same fused body id, and the
-/// self-reference can never re-enter the body's fusion. The `CallDef` nodes
-/// carry the callable INDEX (encoded in their `body` slot) through lowering and
-/// fusion; this pass rewrites them with the resolved body id and parameter
-/// slots after both arenas are complete.
-///
-/// # Errors
-///
-/// Returns [`ResourceError::AllocationFailed`] when reserving the fused step
-/// backing or a graph node fails.
 /// Which SOURCE-arena `Binary{Equal}` nodes are the LEFTMOST conjunct of a
 /// `select` call's predicate — the only equalities the correlated-scan table
 /// (`join::equality_probe`) can ever recognize, and therefore the only
@@ -289,11 +268,43 @@ fn protect_leftmost_conjunct(nodes: &[ProgramNode], mut node: ProgramNodeId, pro
     }
 }
 
+/// The fused arena, its root, and the callable-index → fused-body-id map.
+type FusedProgram = (
+    Vec<ProgramNode>,
+    ProgramNodeId,
+    alloc::collections::BTreeMap<usize, ProgramNodeId>,
+);
+
+/// Fuses a lowered arena into path-normal form with recursive-definition bodies
+/// resolved.
+///
+/// A bottom-up rewrite: `FlatMap(Stage, Stage)` concatenates into one `Stage`
+/// (upstream steps before body steps, optional flags intact); a `FlatMap` with a
+/// `Choice` on either side, and every `Choice`, is preserved with its children
+/// fused. The returned arena holds no `Stage∘Stage` `FlatMap`. Recursion depth is
+/// bounded by the query's syntactic nesting (compile-time, not evaluation).
+///
+/// Each callable's body is fused EXACTLY ONCE (memoized by callable index) and
+/// appended to the output arena before the main root, so every call site — the
+/// root's and the bodies' own — resolves to the same fused body id, and the
+/// self-reference can never re-enter the body's fusion. The `CallDef` nodes
+/// carry the callable INDEX (encoded in their `body` slot) through lowering and
+/// fusion; this pass rewrites them with the resolved body id and parameter
+/// slots after both arenas are complete.
+///
+/// The returned map is callable index → fused body id — the only live bridge
+/// from the pre-fuse callable list to the renumbered output arena, which post-
+/// fuse passes (the collect|add callable rewrite) resolve body ids through.
+///
+/// # Errors
+///
+/// Returns [`ResourceError::AllocationFailed`] when reserving the fused step
+/// backing or a graph node fails.
 pub fn fuse_with_callables(
     nodes: &mut [ProgramNode],
     root: ProgramNodeId,
     callables: &[crate::program::CallableDef],
-) -> Result<(Vec<ProgramNode>, ProgramNodeId), ResourceError> {
+) -> Result<FusedProgram, ResourceError> {
     let mut out: Vec<ProgramNode> = Vec::new();
     let protected = scan_protected_equalities(nodes)?;
     let mut body_ids = alloc::collections::BTreeMap::new();
@@ -336,7 +347,7 @@ pub fn fuse_with_callables(
             };
         }
     }
-    Ok((out, root_id))
+    Ok((out, root_id, body_ids))
 }
 
 /// Fuses one source node, appending materialized graph nodes to `out`.
@@ -1067,7 +1078,7 @@ fn leading_current_stage(out: &[ProgramNode], id: ProgramNodeId) -> Option<Progr
 
 /// Whether a graph provably ignores its input: a steps-free literal producer,
 /// the one shape that reads nothing, emits exactly one value, and cannot raise.
-pub fn ignores_input(out: &[ProgramNode], id: ProgramNodeId) -> bool {
+pub(crate) fn ignores_input(out: &[ProgramNode], id: ProgramNodeId) -> bool {
     matches!(
         &out[id.index()],
         ProgramNode::Stage {
@@ -1807,7 +1818,7 @@ fn resolves_completely(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
 /// The dot-rebinding arms are exact, and they are the point: a `FlatMap`'s BODY
 /// runs over its upstream's outputs, and a loop's `update`/`extract` run with
 /// dot = the fold state, so none of the three can reach the outer dot.
-pub fn reads_outer_dot(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
+pub(crate) fn reads_outer_dot(nodes: &[ProgramNode], id: ProgramNodeId) -> bool {
     match &nodes[id.index()] {
         ProgramNode::Stage { start, .. } => match start {
             StageStart::Current => true,
@@ -1961,7 +1972,7 @@ mod tests {
     #[test]
     fn fusion_concatenates_stages_and_yields_a_single_stage() {
         let (mut nodes, root) = flatmap(vec![key("a", false)], vec![key("b", false)]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert_eq!(fused.len(), 1, "fusion must collapse to a single Stage node");
         assert!(matches!(fused[fused_root.index()], ProgramNode::Stage { .. }));
         assert_eq!(
@@ -1974,14 +1985,14 @@ mod tests {
     fn fusion_preserves_per_step_flags_and_their_asymmetry() {
         // `.a? | .b` flags the first fused step; `.a | .b?` flags the second.
         let (mut left_nodes, left_root) = flatmap(vec![key("a", true)], vec![key("b", false)]);
-        let (left, left_fused) = fuse_with_callables(&mut left_nodes, left_root, &[]).expect("fuses");
+        let (left, left_fused, _) = fuse_with_callables(&mut left_nodes, left_root, &[]).expect("fuses");
         assert_eq!(
             fused_keys(&left, left_fused),
             [(String::from("a"), true), (String::from("b"), false)]
         );
 
         let (mut right_nodes, right_root) = flatmap(vec![key("a", false)], vec![key("b", true)]);
-        let (right, right_fused) = fuse_with_callables(&mut right_nodes, right_root, &[]).expect("fuses");
+        let (right, right_fused, _) = fuse_with_callables(&mut right_nodes, right_root, &[]).expect("fuses");
         assert_eq!(
             fused_keys(&right, right_fused),
             [(String::from("a"), false), (String::from("b"), true)]
@@ -2014,7 +2025,7 @@ mod tests {
             },
         ];
         let root = ProgramNodeId::from_index(4).expect("root");
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert_eq!(
             fused_keys(&fused, fused_root),
             [
@@ -2043,7 +2054,7 @@ mod tests {
             start: StageStart::Current,
             steps: Vec::new(),
         }];
-        let (fused, root) = fuse_with_callables(&mut nodes, ProgramNodeId::ROOT, &[]).expect("fuses");
+        let (fused, root, _) = fuse_with_callables(&mut nodes, ProgramNodeId::ROOT, &[]).expect("fuses");
         let split = analyze(&fused, root);
         assert!(split.is_whole_document());
         assert_eq!(split.prefix_len(), 0);
@@ -2053,7 +2064,7 @@ mod tests {
     fn fused_forward_path_pushes_the_whole_path_down() {
         // A path with no `Each` pushes every step down; residual is identity.
         let (mut nodes, root) = flatmap(vec![key("a", false)], vec![key("b", false)]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         let split = analyze(&fused, fused_root);
         assert!(!split.is_whole_document());
         assert_eq!(split.prefix_len(), 2);
@@ -2156,7 +2167,7 @@ mod tests {
             },
         ];
         let root = ProgramNodeId::from_index(4).expect("root");
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert!(
             !has_stage_stage_flatmap(&fused),
             "path-normal form leaves no Stage∘Stage FlatMap"
@@ -2196,7 +2207,7 @@ mod tests {
             },
         ];
         let root = ProgramNodeId::from_index(4).expect("root");
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert!(!has_stage_stage_flatmap(&fused));
         let ProgramNode::Choice { left, right } = &fused[fused_root.index()] else {
             panic!("the top-level Choice must survive");
@@ -2363,7 +2374,7 @@ mod tests {
         // codec locates `.p.x` and the residual constructor reads identity —
         // instead of the whole-input authority a constructor used to take.
         let (mut nodes, root) = construct_object(vec![vec![key("p", false), key("x", false)]]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         let split = analyze(&fused, fused_root);
         assert!(!split.is_whole_document());
         assert_eq!(split.prefix_len(), 2);
@@ -2377,7 +2388,7 @@ mod tests {
             vec![key("p", false), key("x", false)],
             vec![key("p", false), key("y", false)],
         ]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         let split = analyze(&fused, fused_root);
         assert_eq!(split.prefix_len(), 1);
     }
@@ -2387,7 +2398,7 @@ mod tests {
         // `{a: .p, b: .q}`: an empty join is the whole-input authority, which is
         // the constructor's standing classification.
         let (mut nodes, root) = construct_object(vec![vec![key("p", false)], vec![key("q", false)]]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert!(analyze(&fused, fused_root).is_whole_document());
     }
 
@@ -2398,7 +2409,7 @@ mod tests {
         // pushdown takes, and the reason the hoist can never move a `.[]` out of
         // a member.
         let (mut nodes, root) = construct_object(vec![vec![key("p", false), each(false), key("x", false)]]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         let split = analyze(&fused, fused_root);
         assert_eq!(split.prefix_len(), 1);
     }
@@ -2427,7 +2438,7 @@ mod tests {
             }],
         });
         let root = ProgramNodeId::from_index(nodes.len() - 1).expect("root");
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert!(analyze(&fused, fused_root).is_whole_document());
     }
 
@@ -2439,7 +2450,7 @@ mod tests {
             vec![key("p", true), key("x", false)],
             vec![key("p", false), key("y", false)],
         ]);
-        let (fused, fused_root) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
         assert!(analyze(&fused, fused_root).is_whole_document());
     }
 

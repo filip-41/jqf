@@ -1,7 +1,8 @@
 //! Borrowed views of scalar nodes: numbers, dates, and other atoms.
 //!
-//! [`NumberView`] and the temporal views borrow storage so an encoder can write canonical text without building an
-//! owned value.
+//! [`ScalarView`] is the borrowed atom form of an owned [`crate::Value`] or a document scalar. [`NumberView`] is
+//! `Number | Integer(&str) | Decimal | Float`. There is no `Atom` type. The temporal views borrow storage so an encoder
+//! can write canonical text without building an owned value.
 
 use alloc::string::String;
 

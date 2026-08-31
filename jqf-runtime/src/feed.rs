@@ -683,8 +683,9 @@ mod tests {
         let diagnostics = jqf_sdk::Diagnostics::new(DiagnosticPolicy::All).expect("diagnostics");
 
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = jqf_engine::try_compile_program_with_args("[range(5000)]", policy, &[], &resources)
-            .expect("the fixture program compiles");
+        let compiled =
+            jqf_engine::try_compile_program("[range(5000)]", policy, jqf_engine::CompileOptions::new(), &resources)
+                .expect("the fixture program compiles");
 
         // The encoded array `[0,1,…,4999]` is ~25 KB; the cap is 4 KB.
         let mut feed = super::ResidentFeed::new(

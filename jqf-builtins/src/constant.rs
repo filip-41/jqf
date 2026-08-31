@@ -14,12 +14,13 @@
 //! [`ParseRejection`]/[`UnsupportedConstruct`] so the public `jqf_engine::` surface is unchanged.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 use jqf_data::{Array, Number, Value};
 use jqf_resource::ResourceError;
 use jqf_source::{Diagnostic, Span};
-use jqf_syntax::{Expr, ExprKind, ObjectKey, StringTemplate, SyntaxSource, TemplateSegment};
+use jqf_syntax::{BinaryOp, Expr, ExprKind, ObjectKey, StringTemplate, SyntaxSource, TemplateSegment};
 
 /// First parser diagnostic surfaced through the engine compile boundary.
 #[derive(Debug)]
@@ -54,9 +55,15 @@ impl ParseRejection {
 
     /// Surfaces a bind failure (the syntax source could not be bound).
     pub fn from_bind(error: jqf_syntax::SyntaxSourceError) -> Self {
+        let span = match error {
+            jqf_syntax::SyntaxSourceError::NonUtf8 { valid_up_to } => {
+                jqf_source::Span::try_from_usize(valid_up_to, valid_up_to).ok()
+            }
+            jqf_syntax::SyntaxSourceError::SourceMismatch | jqf_syntax::SyntaxSourceError::LengthMismatch => None,
+        };
         Self {
             message: internal_message(&error),
-            span: None,
+            span,
         }
     }
 
@@ -104,8 +111,8 @@ impl UnsupportedConstruct {
 /// The failure channel of constant-expression evaluation: the three `EngineCompileError` variants this module's
 /// functions actually construct.
 ///
-/// The engine maps this onto `EngineCompileError` with a `From` impl (three mechanical arms), so `lower.rs`'s existing
-/// `?` call sites convert without edits. Nothing here references the engine.
+/// The engine maps this onto `EngineCompileError` with a `From` impl (three mechanical arms), so
+/// `compile/lower` `?` call sites convert without edits. Nothing here references the engine.
 #[derive(Debug)]
 pub enum ConstantEvalError {
     /// A string-decode or span failure surfaced as a parser rejection.
@@ -166,13 +173,22 @@ pub fn evaluate_constant<'ast>(expr: &'ast Expr, source: &SyntaxSource<'ast>) ->
                     Array::try_new().map_err(|_| ConstantEvalError::Resource(ResourceError::AllocationFailed))?;
                 return Ok(Value::Array(array));
             };
-            // A constant array literal is a single constant element expression.
-            let value = evaluate_constant(generator, source)?;
+            let mut values = Vec::new();
+            if !fold_constant_seq(generator, source, &mut values)? {
+                return Err(ConstantEvalError::unsupported(
+                    expr.span(),
+                    UnsupportedConstruct::Expression(
+                        "a non-constant module metadata expression (Module metadata must be constant)",
+                    ),
+                ));
+            }
             let mut array =
                 Array::try_new().map_err(|_| ConstantEvalError::Resource(ResourceError::AllocationFailed))?;
-            array
-                .try_push(value)
-                .map_err(|_| ConstantEvalError::Resource(ResourceError::AllocationFailed))?;
+            for value in values {
+                array
+                    .try_push(value)
+                    .map_err(|_| ConstantEvalError::Resource(ResourceError::AllocationFailed))?;
+            }
             Ok(Value::Array(array))
         }
         ExprKind::Object { members, .. } => {
@@ -204,6 +220,32 @@ pub fn evaluate_constant<'ast>(expr: &'ast Expr, source: &SyntaxSource<'ast>) ->
                 "a non-constant module metadata expression (Module metadata must be constant)",
             ),
         )),
+    }
+}
+
+/// Appends every constant value `expr` evaluates to, in evaluation order.
+/// Returns `false` when `expr` is not provably constant. `Unsupported` declines
+/// the fold; `Parse` and `Resource` propagate.
+pub fn fold_constant_seq<'ast>(
+    expr: &'ast Expr,
+    source: &SyntaxSource<'ast>,
+    out: &mut Vec<Value>,
+) -> Result<bool, ConstantEvalError> {
+    if let ExprKind::Binary(binary) = expr.kind()
+        && binary.op == BinaryOp::Comma
+    {
+        if !fold_constant_seq(&binary.left, source, out)? {
+            return Ok(false);
+        }
+        return fold_constant_seq(&binary.right, source, out);
+    }
+    match evaluate_constant(expr, source) {
+        Ok(value) => {
+            out.push(value);
+            Ok(true)
+        }
+        Err(ConstantEvalError::Unsupported { .. }) => Ok(false),
+        Err(error) => Err(error),
     }
 }
 

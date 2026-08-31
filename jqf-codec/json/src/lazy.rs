@@ -1386,7 +1386,7 @@ mod tests {
             "Preserve/facts must retain attached-fact coverage"
         );
         let document = product.document();
-        let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+        let limit = jqf_data::unbounded_batch_limit();
         let mut reader = document.fact_reader(&mut resources).expect("reader");
         let mut lines = alloc::vec::Vec::new();
         loop {

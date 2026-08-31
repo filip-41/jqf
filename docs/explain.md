@@ -14,6 +14,7 @@ $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
+jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: topk: rows=0
@@ -25,7 +26,8 @@ jqf: explain: cost: peak=174489 input=25 output=4 spill_disk=0
 jqf: explain: lazy: deferred=1 materialized=0
 ```
 
-The shape lines (`class`, `demand`, `pushdown`, `ladder`, `topk`) are decoded in
+The shape lines (`class`, `demand`, `routes`, `pushdown`, `ladder`, `topk`)
+are decoded in
 [Shape recognizers § Reading the plan](recognizers.md#reading-the-plan) and the
 route names in [Demand and pushdown](demand.md#routes-and-the-ladder). The run
 adds timings, the cost snapshot (ledger peak, input/output bytes, spill), and a

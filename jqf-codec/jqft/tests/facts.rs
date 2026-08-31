@@ -551,7 +551,7 @@ fn jqfb_provenance_and_source_facts_attach() {
     let document = product.document();
     let mut roles: Vec<String> = Vec::new();
     let mut reader = document.fact_reader(&mut resources).expect("fact reader");
-    let limit = jqf_data::BatchLimit::new(usize::MAX).expect("limit");
+    let limit = jqf_data::unbounded_batch_limit();
     loop {
         let poll = reader.poll_batch(limit, &mut resources).expect("poll");
         match poll {

@@ -55,6 +55,8 @@ use jqf_data::{
 use jqf_resource::policy::MismatchPolicy;
 use jqf_resource::{ContinueControl, MemoryCategory, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 
+use crate::compile::CompileOptions;
+
 static CONTROL: ContinueControl = ContinueControl;
 
 fn resources() -> ResourceContext<'static> {
@@ -71,12 +73,13 @@ fn resources() -> ResourceContext<'static> {
 #[test]
 fn the_index_lowering_is_recognized_as_a_keyed_collect() {
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
+    use crate::compile::{CompileOptions, try_compile_program};
     use crate::exec::GraphMachine;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let res = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("INDEX(.[]; .id) | length", policy, &res).expect("program compiles");
+    let compiled =
+        try_compile_program("INDEX(.[]; .id) | length", policy, CompileOptions::new(), &res).expect("program compiles");
     let arena = compiled.arena();
     let mut reduces = 0usize;
     let mut recognized = 0usize;
@@ -98,6 +101,7 @@ fn the_index_lowering_is_recognized_as_a_keyed_collect() {
     let user = try_compile_program(
         "def INDEX(s; i): reduce s as $r ({}; .[$r|i|tostring] = $r); INDEX(.[]; .id) | length",
         policy,
+        CompileOptions::new(),
         &res,
     )
     .expect("user-def compiles");
@@ -157,7 +161,7 @@ fn the_streamed_aggregate_recognizer_matches_group_and_selection_pipes() {
     let res = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let recognizes = |source: &str| {
-        let compiled = try_compile_program(source, policy, &res).expect("program compiles");
+        let compiled = try_compile_program(source, policy, CompileOptions::new(), &res).expect("program compiles");
         GraphMachine::streamed_aggregate(compiled.arena(), compiled.root())
     };
     for source in [
@@ -166,7 +170,7 @@ fn the_streamed_aggregate_recognizer_matches_group_and_selection_pipes() {
         "[inputs] | max_by(.k)",
     ] {
         if recognizes(source).is_none() {
-            let compiled = try_compile_program(source, policy, &res).expect("program compiles");
+            let compiled = try_compile_program(source, policy, CompileOptions::new(), &res).expect("program compiles");
             let dump = compiled
                 .arena()
                 .iter()
@@ -421,7 +425,7 @@ fn plus_literal_is_the_identity_literal_binary_shape() {
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(". + 1", policy, &ledger).expect("compiles");
+    let compiled = try_compile_program(". + 1", policy, CompileOptions::new(), &ledger).expect("compiles");
     let found = compiled.arena().iter().any(|node| {
         matches!(
             node,
@@ -442,7 +446,7 @@ fn static_object_key_is_marked_only_for_literal_keys() {
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let static_prog = try_compile_program("{id: .id}", policy, &ledger).expect("compiles");
+    let static_prog = try_compile_program("{id: .id}", policy, CompileOptions::new(), &ledger).expect("compiles");
     let marked = static_prog.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => {
             members.len() == 1 && members[0].static_key.as_deref() == Some("id")
@@ -451,7 +455,7 @@ fn static_object_key_is_marked_only_for_literal_keys() {
     });
     assert!(marked, "`{{id: .id}}` must mark static_key");
 
-    let dynamic = try_compile_program("{(.k): 1}", policy, &ledger).expect("compiles");
+    let dynamic = try_compile_program("{(.k): 1}", policy, CompileOptions::new(), &ledger).expect("compiles");
     let unmarked = dynamic.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => {
             members.len() == 1 && members[0].static_key.is_none()
@@ -470,7 +474,7 @@ fn single_combination_object_is_conservative() {
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let single = try_compile_program("{id, name}", policy, &ledger).expect("compiles");
+    let single = try_compile_program("{id, name}", policy, CompileOptions::new(), &ledger).expect("compiles");
     let proven = single.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => members.iter().all(|member| {
             graph_at_most_one(single.arena(), member.key) && graph_at_most_one(single.arena(), member.value)
@@ -479,7 +483,7 @@ fn single_combination_object_is_conservative() {
     });
     assert!(proven, "`{{id, name}}` must prove a single combination");
 
-    let many = try_compile_program("{id: .[]}", policy, &ledger).expect("compiles");
+    let many = try_compile_program("{id: .[]}", policy, CompileOptions::new(), &ledger).expect("compiles");
     let unproven = many.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => members
             .iter()
@@ -1328,7 +1332,7 @@ fn a_caught_raise_records_the_barrier_depth() {
     .with_diagnostics(&sink);
 
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("try .a catch .", policy, &resources).expect("compiles");
+    let compiled = try_compile_program("try .a catch .", policy, CompileOptions::new(), &resources).expect("compiles");
     let mut stream = match compiled
         .try_run_whole_value(
             CodecInputOutcome::Result(EngineResult::owned(Value::Number(jqf_data::Number::integer(
@@ -1668,7 +1672,7 @@ fn drive_null(program: &str, resources: &mut ResourceContext<'_>) -> Result<usiz
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), resources)
         .expect("run seeds")
@@ -1699,7 +1703,7 @@ fn drive_null_values(
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), resources)
         .expect("run seeds")
@@ -1760,7 +1764,8 @@ fn a_no_match_regex_iterator_raises_inside_path_mode() {
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut drive = |program: &str| -> Result<Vec<String>, EngineRunError> {
-        let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
         let input = Value::try_string("hello").expect("hello");
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), &resources)
@@ -1848,7 +1853,8 @@ fn the_array_pattern_frame_binds_right_to_left() {
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut caught = |program: &str| -> String {
-        let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -1872,8 +1878,13 @@ fn the_array_pattern_frame_binds_right_to_left() {
         "\"Cannot index string with number (2)\""
     );
     // A successful multi-binder still binds every name.
-    let compiled =
-        try_compile_program("[1,2] as [$v0, $v1] | [$v0, $v1]", policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(
+        "[1,2] as [$v0, $v1] | [$v0, $v1]",
+        policy,
+        CompileOptions::new(),
+        &resources,
+    )
+    .expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
         .expect("run seeds")
@@ -1954,7 +1965,8 @@ fn limit_truncates_a_recursive_callable() {
     for (program, expected) in cases {
         let mut resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -2012,7 +2024,8 @@ fn pooled_callable_body_machines_keep_output_order_and_cuts() {
     for (program, expected) in cases {
         let mut resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
         let input = if program.contains("fib: if") {
             CodecInputOutcome::Result(EngineResult::owned(int_value("10")))
         } else {
@@ -2068,7 +2081,8 @@ fn limit_truncates_a_recursive_callable_past_the_depth_ceiling() {
         // loop below resumes fresh cooperative entries on each Pending.
         let mut resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+        let compiled =
+            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -2204,7 +2218,7 @@ fn a_tail_marked_call_answers_every_argument_combination() {
     let program = "def f($a): if $a < 3 then $a else f($a - 1, $a - 2) end; f(4)";
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, &resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
         .expect("run seeds")
@@ -2248,7 +2262,7 @@ fn run_render(program: &str, input: &Value, resources: &mut ResourceContext<'_>)
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input.clone())), resources)
         .expect("run seeds")
@@ -2329,7 +2343,7 @@ fn path_over_a_recursive_def_carries_the_register() {
         use crate::compile::try_compile_program;
         use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        try_compile_program(emit_then_raise, policy, &resources).expect("program compiles")
+        try_compile_program(emit_then_raise, policy, CompileOptions::new(), &resources).expect("program compiles")
     };
     let EngineRun::Stream { stream, .. } = compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(doc.clone())), &resources)
@@ -4011,7 +4025,7 @@ fn drive_source(program: &str, input: Value, resources: &mut ResourceContext<'_>
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -5105,7 +5119,7 @@ fn topk_recognizer_routed_vs_forced_floor_is_byte_identical() {
     fixture_objects.append(&mut fixtures);
 
     for program in programs {
-        let compiled = try_compile_program(program, policy, &res).expect("program compiles");
+        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
         let arena = compiled.arena();
         let table = partial_sorts(arena);
         assert!(
@@ -5149,7 +5163,7 @@ fn the_partial_sort_route_engages_direct_and_inside_an_argument() {
         // this counter notices.
         "limit(3; sort_by(.x) | .[0:2])",
     ] {
-        let compiled = try_compile_program(program, policy, &res).expect("program compiles");
+        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must name a row");
         let before = super::PARTIAL_SORT_ENGAGEMENTS.load(Ordering::Relaxed);
@@ -5182,7 +5196,7 @@ fn the_reversed_row_emits_ties_in_reversed_source_order() {
     let mut res = resources();
     let all_equal = make_objects_all_equal();
     for program in ["sort_by(.x) | reverse | .[0:2]", "sort_by(.x) | reverse | .[0:10]"] {
-        let compiled = try_compile_program(program, policy, &res).expect("program compiles");
+        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must engage a row");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(all_equal.clone()));
@@ -5216,7 +5230,7 @@ fn an_index_row_over_an_empty_array_publishes_null() {
     let mut res = resources();
     let empty = Value::Array(Array::try_new().expect("array"));
     for program in ["sort | .[0]", "sort | .[-1]", "sort | first", "sort | last"] {
-        let compiled = try_compile_program(program, policy, &res).expect("program compiles");
+        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must engage a row");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(empty.clone()));
@@ -5299,8 +5313,9 @@ fn slice_const_fold_routed_vs_floor_is_byte_identical() {
     ];
 
     for (folded, authored) in twins {
-        let folded_program = try_compile_program(folded, policy, &res).expect("folded compiles");
-        let authored_program = try_compile_program(authored, policy, &res).expect("authored compiles");
+        let folded_program = try_compile_program(folded, policy, CompileOptions::new(), &res).expect("folded compiles");
+        let authored_program =
+            try_compile_program(authored, policy, CompileOptions::new(), &res).expect("authored compiles");
         for (name, fixture) in &fixtures {
             let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture.clone()));
             let folded_run = run_to_items(&folded_program, &[], outcome, &mut res).expect("folded run");
@@ -5378,6 +5393,7 @@ fn the_correlated_join_engages_on_the_real_spelling() {
             jqf_codec_core::ValidationMode::Strict,
             jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
         ),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compiles");
@@ -5430,6 +5446,7 @@ fn the_user_declared_index_engages_on_the_pipe_spelling() {
             jqf_codec_core::ValidationMode::Strict,
             jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
         ),
+        CompileOptions::new(),
         &resources,
     )
     .expect("compiles");
@@ -5466,11 +5483,17 @@ fn the_user_declared_index_is_byte_identical_to_the_forced_floor() {
         jqf_codec_core::ValidationMode::Strict,
         jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
     );
-    let authored =
-        try_compile_program("declare_index(.o; .k) | [.o[] | select(.k == 1)]", policy, &resources).expect("compiles");
+    let authored = try_compile_program(
+        "declare_index(.o; .k) | [.o[] | select(.k == 1)]",
+        policy,
+        CompileOptions::new(),
+        &resources,
+    )
+    .expect("compiles");
     let floor = try_compile_program(
         "[.][0] | declare_index(.o; .k) | [.o[] | select(.k == 1)]",
         policy,
+        CompileOptions::new(),
         &resources,
     )
     .expect("compiles");
@@ -5522,12 +5545,14 @@ fn the_user_declared_index_drops_after_an_edit() {
     let program = try_compile_program(
         "declare_index(.o; .k) | (.o[0].k = 9) | [.o[] | select(.k == 9)]",
         policy,
+        CompileOptions::new(),
         &resources,
     )
     .expect("compiles");
     let floor = try_compile_program(
         "[.][0] | declare_index(.o; .k) | (.o[0].k = 9) | [.o[] | select(.k == 9)]",
         policy,
+        CompileOptions::new(),
         &resources,
     )
     .expect("compiles");
@@ -5622,7 +5647,7 @@ fn drive_located(
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(input), resources)
         .expect("run seeds")
@@ -6040,7 +6065,7 @@ fn drive_source_value(
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -6081,7 +6106,7 @@ fn drive_replenished(
     use crate::compile::try_compile_program;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, resources).expect("program compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -6121,7 +6146,7 @@ fn any_all_expansion_answers_like_the_reduce_spelling() {
 
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let expanded = try_compile_program("all(. > 0)", policy, &resources).expect("all compiles");
+    let expanded = try_compile_program("all(. > 0)", policy, CompileOptions::new(), &resources).expect("all compiles");
     let mut labels = 0usize;
     let mut breaks = 0usize;
     let mut logicals = 0usize;
@@ -6214,7 +6239,8 @@ fn iteration_cap_refuses_an_unbounded_repeat() {
 
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("[repeat(1)] | length", policy, &resources).expect("compiles");
+    let compiled =
+        try_compile_program("[repeat(1)] | length", policy, CompileOptions::new(), &resources).expect("compiles");
     let outcome = CodecInputOutcome::Result(EngineResult::owned(Value::Null));
     let EngineRun::Stream { mut stream, .. } = compiled
         .try_run_whole_value(outcome, &resources)
@@ -6258,7 +6284,7 @@ fn iteration_cap_leaves_a_bounded_run_untouched() {
 
     let mut resources = resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("[.[]] | length", policy, &resources).expect("compiles");
+    let compiled = try_compile_program("[.[]] | length", policy, CompileOptions::new(), &resources).expect("compiles");
     let mut array = jqf_data::Array::try_new().expect("array");
     for text in ["1", "2", "3"] {
         array

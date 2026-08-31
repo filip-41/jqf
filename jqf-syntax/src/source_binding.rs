@@ -35,6 +35,12 @@ impl<'source> SyntaxSource<'source> {
     pub const fn text(&self) -> &'source str {
         self.text
     }
+
+    /// Source text already verified by a prior successful [`ParsedSyntax::bind`].
+    #[must_use]
+    pub(crate) const fn from_verified(source: SourceRef, label: &'source str, text: &'source str) -> Self {
+        Self { source, label, text }
+    }
 }
 
 /// Parsed root bound to checked retained source text.
@@ -118,5 +124,18 @@ impl<T> ParsedSyntax<T> {
                 text,
             },
         })
+    }
+
+    /// Rebuild the verified source handle after a successful [`Self::bind`].
+    ///
+    /// `text` must be the same bytes bind accepted. This does not re-check
+    /// identity, length, or UTF-8.
+    #[must_use]
+    pub const fn verified_source<'source>(
+        &'source self,
+        label: &'source str,
+        text: &'source str,
+    ) -> SyntaxSource<'source> {
+        SyntaxSource::from_verified(self.source_ref(), label, text)
     }
 }

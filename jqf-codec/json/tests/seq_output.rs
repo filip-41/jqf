@@ -20,7 +20,7 @@ use jqf_codec_json::JsonEncodeOptions;
 use jqf_codec_json::seq::{JsonSeqDecodeOptions, JsonSeqEncodeOptions, JsonSeqProfile, JsonSeqSuffix};
 use jqf_data::{DialectId, FormatId};
 use jqf_sdk::{
-    CodecCatalog, CodecRequirementPolicy, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
+    CodecCatalog, CodecRequirementPolicy, CompileOptions, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy,
     RecordSequenceReport, try_compile_program,
 };
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -78,7 +78,7 @@ fn run_seq_records(
     let catalog = CodecCatalog::new(&registrations);
     let mut resources = common::resources();
     let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, &resources).expect("compiles");
+    let compiled = try_compile_program(program, policy, CompileOptions::new(), &resources).expect("compiles");
     let requirement = compiled.try_requirement(&resources).expect("requirement lowers");
     let source = ResolvedSource::new(
         SourceRef::new(SourceId::new(1), SourceKind::Input),
