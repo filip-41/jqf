@@ -12,7 +12,7 @@ mod value;
 #[allow(unused_imports)]
 pub(crate) use cursor::*;
 pub use edit::*;
-pub use encode::*;
+pub(crate) use encode::*;
 pub use input_sequence::*;
 pub use records::*;
 pub(crate) use sequence::*;
@@ -49,8 +49,8 @@ use jqf_codec_core::{
 };
 
 use jqf_data::{
-    Array, DataError, DialectId, Document, FactPayloadView, FormatId, Integer, LocalOwnerRef, NodeId, Number,
-    ObjectBuilder, ObjectKey, Value, ValueKind, ValueView,
+    Array, DataError, DialectId, Document, FactPayloadView, FormatId, LocalOwnerRef, NodeId, Value, ValueKind,
+    ValueView,
 };
 
 use jqf_engine::{
@@ -1001,7 +1001,7 @@ pub struct EncodedItemReport {
     /// the publication path had no single value to judge (the edit lane).
     value_empty_array: Option<bool>,
     /// Whether the item's ROOT value is a text-family scalar — a string, a
-    /// byte string, or a temporal spelling (`jqf_engine::is_raw_text`). The
+    /// byte string, or a temporal spelling. The
     /// CLI's colour rendering reads it to reproduce the reference's `-r` raw arm law
     /// verbatim: a ROOT text item prints its own bytes with no colour, where
     /// a raw-printed non-text root is still a JSON rendering and colours
@@ -1133,31 +1133,6 @@ pub struct OrderedEncodingPolicy<'options> {
     pub flush_each_item: bool,
 }
 
-/// One cooperative observation from an ordered engine result producer.
-#[derive(Debug)]
-pub enum OrderedResultPoll<'source> {
-    /// The producer needs another cooperative entry before yielding a result.
-    Pending,
-    /// The next ordered semantic result.
-    Item(EngineResult<'source>),
-    /// Stable end of the ordered result stream.
-    Complete,
-}
-
-/// Format-neutral producer consumed by SDK output orchestration.
-///
-/// Engine execution owns result generation; the SDK owns only ordered item
-/// publication over this boundary. NO production drive publishes through
-/// this trait today — the in-tree implementor and caller are both the
-/// sdk-smoke receipt tool (`tools/smoke/jqf-sdk-smoke`), which pins ordered
-/// publication's cooperative-credit, cancellation, and partial-sink laws.
-/// Production publication loops drive `Publication` + `encode_one`
-/// directly.
-pub trait OrderedResultProducer<'source> {
-    /// Polls the next ordered result without publishing host-visible output.
-    fn poll_next(&mut self, context: &mut CodecRunContext<'_, '_>) -> Result<OrderedResultPoll<'source>, CodecError>;
-}
-
 /// Observable publication state retained on success and every failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PublicationStatus {
@@ -1185,20 +1160,6 @@ pub struct PipelineReport {
     publication: PublicationStatus,
     disposition: PipelineDisposition,
     access: AccessReport,
-}
-
-/// Successful publication summary for a generic ordered result producer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OrderedEncodingReport {
-    publication: PublicationStatus,
-}
-
-impl OrderedEncodingReport {
-    /// Completed ordered item count and exact committed bytes.
-    #[must_use]
-    pub const fn publication(self) -> PublicationStatus {
-        self.publication
-    }
 }
 
 impl PipelineReport {

@@ -57,11 +57,8 @@ impl InputProvider for XmlProvider {
         _resources: &mut ResourceContext<'_>,
     ) -> Result<ErasedAccessSession<'source>, CodecError> {
         let source = input.source();
-        let exact = !requirement.footprint().is_whole() && !requirement.schedule().is_empty_complete();
         if slot == RouteSlot::new(0) {
-            if exact || requirement.result() != AccessResultKind::CompleteDocument {
-                return Err(mismatch());
-            }
+            requirement.expect_whole(AccessResultKind::CompleteDocument)?;
             // Empty-path count or Whole bare-root `type` licenses the
             // measure-skeleton decode: the provider serves the document element
             // as an array of deferred child spans — the same kind `type`/`length`
@@ -76,13 +73,18 @@ impl InputProvider for XmlProvider {
                 Ok(session)
             });
         }
-        let path = requirement.footprint().exact_path().ok_or_else(mismatch)?;
-        let origin = requirement.schedule().singleton_origin().ok_or_else(mismatch)?;
         if slot == RouteSlot::new(1) {
-            if requirement.result() != AccessResultKind::Located {
-                return Err(mismatch());
-            }
-            let session = crate::scoped::NativeScopedSession::try_new(source, path.steps(), origin)?;
+            let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
+            let prune = requirement
+                .prune()
+                .and_then(jqf_codec_core::PruneLookup::from_transport);
+            let session = crate::scoped::NativeScopedSession::try_new(
+                source,
+                path.steps(),
+                origin,
+                requirement.located_skeleton(),
+                prune,
+            )?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });
@@ -126,9 +128,10 @@ mod measure_provider_tests {
         )
     }
 
-    #[test]
-    fn count_requirement_opens_the_measure_session() {
-        let mut resources = resources();
+    fn decode_catalog(
+        requirement: &jqf_codec_core::AccessRequirement,
+        resources: &mut jqf_resource::ResourceContext<'static>,
+    ) -> jqf_codec_core::AccessResult<'static> {
         let registration = crate::registration().expect("registration");
         let mut provider = registration
             .decoder()
@@ -143,9 +146,19 @@ mod measure_provider_tests {
                     allow_adjacent_values: false,
                     value_separator: &[],
                 },
-                &mut resources,
+                resources,
             )
             .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources).expect("open");
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4096);
+        session.decode(&mut run).expect("decode")
+    }
+
+    #[test]
+    fn count_requirement_opens_the_measure_session() {
+        let mut resources = resources();
         let demand = jqf_codec_core::CodecDemand::try_new(&resources);
         let requirement = jqf_codec_core::AccessRequirement::try_whole(
             demand,
@@ -160,14 +173,7 @@ mod measure_provider_tests {
             probe: Vec::new(),
             filter: None,
         });
-        let handle = provider.bind(&requirement).expect("bind");
-        let mut session = provider.open(&handle, &mut resources).expect("open");
-        let result = {
-            let mut run = CodecRunContext::new(&mut resources);
-            run.set_cooperative_credits(4096);
-            session.decode(&mut run).expect("decode")
-        };
-        match result.outcome() {
+        match decode_catalog(&requirement, &mut resources).outcome() {
             jqf_codec_core::AccessOutcome::FullDocument(product) => {
                 assert_eq!(
                     product.document().container_span_count(),
@@ -185,23 +191,6 @@ mod measure_provider_tests {
     #[test]
     fn type_requirement_opens_the_measure_session() {
         let mut resources = resources();
-        let registration = crate::registration().expect("registration");
-        let mut provider = registration
-            .decoder()
-            .expect("decoder")
-            .create_provider(
-                source(b"<catalog><item id=\"0\"/><item id=\"1\"/></catalog>"),
-                DecodeRequest {
-                    validation: jqf_codec_core::ValidationMode::Strict,
-                    diagnostics: jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
-                    dialect: &DialectId::try_new(crate::XML_DETERMINISTIC_DIALECT_ID).expect("dialect"),
-                    options: None,
-                    allow_adjacent_values: false,
-                    value_separator: &[],
-                },
-                &mut resources,
-            )
-            .expect("provider");
         let demand = jqf_codec_core::CodecDemand::try_new(&resources);
         let requirement = jqf_codec_core::AccessRequirement::try_whole(
             demand,
@@ -211,14 +200,7 @@ mod measure_provider_tests {
         .expect("requirement")
         .with_type_demand();
         assert!(requirement.type_demand(), "the requirement must carry the type hint");
-        let handle = provider.bind(&requirement).expect("bind");
-        let mut session = provider.open(&handle, &mut resources).expect("open");
-        let result = {
-            let mut run = CodecRunContext::new(&mut resources);
-            run.set_cooperative_credits(4096);
-            session.decode(&mut run).expect("decode")
-        };
-        match result.outcome() {
+        match decode_catalog(&requirement, &mut resources).outcome() {
             jqf_codec_core::AccessOutcome::FullDocument(product) => {
                 let document = product.document();
                 assert_eq!(

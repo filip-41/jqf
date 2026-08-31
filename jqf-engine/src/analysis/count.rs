@@ -48,7 +48,9 @@ use crate::analysis::ProjectionClass;
 use crate::analysis::PushdownSplit;
 use crate::analysis::path_steps::{count_each_steps, range_normalized, static_member_prefix, static_path};
 use crate::program::{BinaryKind, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess};
+use jqf_builtins::registry::Evaluator;
 use jqf_builtins::registry::builtins::id;
+use jqf_data::Value;
 
 /// The recognized count demand of one compiled program, or `None` when the
 /// program is not a count row.
@@ -170,6 +172,12 @@ fn collect_length_row(nodes: &[ProgramNode], root: ProgramNodeId, split: Pushdow
         None
     };
     let probe = static_path(residual)?;
+    // Empty residual + no filter is the element itself or one literal per
+    // item (`[C[]] | length`, `[C[] | 1] | length`). Choice (`1, 2`) and
+    // `empty` are not one-per-item; the floor owns them.
+    if residual.is_empty() && filter.is_none() && !collect_empty_probe_is_one_per_item(nodes, *collect_body, entry) {
+        return None;
+    }
     Some(CountDemand {
         row: CountRow::Collect,
         path,
@@ -177,6 +185,31 @@ fn collect_length_row(nodes: &[ProgramNode], root: ProgramNodeId, split: Pushdow
         probe,
         filter,
     })
+}
+
+/// Empty-probe collect: the body is the entry stage, or `FlatMap` from that
+/// stage onto one literal. Choice and `empty` fail the match.
+fn collect_empty_probe_is_one_per_item(
+    nodes: &[ProgramNode],
+    collect_body: ProgramNodeId,
+    entry: ProgramNodeId,
+) -> bool {
+    let mut id = collect_body;
+    loop {
+        if id == entry {
+            return true;
+        }
+        match &nodes[id.index()] {
+            ProgramNode::FlatMap { upstream, body } if *upstream == entry => {
+                id = *body;
+            }
+            ProgramNode::Stage {
+                start: StageStart::Literal(_),
+                steps,
+            } if steps.is_empty() => return true,
+            _ => return false,
+        }
+    }
 }
 
 /// The `select(P)` half of the filter twin: the collect body must be EXACTLY
@@ -556,6 +589,68 @@ pub(crate) fn keys_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<
     path_then_call(nodes, root, is_keys_sorted_call)
 }
 
+/// A `has("k")` / `has(1)` compile shortcut: the static container path and the
+/// literal key. Empty path is the document root.
+///
+/// The presence law lives on [`jqf_builtins::registry::builtins::reshape::has`]:
+/// this type only names the subject PATH and the compile-time key. Kind mismatch
+/// Declines to the graph; a missing PATH Declines too (the floor fires miss
+/// cells); a located null subject answers false.
+#[derive(Clone, Debug)]
+pub(crate) struct HasDemand {
+    /// Static Key/Index steps to the subject. Empty is the document root.
+    pub path: Vec<CountStep>,
+    /// The literal string or number key. Any other kind is not a row.
+    pub key: Value,
+}
+
+/// The recognized `has` shortcut, or `None` when the program is not a row.
+///
+/// Rows: `has(LITERAL)` and `PATH | has(LITERAL)` where PATH is a static
+/// Current Key/Index stage with no trailing slice and LITERAL is a string or
+/// number. `has?`, `has($x)`, `has(.k)`, `has(empty)`, `in(xs)`, and a slice
+/// prefix all decline.
+pub(crate) fn has_demand(nodes: &[ProgramNode], root: ProgramNodeId) -> Option<HasDemand> {
+    if let Some(key) = has_literal_key(nodes, root) {
+        return Some(HasDemand { path: Vec::new(), key });
+    }
+    let ProgramNode::FlatMap { upstream, body } = &nodes[root.index()] else {
+        return None;
+    };
+    let key = has_literal_key(nodes, *body)?;
+    let demand = container_from_path_node(nodes, *upstream)?;
+    demand.range.is_none().then_some(HasDemand { path: demand.path, key })
+}
+
+/// The string or number literal of a `has` call with no postfix on the arg.
+fn has_literal_key(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<Value> {
+    let ProgramNode::Call {
+        payload: Evaluator::Has,
+        args,
+        ..
+    } = &nodes[id.index()]
+    else {
+        return None;
+    };
+    let [arg] = args.as_slice() else {
+        return None;
+    };
+    let ProgramNode::Stage {
+        start: StageStart::Literal(value),
+        steps,
+    } = &nodes[arg.index()]
+    else {
+        return None;
+    };
+    if !steps.is_empty() {
+        return None;
+    }
+    match value.untagged() {
+        Value::String(_) | Value::Number(_) => Some(value.untagged().clone()),
+        _ => None,
+    }
+}
+
 pub(crate) fn keys_builtin_present(nodes: &[ProgramNode]) -> bool {
     nodes.iter().any(|node| {
         matches!(
@@ -652,7 +747,7 @@ pub(crate) fn count_prune_tree(demand: &CountDemand) -> Option<PruneNode> {
 mod tests {
     use super::*;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::{CompileOptions, try_compile_program};
+    use crate::compile::{CompileOptions, Shortcut, try_compile_program};
     use alloc::vec;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -676,7 +771,10 @@ mod tests {
     }
 
     fn demand(source: &str) -> Option<CountDemand> {
-        compiled(source).count_demand().cloned()
+        match compiled(source).shortcut() {
+            Shortcut::Count(demand) => Some(demand.clone()),
+            _ => None,
+        }
     }
 
     #[test]
@@ -752,6 +850,43 @@ mod tests {
         assert!(demand(".[] | keys | length").is_none());
     }
 
+    fn has_row(source: &str) -> Option<super::HasDemand> {
+        match compiled(source).shortcut() {
+            Shortcut::Has(demand) => Some(demand.clone()),
+            _ => None,
+        }
+    }
+
+    fn has_key_is_string(demand: &super::HasDemand, expected: &str) -> bool {
+        matches!(&demand.key, jqf_data::Value::String(text) if text.as_str() == expected)
+    }
+
+    #[test]
+    fn has_rows_recognize_literal_key_and_path() {
+        let root = has_row(r#"has("k")"#).expect("root has");
+        assert!(root.path.is_empty());
+        assert!(has_key_is_string(&root, "k"));
+
+        let path = has_row(r#".users | has("id")"#).expect("path has");
+        assert_eq!(path.path, vec![CountStep::ObjectKey("users".into())]);
+        assert!(has_key_is_string(&path, "id"));
+
+        let index = has_row("has(1)").expect("numeric has");
+        assert!(index.path.is_empty());
+        assert!(matches!(index.key, jqf_data::Value::Number(_)));
+    }
+
+    #[test]
+    fn has_rows_decline_non_literal_and_optional() {
+        assert!(has_row(". as $x | has($x)").is_none());
+        assert!(has_row("has(.k)").is_none());
+        assert!(has_row("has(empty)").is_none());
+        assert!(has_row(r#"has("k")?"#).is_none());
+        assert!(has_row(r#".users? | has("k")"#).is_none());
+        assert!(has_row(r#".users[1:2] | has("k")"#).is_none());
+        assert!(has_row(r#"in("k")"#).is_none());
+    }
+
     #[test]
     fn range_rows_recognize_the_container_path_range() {
         // `[.catalog[10:20][] | .name] | length`: the boundary `.[]` is
@@ -822,6 +957,12 @@ mod tests {
         assert_eq!(root.row, CountRow::Collect);
         assert!(root.path.is_empty());
         assert!(root.probe.is_empty());
+        assert!(demand("map(1) | length").is_some());
+        // Multi-output and zero-output bodies are not one-per-item.
+        assert!(demand("[.catalog[] | 1, 2] | length").is_none());
+        assert!(demand(".catalog | map(1,2) | length").is_none());
+        assert!(demand("[.catalog[] | empty] | length").is_none());
+        assert!(demand(".catalog | map(empty) | length").is_none());
     }
 
     // -- Collect-filter rows: `[C[] | select(P)] | length`. ---------------

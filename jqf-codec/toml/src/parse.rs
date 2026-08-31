@@ -25,15 +25,16 @@ use alloc::string::String;
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct, PRUNE_ALL, PruneRef,
+    DocumentProduct, PruneRef,
 };
 
 pub(crate) use jqf_codec_core::PruneLookup;
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedOccurrenceKey, AccountedSemanticNode,
-    AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage, DocumentCapabilityFamily,
-    DocumentFinalizationPoll, DocumentSchemaRecipe, DocumentSourceBindingStage, FactPayload, LocalOwnerRef, NodeId,
-    PreparedDocumentSchema, PreparedOccurrenceRole, PreparedSemanticNode,
+    AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind, DataError, DiagnosticCoverage,
+    DocumentCapabilityFamily, DocumentFinalizationPoll, DocumentSchemaRecipe, DocumentSourceBindingPoll,
+    DocumentSourceBindingStage, FactPayload, LazySpanMaterializer, LocalOwnerRef, NodeId, PreparedDocumentSchema,
+    PreparedOccurrenceRole, PreparedSemanticNode,
 };
 use jqf_resource::ResourceContext;
 use jqf_source::Span;
@@ -568,7 +569,9 @@ fn build_table_from_doc(
     for (key, value) in assignments {
         // The prune hint names the members the program provably reads; an unobservable assignment is OMITTED (its
         // grammar validation already ran during the parse).
-        let value_prune = prune.member(doc.name_text(key.id).as_bytes()).unwrap_or(PRUNE_ALL);
+        let Some(value_prune) = prune.member(doc.name_text(key.id).as_bytes()) else {
+            continue;
+        };
         let node = build_value(
             builder,
             schema,
@@ -608,7 +611,9 @@ fn build_table_from_doc(
         // An unobservable child is OMITTED wholesale — its subtree holds no member the program reads. The spine law
         // still holds for the PARENT (this table's own node was built); an omitted child is simply a member that never
         // exists in the pruned document.
-        let child_prune = prune.member(doc.name_text(key.id).as_bytes()).unwrap_or(PRUNE_ALL);
+        let Some(child_prune) = prune.member(doc.name_text(key.id).as_bytes()) else {
+            continue;
+        };
         let part = key.id;
         match doc.child(table_id, part) {
             // An array-of-tables child: its element ids are the flat state's ledger, walked by id instead of resolving
@@ -711,6 +716,85 @@ pub(crate) fn fresh_builder(
     ));
     builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
     Ok((builder, schema))
+}
+
+/// Publishes a contiguous located value container as a lazy span root. The walk already
+/// proved `[start, end)` and counted its children; count does not wrap-and-reparse the hit.
+#[allow(
+    unsafe_code,
+    reason = "span admission and source attach are unsafe by jqf-data; the walk proved this range"
+)]
+pub(crate) fn publish_located_skeleton<'source>(
+    source: jqf_source::ResolvedSource<'source>,
+    start: usize,
+    end: usize,
+    container: ContainerSpanKind,
+    child_count: Option<u64>,
+    dialect: DialectKind,
+    context: &mut CodecRunContext<'_, '_>,
+) -> Result<DocumentProduct<'source>, CodecError> {
+    let bytes = source.bytes().get(start..end).ok_or_else(data_contract)?;
+    let base = source
+        .base_offset()
+        .saturating_add(u64::try_from(start).unwrap_or(u64::MAX));
+    let sub = jqf_source::ResolvedSource::new(source.source(), source.label(), bytes, base);
+    let (mut builder, schema) = fresh_builder(BuilderCoverage::minimal_semantic(), context.resources())?;
+    builder.bind_span_materializer(match dialect {
+        DialectKind::Toml10 => &crate::lazy::TOML_10_SPAN_MATERIALIZER as &dyn LazySpanMaterializer,
+        DialectKind::Toml11 => &crate::lazy::TOML_11_SPAN_MATERIALIZER as &dyn LazySpanMaterializer,
+    });
+    let mut stage = DocumentSourceBindingStage::new(sub).map_err(map_data)?;
+    let binding = loop {
+        // SAFETY: codec-core holds this session's source unchanged; `sub` is the
+        // value region the walk recorded on that authority.
+        match unsafe { stage.poll(sub, context.resources()) }.map_err(map_data)? {
+            DocumentSourceBindingPoll::Pending => context.replenish_work()?,
+            DocumentSourceBindingPoll::Ready(binding) => break binding,
+        }
+    };
+    builder.bind_source(binding).map_err(map_data)?;
+    let span = Span::from_usize(0, bytes.len());
+    let slot = match container {
+        ContainerSpanKind::Array => 2,
+        ContainerSpanKind::Object => 1,
+    };
+    let kind = schema.node_kind(slot).ok_or_else(data_contract)?;
+    // SAFETY: the walk proved `[start, end)` one complete array or inline table.
+    let root =
+        unsafe { builder.add_prepared_bound_container_span_node(&schema, kind, span, container, context.resources()) }
+            .map_err(map_data)?;
+    builder
+        .set_container_span_counts(root, child_count, None)
+        .map_err(map_data)?;
+    let document = builder.finish(root, context.resources()).map_err(map_data)?;
+    let document =
+        unsafe { document.with_borrowed_source_from_bound_authority(sub, context.resources()) }.map_err(map_data)?;
+    DocumentProduct::try_new(document, context.resources())
+}
+
+/// Count-only skeleton for a non-contiguous walk answer (`[table]`, implicit dotted table, range).
+///
+/// There is no rematerializable value region: statement spans are scattered, and a dotted implicit
+/// table has no `{...}` in source. The walk already recorded unique immediate children. Reuses
+/// [`publish_located_skeleton`] over a kind-witness empty container; count reads the cached
+/// cardinality and must not [`parse_direct`] the hit.
+pub(crate) fn publish_walk_skeleton<'source>(
+    container: ContainerSpanKind,
+    child_count: u64,
+    dialect: DialectKind,
+    context: &mut CodecRunContext<'_, '_>,
+) -> Result<DocumentProduct<'source>, CodecError> {
+    let bytes: &[u8] = match container {
+        ContainerSpanKind::Object => b"{}",
+        ContainerSpanKind::Array => b"[]",
+    };
+    let source = jqf_source::ResolvedSource::new(
+        jqf_source::SourceRef::new(jqf_source::SourceId::new(0), jqf_source::SourceKind::Input),
+        "walk-skeleton",
+        bytes,
+        0,
+    );
+    publish_located_skeleton(source, 0, bytes.len(), container, Some(child_count), dialect, context)
 }
 
 fn add_prepared_table(
@@ -1145,7 +1229,9 @@ fn build_value(
             for (key, entry) in entries {
                 // An inline-table member the program provably cannot read is omitted; the grammar's O(n^2) duplicate
                 // check already validated every entry during the parse.
-                let entry_prune = prune.member(names[key.id as usize].as_bytes()).unwrap_or(PRUNE_ALL);
+                let Some(entry_prune) = prune.member(names[key.id as usize].as_bytes()) else {
+                    continue;
+                };
                 let entry_node = build_value(
                     builder,
                     schema,
@@ -1469,10 +1555,11 @@ mod coverage_tests {
     use alloc::vec;
     use alloc::vec::Vec;
     use jqf_codec_core::{
-        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
-        CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, FactIntent, ValidationMode,
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, AccessResult, CodecDemand, CodecError,
+        CodecFailureKind, CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath,
+        ExactSelectionRecord, FactIntent, PortableStep, PruneTree, ValidationMode,
     };
-    use jqf_data::{FactKindId, FactPayloadView, FactRoleId};
+    use jqf_data::{FactKindId, FactPayloadView, FactRoleId, Value};
     use jqf_resource::ResourceContext;
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -1661,5 +1748,353 @@ mod coverage_tests {
         let requirement = exact_member_requirement("a", attached_fact_demand("comment", &resources), &resources);
         let product = decode_requirement_product(b"# lead a\na = 1\n", &requirement, &mut resources).expect("decode");
         assert_eq!(comment_facts(&product, &[], COMMENT_FACT), vec![String::from("lead a")]);
+    }
+
+    /// Exact + count publishes the walk's contiguous array span. The locate pass already
+    /// proved the range and counted its children; count must not wrap-and-reparse the hit.
+    #[test]
+    fn exact_count_demand_uses_the_locate_span() {
+        let mut resources = resources();
+        let result = decode_exact_count(b"users = [1, 2, 3]\n", "users", &mut resources).expect("count demand");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("located")
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!("node")
+        };
+        let document = located.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span"),
+            "count Exact must publish the locate span, not a rematerialized tree"
+        );
+        assert_eq!(document.node_count(), 1, "skeleton Exact is one container-span node");
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(3),
+            "Exact count records cardinality on the proving walk"
+        );
+        assert_eq!(
+            document
+                .count_children_from(*node, &empty_path_count(), &mut resources)
+                .expect("span count"),
+            jqf_data::CountVerdict::Count(3)
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_still_validates_unread_bytes() {
+        let mut resources = resources();
+        decode_exact_count(b"users = [1, 2, 3]\n[[[unterminated", "users", &mut resources)
+            .expect_err("unread corrupt bytes must still fail Exact validation");
+    }
+
+    fn empty_path_count() -> jqf_data::CountDemand {
+        jqf_data::CountDemand {
+            row: jqf_data::CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        }
+    }
+
+    fn decode_exact_count<'source>(
+        bytes: &'source [u8],
+        member: &str,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<AccessResult<'source>, CodecError> {
+        decode_exact_path(
+            bytes,
+            &[PortableStep::SemanticMember(alloc::string::String::from(member))],
+            Some(empty_path_count()),
+            resources,
+        )
+    }
+
+    fn exact_path_requirement(
+        steps: &[PortableStep],
+        demand: CodecDemand,
+        resources: &ResourceContext<'_>,
+    ) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        for step in steps {
+            match step {
+                PortableStep::SemanticMember(name) => {
+                    path.try_push_semantic_member(name, resources).expect("member");
+                }
+                PortableStep::SemanticIndex(index) => {
+                    path.try_push_semantic_index(*index, resources);
+                }
+                PortableStep::SemanticRange { start, end } => {
+                    path.try_push_semantic_range(*start, *end, resources);
+                }
+            }
+        }
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn decode_exact_path<'source>(
+        bytes: &'source [u8],
+        steps: &[PortableStep],
+        count: Option<jqf_data::CountDemand>,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<AccessResult<'source>, CodecError> {
+        let mut requirement = exact_path_requirement(steps, CodecDemand::try_new(resources), resources);
+        if let Some(count) = count {
+            requirement = requirement.with_count(count);
+        }
+        let registration = crate::registration_1_0().expect("registration");
+        let dialect = jqf_data::DialectId::try_new(crate::TOML_JQF_1_0_DIALECT_ID).expect("dialect");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            resources,
+        )?;
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, resources)?;
+        let mut context = CodecRunContext::new(resources);
+        context.set_cooperative_credits(4_096);
+        session.decode(&mut context)
+    }
+
+    fn located_count(result: &AccessResult<'_>, resources: &mut ResourceContext<'_>) -> (u64, usize) {
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("located")
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!("node")
+        };
+        let document = located.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span"),
+            "count Exact must publish a skeleton, not a rematerialized tree"
+        );
+        let cached = document.container_span_child_count(*node).expect("handle");
+        let jqf_data::CountVerdict::Count(n) = document
+            .count_children_from(*node, &empty_path_count(), resources)
+            .expect("span count")
+        else {
+            panic!("count verdict")
+        };
+        assert_eq!(cached, Some(n), "oracle count must be the walk's cached cardinality");
+        (n, document.node_count())
+    }
+
+    fn whole_child_len(bytes: &[u8], path: &[&str], resources: &mut ResourceContext<'_>) -> u64 {
+        let requirement = whole_requirement(CodecDemand::try_new(resources), resources);
+        let product = decode_requirement_product(bytes, &requirement, resources).expect("whole");
+        let node = node_at(&product, path);
+        let handle = product.document().node_handle(node).expect("handle");
+        let view = product.document().value_view(handle).expect("view");
+        if let Ok(Some(object)) = view.object() {
+            object.len() as u64
+        } else if let Ok(Some(array)) = view.array() {
+            array.len() as u64
+        } else {
+            panic!("expected a container at {path:?}")
+        }
+    }
+
+    fn member(name: &str) -> PortableStep {
+        PortableStep::SemanticMember(alloc::string::String::from(name))
+    }
+
+    /// Exact count of a `[table]` equals Whole count and uses the table skeleton, not the Value span arm.
+    #[test]
+    fn exact_count_of_a_table_matches_whole_and_skips_value_skeleton() {
+        let bytes = b"[t]\nx = 1\ny = 2\nz = 3\n";
+        let mut resources = resources();
+        let whole = whole_child_len(bytes, &["t"], &mut resources);
+        assert_eq!(whole, 3);
+        let result = decode_exact_path(bytes, &[member("t")], Some(empty_path_count()), &mut resources).expect("count");
+        let (exact, nodes) = located_count(&result, &mut resources);
+        assert_eq!(exact, whole);
+        assert_eq!(
+            nodes, 1,
+            "table Exact count is one skeleton node, not a rematerialized tree"
+        );
+    }
+
+    /// Implicit dotted `a.b` / `a.c` under one implicit table: nested object shape, not dotted JSON keys.
+    #[test]
+    fn exact_count_of_an_implicit_table_is_the_nested_object_shape() {
+        let bytes = b"root = { a.b = 1, a.c = 2 }\n";
+        let mut resources = resources();
+        let whole = whole_child_len(bytes, &["root", "a"], &mut resources);
+        assert_eq!(whole, 2, "a has b and c, not keys named a.b / a.c");
+        let result = decode_exact_path(
+            bytes,
+            &[member("root"), member("a")],
+            Some(empty_path_count()),
+            &mut resources,
+        )
+        .expect("count");
+        let (exact, nodes) = located_count(&result, &mut resources);
+        assert_eq!(exact, whole);
+        assert_eq!(nodes, 1);
+        let bytes = b"root = { a.b.c = 1, a.b.d = 2 }\n";
+        let whole = whole_child_len(bytes, &["root", "a"], &mut resources);
+        assert_eq!(whole, 1, "nested remainder stays one child b");
+        let result = decode_exact_path(
+            bytes,
+            &[member("root"), member("a")],
+            Some(empty_path_count()),
+            &mut resources,
+        )
+        .expect("count");
+        let (exact, _) = located_count(&result, &mut resources);
+        assert_eq!(exact, whole);
+    }
+
+    /// `[[arr]]` range Exact count is the number of in-range elements.
+    #[test]
+    fn exact_count_of_an_array_of_tables_range_is_the_in_range_width() {
+        let bytes = b"[[p]]\nx = 1\n[[p]]\nx = 2\n[[p]]\nx = 3\n";
+        let mut resources = resources();
+        let result = decode_exact_path(
+            bytes,
+            &[
+                member("p"),
+                PortableStep::SemanticRange {
+                    start: Some(1),
+                    end: Some(3),
+                },
+            ],
+            Some(empty_path_count()),
+            &mut resources,
+        )
+        .expect("count");
+        let (exact, nodes) = located_count(&result, &mut resources);
+        assert_eq!(exact, 2);
+        assert_eq!(nodes, 1);
+        let whole = whole_child_len(bytes, &["p"], &mut resources);
+        assert_eq!(whole, 3, "Whole of the array is three elements; the slice is two");
+    }
+
+    /// Print Exact of a `[table]` matches Whole-then-navigate (byte-identical values).
+    #[test]
+    fn exact_print_of_a_table_matches_whole_then_navigate() {
+        let bytes = b"[t]\nx = 1\ny = 2\n[t.sub]\nz = 3\n";
+        let mut resources = resources();
+        let whole_req = whole_requirement(CodecDemand::try_new(&resources), &resources);
+        let whole = decode_requirement_product(bytes, &whole_req, &mut resources).expect("whole");
+        let node = node_at(&whole, &["t"]);
+        let handle = whole.document().node_handle(node).expect("handle");
+        let from_whole = whole
+            .document()
+            .materialize_node(handle, &mut resources)
+            .expect("materialize whole");
+        let result = decode_exact_path(bytes, &[member("t")], None, &mut resources).expect("print");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("located")
+        };
+        let from_exact = located
+            .product()
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize exact");
+        let (jqf_data::Value::Object(exact), jqf_data::Value::Object(whole)) = (&from_exact, &from_whole) else {
+            panic!("both routes must publish the table object, got {from_exact:?} vs {from_whole:?}");
+        };
+        assert_eq!(exact.len(), whole.len());
+        for key in ["x", "y", "sub"] {
+            assert!(exact.get(key).is_some(), "exact missing {key}");
+            assert!(whole.get(key).is_some(), "whole missing {key}");
+        }
+        let number = |object: &jqf_data::Object, key: &str| match object.get(key) {
+            Some(jqf_data::Value::Number(n)) => n.to_i64(),
+            _ => None,
+        };
+        assert_eq!(number(exact, "x"), number(whole, "x"));
+        assert_eq!(number(exact, "y"), number(whole, "y"));
+        let (Some(jqf_data::Value::Object(exact_sub)), Some(jqf_data::Value::Object(whole_sub))) =
+            (exact.get("sub"), whole.get("sub"))
+        else {
+            panic!("sub must be a nested table on both routes");
+        };
+        assert_eq!(number(exact_sub, "z"), number(whole_sub, "z"));
+    }
+
+    /// Contiguous inline-table Exact count stays one-pass (the Value skeleton arm).
+    #[test]
+    fn exact_count_of_an_inline_table_still_uses_the_value_span() {
+        let bytes = b"point = { x = 1, y = 2 }\n";
+        let mut resources = resources();
+        let whole = whole_child_len(bytes, &["point"], &mut resources);
+        assert_eq!(whole, 2);
+        let result = decode_exact_count(bytes, "point", &mut resources).expect("count");
+        let (exact, nodes) = located_count(&result, &mut resources);
+        assert_eq!(exact, whole);
+        assert_eq!(nodes, 1);
+    }
+
+    fn keep_member_tree(name: &str, resources: &ResourceContext<'_>) -> PruneTree {
+        let mut tree = PruneTree::try_new(resources).expect("tree");
+        let keep = tree.try_push_node(true).expect("keep");
+        tree.try_push_key(PruneTree::ROOT, name, keep).expect("key");
+        tree
+    }
+
+    fn object_keys(value: &Value) -> Vec<&str> {
+        let Value::Object(object) = value else {
+            panic!("expected object");
+        };
+        object.iter().map(jqf_data::ObjectEntry::key).collect()
+    }
+
+    /// Packed prune omit skips unread members. Grammar validation still fails on a corrupt omitted member — the Skip
+    /// walk is not a keep-all rewrite.
+    #[test]
+    fn whole_prune_omits_unobservable_members() {
+        let mut resources = resources();
+        let requirement = whole_requirement(CodecDemand::try_new(&resources), &resources)
+            .with_prune(keep_member_tree("id", &resources));
+        let fat = b"id = 1\nscore = 2\nblob = [1, 2, 3, 4, 5]\n";
+        let product = decode_requirement_product(fat, &requirement, &mut resources).expect("decode");
+        let value = product
+            .document()
+            .materialize_root(&mut resources)
+            .expect("materialize");
+        assert_eq!(object_keys(&value), ["id"]);
+        let full = decode_requirement_product(
+            fat,
+            &whole_requirement(CodecDemand::try_new(&resources), &resources),
+            &mut resources,
+        )
+        .expect("full");
+        assert!(
+            product.document().node_count() < full.document().node_count(),
+            "pruned {} must be smaller than unpruned {}",
+            product.document().node_count(),
+            full.document().node_count()
+        );
+        let error = decode_requirement_product(b"id = 1\nblob = [\n", &requirement, &mut resources)
+            .expect_err("omitted members still validate");
+        assert_eq!(error.kind(), CodecFailureKind::InvalidInput);
+        let error = decode_requirement_product(b"id = 1\nblob = 2\nfalse\n", &requirement, &mut resources)
+            .expect_err("trailing junk still fails");
+        assert_eq!(error.kind(), CodecFailureKind::InvalidInput);
     }
 }

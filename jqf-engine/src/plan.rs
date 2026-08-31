@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use crate::analysis::{BoundaryConsumer, ProjectionClass};
 use crate::codec_requirement::StaticForwardStep;
 use crate::compile::CompiledProgram;
-use crate::explain::{ExplainPlan, RungEligibility};
+use crate::explain::{ExplainPlan, RungEligibility, ShortcutKind};
 
 /// The versioned, byte-stable serialized form of one compiled program's plan.
 ///
@@ -35,8 +35,6 @@ use crate::explain::{ExplainPlan, RungEligibility};
     reason = "each boolean is one routing fact of the serialized plan; grouping them would hide the facts"
 )]
 pub struct PlanRecord {
-    /// Whether the program is the bare identity filter `.`.
-    pub identity: bool,
     /// Whether the program contains any assignment (`=`/`|=` family) node.
     pub modifies: bool,
     /// Whether the root evaluation consumes the entire input document.
@@ -56,14 +54,8 @@ pub struct PlanRecord {
     pub boundary_consumer: Option<BoundaryConsumer>,
     /// How many rows of the closed partial-sort table this program matches.
     pub topk_rows: u64,
-    /// Whether finish cached a count-table row.
-    pub count_route: bool,
-    /// Whether finish cached an element-boundary row.
-    pub element_route: bool,
-    /// Whether finish cached a keys-publish row.
-    pub keys_route: bool,
-    /// Whether finish cached a type-class row.
-    pub type_route: bool,
+    /// The one job finish committed. `None` is the residual graph.
+    pub shortcut: ShortcutKind,
     /// Whether the compiled program reads the ~inputs resident cursor.
     pub uses_inputs_cursor: bool,
 }
@@ -143,7 +135,6 @@ impl PlanRecord {
             ProjectionClass::Subtree => ClassRecord::Subtree,
         };
         Self {
-            identity: plan.identity,
             modifies: plan.modifies,
             consumes_whole_document: plan.consumes_whole_document,
             morsel_static_path: plan.morsel_static_path,
@@ -153,10 +144,7 @@ impl PlanRecord {
             rungs: plan.rungs,
             boundary_consumer: plan.boundary_consumer,
             topk_rows: plan.topk_rows as u64,
-            count_route: plan.count_route,
-            element_route: plan.element_route,
-            keys_route: plan.keys_route,
-            type_route: plan.type_route,
+            shortcut: plan.shortcut,
             uses_inputs_cursor: plan.uses_inputs_cursor,
         }
     }
@@ -167,21 +155,16 @@ impl PlanRecord {
         let mut w = Writer::new();
         w.bytes(MAGIC);
         w.u32(VERSION);
-        w.bool(self.identity);
         w.bool(self.modifies);
         w.bool(self.consumes_whole_document);
         w.bool(self.morsel_static_path);
         w.bool(self.uses_input_family);
         w.class(&self.projection_class);
         w.steps(&self.pushdown);
-        w.bool(self.rungs.range_locate);
         w.bool(self.rungs.morsel);
         w.opt_consumer(self.boundary_consumer);
         w.u64(self.topk_rows);
-        w.bool(self.count_route);
-        w.bool(self.element_route);
-        w.bool(self.keys_route);
-        w.bool(self.type_route);
+        w.shortcut(self.shortcut);
         w.bool(self.uses_inputs_cursor);
         w.finish()
     }
@@ -197,28 +180,68 @@ impl PlanRecord {
             return Err(PlanError::BadMagic);
         }
         let version = r.u32().map_err(|_| PlanError::Truncated)?;
-        if version != VERSION && version != 7 {
+        if !matches!(version, 7 | 8 | 9 | VERSION) {
             return Err(PlanError::BadVersion(version));
         }
+        let identity = if version < 10 { Some(r.bool()?) } else { None };
+        let modifies = r.bool()?;
+        let consumes_whole_document = r.bool()?;
+        let morsel_static_path = r.bool()?;
+        let uses_input_family = r.bool()?;
+        let projection_class = r.class()?;
+        let pushdown = r.steps()?;
+        let range_locate = if version < 10 { Some(r.bool()?) } else { None };
+        let rungs = RungEligibility { morsel: r.bool()? };
+        let boundary_consumer = r.opt_consumer()?;
+        let topk_rows = r.u64()?;
+        let (shortcut, uses_inputs_cursor) = match version {
+            7 => {
+                let shortcut = if identity == Some(true) {
+                    ShortcutKind::Identity
+                } else if range_locate == Some(true) {
+                    ShortcutKind::RangeLocate
+                } else {
+                    ShortcutKind::None
+                };
+                (shortcut, false)
+            }
+            8 => {
+                let count = r.bool()?;
+                let element = r.bool()?;
+                let keys = r.bool()?;
+                let type_route = r.bool()?;
+                let uses_inputs_cursor = r.bool()?;
+                let shortcut = if count {
+                    ShortcutKind::Count
+                } else if element {
+                    ShortcutKind::Element
+                } else if keys {
+                    ShortcutKind::Keys
+                } else if type_route {
+                    ShortcutKind::Type
+                } else if identity == Some(true) {
+                    ShortcutKind::Identity
+                } else if range_locate == Some(true) {
+                    ShortcutKind::RangeLocate
+                } else {
+                    ShortcutKind::None
+                };
+                (shortcut, uses_inputs_cursor)
+            }
+            _ => (r.shortcut()?, r.bool()?),
+        };
         let record = Self {
-            identity: r.bool()?,
-            modifies: r.bool()?,
-            consumes_whole_document: r.bool()?,
-            morsel_static_path: r.bool()?,
-            uses_input_family: r.bool()?,
-            projection_class: r.class()?,
-            pushdown: r.steps()?,
-            rungs: RungEligibility {
-                range_locate: r.bool()?,
-                morsel: r.bool()?,
-            },
-            boundary_consumer: r.opt_consumer()?,
-            topk_rows: r.u64()?,
-            count_route: if version == 7 { false } else { r.bool()? },
-            element_route: if version == 7 { false } else { r.bool()? },
-            keys_route: if version == 7 { false } else { r.bool()? },
-            type_route: if version == 7 { false } else { r.bool()? },
-            uses_inputs_cursor: if version == 7 { false } else { r.bool()? },
+            modifies,
+            consumes_whole_document,
+            morsel_static_path,
+            uses_input_family,
+            projection_class,
+            pushdown,
+            rungs,
+            boundary_consumer,
+            topk_rows,
+            shortcut,
+            uses_inputs_cursor,
         };
         if !r.finished() {
             return Err(PlanError::Overrun);
@@ -256,10 +279,12 @@ impl StepRecord {
 
 /// The format magic: the four bytes `JQFP`.
 const MAGIC: &[u8; 4] = b"JQFP";
-/// The current format version. Bump when the field layout changes. v8 adds
-/// finish-cached route flags; v7 added `topk_rows`. The decoder accepts v7
-/// and defaults the five v8 route flags to false.
-const VERSION: u32 = 8;
+/// The current format version. Bump when the field layout changes. v10
+/// omits the identity and `range_locate` bools (the [`ShortcutKind`] tag
+/// already carries both). v9 wrote those bools plus the closed shortcut
+/// tag; v8 stored four route bools; v7 added `topk_rows`. The decoder
+/// accepts 7, 8, and 9.
+const VERSION: u32 = 10;
 
 /// The length-prefix byte width of the plan format.
 const LEN_BYTES: usize = 4;
@@ -362,6 +387,21 @@ impl Writer {
                 BoundaryConsumer::Collect => 3,
             });
         }
+    }
+
+    fn shortcut(&mut self, shortcut: ShortcutKind) {
+        self.u8(match shortcut {
+            ShortcutKind::None => 0,
+            ShortcutKind::Count => 1,
+            ShortcutKind::Keys => 2,
+            ShortcutKind::Type => 3,
+            ShortcutKind::Element => 4,
+            ShortcutKind::RangeLocate => 5,
+            ShortcutKind::Identity => 6,
+            ShortcutKind::Has => 7,
+            ShortcutKind::AnyAll => 8,
+            ShortcutKind::MinMax => 9,
+        });
     }
 
     fn u8(&mut self, value: u8) {
@@ -510,6 +550,22 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn shortcut(&mut self) -> Result<ShortcutKind, PlanError> {
+        match self.u8()? {
+            0 => Ok(ShortcutKind::None),
+            1 => Ok(ShortcutKind::Count),
+            2 => Ok(ShortcutKind::Keys),
+            3 => Ok(ShortcutKind::Type),
+            4 => Ok(ShortcutKind::Element),
+            5 => Ok(ShortcutKind::RangeLocate),
+            6 => Ok(ShortcutKind::Identity),
+            7 => Ok(ShortcutKind::Has),
+            8 => Ok(ShortcutKind::AnyAll),
+            9 => Ok(ShortcutKind::MinMax),
+            _ => Err(PlanError::InvalidEnum("shortcut")),
+        }
+    }
+
     fn finished(&self) -> bool {
         self.pos == self.bytes.len()
     }
@@ -524,7 +580,6 @@ mod tests {
     /// A fully-populated record exercising every field and enum arm.
     fn populated() -> PlanRecord {
         PlanRecord {
-            identity: false,
             modifies: true,
             consumes_whole_document: false,
             morsel_static_path: false,
@@ -538,18 +593,58 @@ mod tests {
                     end: None,
                 },
             ],
-            rungs: RungEligibility {
-                range_locate: false,
-                morsel: false,
-            },
+            rungs: RungEligibility { morsel: false },
             boundary_consumer: Some(BoundaryConsumer::Residual),
             topk_rows: 3,
-            count_route: true,
-            element_route: false,
-            keys_route: false,
-            type_route: false,
+            shortcut: ShortcutKind::Count,
             uses_inputs_cursor: false,
         }
+    }
+
+    /// v7/v8/v9 body: identity and `range_locate` bools still sit on that wire.
+    fn write_legacy_body(w: &mut Writer, record: &PlanRecord, identity: bool, range_locate: bool) {
+        w.bool(identity);
+        w.bool(record.modifies);
+        w.bool(record.consumes_whole_document);
+        w.bool(record.morsel_static_path);
+        w.bool(record.uses_input_family);
+        w.class(&record.projection_class);
+        w.steps(&record.pushdown);
+        w.bool(range_locate);
+        w.bool(record.rungs.morsel);
+        w.opt_consumer(record.boundary_consumer);
+        w.u64(record.topk_rows);
+    }
+
+    fn serialize_v7(record: &PlanRecord, identity: bool, range_locate: bool) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bytes(MAGIC);
+        w.u32(7);
+        write_legacy_body(&mut w, record, identity, range_locate);
+        w.finish()
+    }
+
+    fn serialize_v8(record: &PlanRecord, identity: bool, range_locate: bool, routes: [bool; 4]) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bytes(MAGIC);
+        w.u32(8);
+        write_legacy_body(&mut w, record, identity, range_locate);
+        w.bool(routes[0]);
+        w.bool(routes[1]);
+        w.bool(routes[2]);
+        w.bool(routes[3]);
+        w.bool(record.uses_inputs_cursor);
+        w.finish()
+    }
+
+    fn serialize_v9(record: &PlanRecord, identity: bool, range_locate: bool) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bytes(MAGIC);
+        w.u32(9);
+        write_legacy_body(&mut w, record, identity, range_locate);
+        w.shortcut(record.shortcut);
+        w.bool(record.uses_inputs_cursor);
+        w.finish()
     }
 
     #[test]
@@ -563,23 +658,16 @@ mod tests {
     #[test]
     fn empty_record_round_trips() {
         let record = PlanRecord {
-            identity: true,
             modifies: false,
             consumes_whole_document: true,
             morsel_static_path: true,
             uses_input_family: false,
             projection_class: ClassRecord::Structure,
             pushdown: Vec::new(),
-            rungs: RungEligibility {
-                range_locate: false,
-                morsel: true,
-            },
+            rungs: RungEligibility { morsel: true },
             boundary_consumer: None,
             topk_rows: 0,
-            count_route: false,
-            element_route: false,
-            keys_route: false,
-            type_route: false,
+            shortcut: ShortcutKind::Identity,
             uses_inputs_cursor: false,
         };
         let bytes = record.serialize();
@@ -615,6 +703,24 @@ mod tests {
             let decoded = PlanRecord::deserialize(&record.serialize()).expect("decode should succeed");
             assert_eq!(record, decoded);
         }
+        let shortcuts = [
+            ShortcutKind::None,
+            ShortcutKind::Count,
+            ShortcutKind::Keys,
+            ShortcutKind::Type,
+            ShortcutKind::Element,
+            ShortcutKind::RangeLocate,
+            ShortcutKind::Identity,
+            ShortcutKind::Has,
+            ShortcutKind::AnyAll,
+            ShortcutKind::MinMax,
+        ];
+        for shortcut in shortcuts {
+            let mut record = base.clone();
+            record.shortcut = shortcut;
+            let decoded = PlanRecord::deserialize(&record.serialize()).expect("decode should succeed");
+            assert_eq!(record, decoded);
+        }
     }
 
     #[test]
@@ -631,20 +737,44 @@ mod tests {
     }
 
     #[test]
-    fn v7_payload_decodes_with_route_flags_false() {
-        let mut bytes = populated().serialize();
-        assert!(bytes.len() >= 5);
-        bytes.truncate(bytes.len() - 5);
-        bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
+    fn v7_payload_decodes_shortcut_none() {
+        let record = populated();
+        let bytes = serialize_v7(&record, false, false);
         let decoded = PlanRecord::deserialize(&bytes).expect("v7 decodes");
-        assert!(!decoded.count_route);
-        assert!(!decoded.element_route);
-        assert!(!decoded.keys_route);
-        assert!(!decoded.type_route);
+        assert_eq!(decoded.shortcut, ShortcutKind::None);
         assert!(!decoded.uses_inputs_cursor);
-        assert_eq!(decoded.topk_rows, populated().topk_rows);
-        assert_eq!(decoded.identity, populated().identity);
-        assert_eq!(decoded.modifies, populated().modifies);
+        assert_eq!(decoded.topk_rows, record.topk_rows);
+        assert_eq!(decoded.modifies, record.modifies);
+        let identity = serialize_v7(&record, true, false);
+        assert_eq!(
+            PlanRecord::deserialize(&identity).expect("v7 identity").shortcut,
+            ShortcutKind::Identity
+        );
+        let range = serialize_v7(&record, false, true);
+        assert_eq!(
+            PlanRecord::deserialize(&range).expect("v7 range").shortcut,
+            ShortcutKind::RangeLocate
+        );
+    }
+
+    #[test]
+    fn v8_payload_decodes_count_flag_as_count_shortcut() {
+        let record = populated();
+        let bytes = serialize_v8(&record, false, false, [true, false, false, false]);
+        let decoded = PlanRecord::deserialize(&bytes).expect("v8 decodes");
+        assert_eq!(decoded.shortcut, ShortcutKind::Count);
+        assert!(!decoded.uses_inputs_cursor);
+        assert_eq!(decoded.topk_rows, record.topk_rows);
+    }
+
+    #[test]
+    fn v9_payload_skips_identity_and_range_locate() {
+        let record = populated();
+        let bytes = serialize_v9(&record, true, true);
+        let decoded = PlanRecord::deserialize(&bytes).expect("v9 decodes");
+        assert_eq!(decoded.shortcut, record.shortcut);
+        assert_eq!(decoded.rungs.morsel, record.rungs.morsel);
+        assert_eq!(decoded.modifies, record.modifies);
     }
 
     #[test]

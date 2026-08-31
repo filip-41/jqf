@@ -445,8 +445,8 @@ pub fn run() -> Result<(), String> {
     {
         return Err("TOML slot 1 is not Exact/Located".into());
     }
-    if provider.supports_attribute_absence() {
-        return Err("TOML must not advertise attribute support".into());
+    if !provider.supports_attribute_absence() {
+        return Err("TOML must advertise attribute-absence support".into());
     }
 
     // Accept/reject corpus (deterministic table).

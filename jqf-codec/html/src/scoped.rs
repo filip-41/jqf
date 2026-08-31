@@ -1,6 +1,7 @@
 //! The Exact/Located route: the whole document is recovered (validate-everything-first — the tokenizer and tree
 //! builder are a single pass for HTML), the exact path navigates the recovered tree, and a fresh demand-scoped document
-//! is built from the located subtree.
+//! is built from the located subtree. Exact prune trims unread child elements of that subtree at materialize time; it
+//! never skips recover.
 //!
 //! The recover runs EAGERLY at session creation, outside any cooperative poll loop, and it is one uncheckpointed pass
 //! (the lenient tokenizer has no admission points to poll): a large input monopolizes its quantum by design. This
@@ -17,8 +18,9 @@ use alloc::vec::Vec;
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, SelectionOrigin,
+    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, PruneLookup, SelectionOrigin,
 };
+use jqf_data::BuilderCoverage;
 
 use crate::document;
 use crate::locate::{self, Located, OwnedStep};
@@ -27,6 +29,12 @@ use crate::locate::{self, Located, OwnedStep};
 pub(crate) struct NativeScopedSession {
     steps: Vec<OwnedStep>,
     origin: SelectionOrigin,
+    /// Re-anchored kept-subtree prune over the located node. `None` keeps every child. See
+    /// [`document::build_subtree_document`] for the prune-after-recover law.
+    prune: Option<PruneLookup>,
+    /// Same coverage Whole uses: names always attach; attrs/comments skip when
+    /// the demand named neither.
+    coverage: BuilderCoverage,
     /// The recovered tree (built in the first poll, released after).
     tree: Option<crate::tree::Tree>,
     finished: bool,
@@ -38,6 +46,8 @@ impl NativeScopedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         fragment: bool,
+        prune: Option<PruneLookup>,
+        coverage: BuilderCoverage,
     ) -> Result<Self, CodecError> {
         let text = crate::decode::determine_and_decode(source.bytes())?;
         let tree = if fragment {
@@ -48,6 +58,8 @@ impl NativeScopedSession {
         Ok(Self {
             steps: locate::own_steps(steps)?,
             origin,
+            prune,
+            coverage,
             tree: Some(tree),
             finished: false,
         })
@@ -68,7 +80,13 @@ impl NativeScopedSession {
         let located = locate::locate(&tree, self.steps.as_slice());
         let (product, selection) = match &located {
             Located::Element(_) | Located::Leaf { .. } => {
-                let (builder, root) = document::build_subtree_document(&tree, &located, context.resources())?;
+                let (builder, root) = document::build_subtree_document(
+                    &tree,
+                    &located,
+                    self.prune.as_ref(),
+                    self.coverage,
+                    context.resources(),
+                )?;
                 let document = builder.finish(root, context.resources()).map_err(document::map_data)?;
                 let product = DocumentProduct::try_new(document, context.resources())?;
                 let selection = ExactSelectionRecord::Node {

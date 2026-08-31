@@ -1,11 +1,11 @@
 # Shape recognizers
 
-After [fusion](engine-ir.md#fusion-and-path-normal-form), analysis walks
-the arena against **closed tables** of program shapes. A shape that matches a
-row lets the executor do less work
-(visit fewer children, keep a bounded heap, answer from spans), and a shape that
-isn't a row takes the ordinary floor, byte for byte. This page is the detail
-under [Architecture § Shape recognizers](architecture.md#shape-recognizers).
+After [fusion](engine-ir.md#fusion-and-path-normal-form), analysis walks the
+arena against **closed tables** of program shapes. A shape that matches a row
+lets the executor do less work (visit fewer children, keep a bounded heap,
+answer from spans), and a shape that isn't a row takes the ordinary floor, byte
+for byte. This page is the detail under
+[Architecture § Shape recognizers](architecture.md#shape-recognizers).
 
 Three rules hold for every recognizer:
 
@@ -15,8 +15,8 @@ Three rules hold for every recognizer:
 2. Recognizers change how the executor walks or what the document consumer
    answers. They never change published bytes, and a runtime decline falls back
    to the floor mid-flight without changing the answer.
-3. Count, element, type, and keys demands are derived once at compile and
-   consulted per record.
+3. Count, element, type, keys, has, any/all, and min/max demands are derived
+   once at compile and consulted per record.
 
 ## Projection: `Structure < Fields(S) < Subtree`
 
@@ -31,8 +31,8 @@ feeds the [codec demand](demand.md) and the prune hints, and it is visible as
 ## Count
 
 Rows: `PATH | length`, `PATH | keys | length`, `[C[] | suffix] | length`, and
-the filtered twin `[C[] | select(p)] | length` (and its `PATH | map(select(p)) |
-length` spelling). When the document can prove the
+the filtered twin `[C[] | select(p)] | length` (and its
+`PATH | map(select(p)) | length` spelling). When the document can prove the
 answer (a span skeleton knows its element count) the consumer publishes it
 without walking elements. Optional probes, nested iteration, and paths the prune
 tree cannot name decline.
@@ -40,28 +40,30 @@ tree cannot name decline.
 ## Type
 
 Rows: bare `type` and `PATH | type` over a static Current key or index. A
-trailing slice (`.[1:3] | type`) and `type?` decline. Bare `type` is a
-kind-only read of the document root; `PATH | type` Exact-locates the
-prefix so residual `type` sees the named node.
+trailing slice (`.[1:3] | type`) and `type?` decline. Bare `type` is a kind-only
+read of the document root; `PATH | type` Exact-locates the prefix so residual
+`type` sees the named node.
 
 ## Keys
 
 Rows: bare `keys` and `PATH | keys` over a static Current key or index.
 `keys_unsorted` declines because the publish sorts. `keys?` declines. The
-keys-count twins (`PATH | keys | length`) stay on the Count table. The
-consumer publishes the container's keys from a Located outcome without
-running the residual: object names sorted, array indexes as numbers.
+keys-count twins (`PATH | keys | length`) stay on the Count table. The consumer
+publishes the container's keys from a Located outcome without running the
+residual: object names sorted, array indexes as numbers.
 
 ## Element
 
 Rows: the fan-out family (`.catalog[] | .name`, collected fan-outs including
 `PATH | map(.name)`, constructor fan-outs with static keys),
-`reduce`-object-increment, the counted prefixes (`limit(k; …)`, `first`,
-`nth`), and the select fan-out (`.catalog[] | select(.ok) | .name` and
+`reduce`-object-increment, the counted prefixes (`limit(k; …)`, `first`, `nth`),
+and the select fan-out (`.catalog[] | select(.ok) | .name` and
 `PATH | map(select(p))`). The consumer streams exactly the elements needed, so
-`limit(2; .xs[])` visits two children, not the container. `.catalog[] |
-select(.ok) | .name` applies the closed collect-filter predicate per element
-then the static probe.
+`limit(2; .xs[])` visits two children, not the container.
+`.catalog[] | select(.ok) | .name` applies the closed collect-filter predicate
+per element then the static probe. A nonempty PATH Exact-locates the container
+so the oracle starts at `located.node()`. Empty `.[]` at the document root stays
+Whole.
 
 ## Correlated scan
 
@@ -112,7 +114,16 @@ jqf: explain: topk: rows=1
 One row: a bare static path ending in a slice, like `.catalog[100:110]`. The
 codec serves the slice by span (cut the container's byte range, decode only the
 in-range elements). A non-array at the path falls through to the ordinary route.
-Visible as `ladder: range_locate=yes`.
+Visible as `ladder: range_locate=yes`. That boolean is `host_io == SpanCut`.
+
+## Has, any/all, min/max
+
+`has(LITERAL)` / `PATH | has(LITERAL)`, `any`/`all` over a static element path,
+and `min`/`max`/`min_by`/`max_by` of a numeric array (or numeric probe) are
+document shortcuts execute matches. Decline is the graph, byte-identical. `has`
+is a measured skip. `any`/`all` and `min`/`max` can lose to the graph on current
+fixtures; the arms stay because execute owns shortcuts. See
+[Engine executor](engine-exec.md).
 
 ## Reading the plan
 
@@ -121,7 +132,7 @@ $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
-jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
+jqf: explain: shortcut: element inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: topk: rows=0
@@ -134,7 +145,7 @@ jqf: explain: cost: peak=174489 input=25 output=4 spill_disk=0
 | ----------- | ------------------------------------------------------------------------------------------------- |
 | `class:`    | program shape — identity, assignment, whole-document, `inputs`, static per-record path            |
 | `demand:`   | the projection class and its boundary consumer (`none`, `residual`, `fold`, `binding`, `collect`) |
-| `routes:`   | finish-cached count, element, keys, type, and `inputs` cursor                                     |
+| `shortcut:` | the one job finish committed (`none` is the residual graph); `inputs_cursor` rides this line      |
 | `pushdown:` | the static prefix the codec serves, see [Demand](demand.md)                                       |
 | `ladder:`   | parallel eligibility and range-locate, see [Parallelism](parallelism.md)                          |
 | `topk:`     | partial-sort rows matched                                                                         |
@@ -142,4 +153,5 @@ jqf: explain: cost: peak=174489 input=25 output=4 spill_disk=0
 | `cost:`     | ledger peak, input/output bytes, spill                                                            |
 
 The rest of the observability surface (`--diagnostics`, `--explain-code`, plan
-pinning) is [Explain and diagnostics](explain.md).
+pinning) is [Explain and diagnostics](explain.md). Execute itself is
+[Engine executor](engine-exec.md).

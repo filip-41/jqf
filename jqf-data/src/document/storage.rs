@@ -1267,6 +1267,12 @@ pub(crate) struct DocumentStorage<'source> {
     pub(crate) span_materializer: Option<&'static dyn super::LazySpanMaterializer>,
     /// How many [`NodeSemantic::ContainerSpan`] nodes this document holds.
     pub(crate) container_spans: u32,
+    /// Last-wins Exact cache recorded while the decoder proved a container span.
+    ///
+    /// One row per winning span: child / filter / probe / has, object keys, `FanOut` values, and minmax. Last-wins
+    /// updates that row during the proving pass; it does not rematerialize the hit. Empty when the span was published
+    /// without a cache — count then lexes the span. Whole is not packed into this row.
+    pub(crate) span_cache: Vec<SpanCache>,
     /// The authored source spans of scalars whose retained semantic carries no span of its own — the codecs' floats,
     /// decimals, and booleans, which re-resolve their semantic from stored storage but whose authored token the edit
     /// lane must be able to address for verbatim echo and patching.
@@ -1285,6 +1291,50 @@ pub(crate) struct AuthoredSpanRecord {
     pub(crate) node: NodeId,
     /// The authored token's span, segment-relative like every source span.
     pub(crate) span: Span,
+}
+
+/// Last-wins Exact cache for one container span, recorded during the scan that proved it.
+///
+/// Optional fields stay `None` when that job was not packed. See [`DocumentStorage::span_cache`] for the last-wins
+/// law.
+#[derive(Clone, Debug)]
+pub(crate) struct SpanCache {
+    /// The span node this row describes.
+    pub(crate) node: NodeId,
+    /// Array element or last-wins object member cardinality. `None` when the decoder did not count children.
+    pub(crate) child_count: Option<u64>,
+    /// Collect-filter hits over the same span. `None` when the walk declined a member or the demand was not a
+    /// collect-filter.
+    pub(crate) filter_count: Option<u64>,
+    /// Collect-probe tally (`[.users[].name] | length`). `None` when the probe was not packed, or an item declined.
+    pub(crate) probe_count: Option<u64>,
+    /// Last-wins `has(LITERAL)` presence. `None` when Has was not packed.
+    pub(crate) has_present: Option<bool>,
+    /// Last-wins object key names for `PATH | keys`. `None` when Keys was not packed.
+    pub(crate) keys: Option<alloc::vec::Vec<alloc::string::String>>,
+    /// `FanOut` probe/construct values. `None` when that job was not packed.
+    pub(crate) values: Option<alloc::vec::Vec<crate::Value>>,
+    /// Last-wins `min`/`max` winner. `None` when minmax was not packed.
+    pub(crate) minmax: Option<crate::Value>,
+}
+
+impl SpanCache {
+    pub(crate) fn empty(node: NodeId) -> Self {
+        Self {
+            node,
+            child_count: None,
+            filter_count: None,
+            probe_count: None,
+            has_present: None,
+            keys: None,
+            values: None,
+            minmax: None,
+        }
+    }
+
+    fn find(records: &[Self], node: NodeId) -> Option<&Self> {
+        records.iter().find(|record| record.node == node)
+    }
 }
 
 impl AuthoredSpanRecord {
@@ -1612,6 +1662,85 @@ impl<'source> Document<'source> {
     #[must_use]
     pub fn container_span_count(&self) -> u32 {
         self.storage.container_spans
+    }
+
+    /// Array element cardinality recorded while the decoder proved `node`'s container span.
+    ///
+    /// Exact JSON locate counts children of the last-wins hit during the validating walk. `None` when the span was
+    /// published without that count — count then lexes the span. A non-span node answers `None`.
+    pub fn container_span_child_count(&self, node: NodeHandle) -> Result<Option<u64>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_child_count(id))
+    }
+
+    /// Collect-filter hits recorded while the decoder proved `node`'s container span, for the packed filter demand.
+    ///
+    /// `None` when the walk could not answer the filter on that pass, or the decode was not a collect-filter.
+    pub fn container_span_filter_count(&self, node: NodeHandle) -> Result<Option<u64>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_filter_count(id))
+    }
+
+    fn span_cache(&self, node: NodeId) -> Option<&SpanCache> {
+        SpanCache::find(&self.storage.span_cache, node)
+    }
+
+    pub(crate) fn cached_span_child_count(&self, node: NodeId) -> Option<u64> {
+        self.span_cache(node).and_then(|record| record.child_count)
+    }
+
+    pub(crate) fn cached_span_filter_count(&self, node: NodeId) -> Option<u64> {
+        self.span_cache(node).and_then(|record| record.filter_count)
+    }
+
+    pub(crate) fn cached_span_probe_count(&self, node: NodeId) -> Option<u64> {
+        self.span_cache(node).and_then(|record| record.probe_count)
+    }
+
+    /// Collect-probe tally recorded while the decoder proved `node`'s container span.
+    pub fn container_span_probe_count(&self, node: NodeHandle) -> Result<Option<u64>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_probe_count(id))
+    }
+
+    pub(crate) fn cached_span_has_present(&self, node: NodeId) -> Option<bool> {
+        self.span_cache(node).and_then(|record| record.has_present)
+    }
+
+    /// Last-wins `has` presence recorded while the decoder proved `node`'s container span.
+    pub fn container_span_has_present(&self, node: NodeHandle) -> Result<Option<bool>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_has_present(id))
+    }
+
+    pub(crate) fn cached_span_keys(&self, node: NodeId) -> Option<&[alloc::string::String]> {
+        self.span_cache(node).and_then(|record| record.keys.as_deref())
+    }
+
+    /// Last-wins object key names recorded while the decoder proved `node`'s container span.
+    pub fn container_span_keys(&self, node: NodeHandle) -> Result<Option<&[alloc::string::String]>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_keys(id))
+    }
+
+    pub(crate) fn cached_span_values(&self, node: NodeId) -> Option<&[crate::Value]> {
+        self.span_cache(node).and_then(|record| record.values.as_deref())
+    }
+
+    /// `FanOut` probe/construct values recorded while the decoder proved `node`'s container span.
+    pub fn container_span_values(&self, node: NodeHandle) -> Result<Option<&[crate::Value]>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_values(id))
+    }
+
+    pub(crate) fn cached_span_minmax(&self, node: NodeId) -> Option<&crate::Value> {
+        self.span_cache(node).and_then(|record| record.minmax.as_ref())
+    }
+
+    /// Last-wins `min`/`max` winner recorded while the decoder proved `node`'s container span.
+    pub fn container_span_minmax(&self, node: NodeHandle) -> Result<Option<&crate::Value>, DataError> {
+        let id = self.resolve_node_handle(node)?;
+        Ok(self.cached_span_minmax(id))
     }
 
     /// Whether the decoded SOURCE is canonical — its compact render is the source itself (see the field's

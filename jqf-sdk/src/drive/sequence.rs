@@ -1,13 +1,12 @@
 //! The sequence drive family: multi-value sequence drives over adjacent inputs.
 
 use super::{
-    AccessRequirement, CodecCatalog, CodecError, CompiledProgram, DialectId, ElementAnswer, EncodeRequest,
-    EngineResult, EngineRun, FacadeFraming, FormatId, InputLines, ItemSink, LabelStyle, PipelineError, PipelineFailure,
-    PipelinePolicy, Publication, RaisedError, ResolvedSource, ResourceContext, ReusableAccessSession,
-    ReusableEncoderSession, SequenceError, SequenceReport, SequenceValueError, SourceId, SourceKind, SourceRef,
-    StreamStop, StreamingSequenceError, ValueOutcome, Vec, count_answer, decode_sequence_item, drive_run_stream,
-    element_answer, encode_one, note_single_document_output, overflow, pushdown_error, require_forward_progress,
-    validate_credits,
+    AccessRequirement, CodecCatalog, CodecError, CompiledProgram, DialectId, EncodeRequest, EngineRun, FacadeFraming,
+    FormatId, InputLines, ItemSink, LabelStyle, PipelineError, PipelineFailure, PipelinePolicy, Publication,
+    RaisedError, ResolvedSource, ResourceContext, ReusableAccessSession, ReusableEncoderSession, SequenceError,
+    SequenceReport, SequenceValueError, SourceId, SourceKind, SourceRef, StreamStop, StreamingSequenceError,
+    ValueOutcome, Vec, decode_sequence_item, drive_run_stream, execute_or_rebind_whole, may_rebind_whole,
+    note_single_document_output, overflow, pushdown_error, require_forward_progress, validate_credits,
 };
 
 /// Skips the policy-declared insignificant whitespace separating adjacent
@@ -82,6 +81,15 @@ pub(crate) fn execute_sequence<Sink: ItemSink>(
     let handle = provider
         .bind(requirement)
         .map_err(|error| publication.fail(PipelineFailure::AccessBind(error)))?;
+    let mut whole_requirement = None;
+    let whole_handle = bind_whole(
+        program,
+        requirement,
+        &provider,
+        resources,
+        &mut whole_requirement,
+        &publication,
+    )?;
     let encoder = catalog
         .encoder(output_format, output_dialect)
         .map_err(|error| publication.fail(PipelineFailure::Registry(error)))?;
@@ -135,114 +143,35 @@ pub(crate) fn execute_sequence<Sink: ItemSink>(
         )?;
         let consumed = require_forward_progress::<Sink::Error>(engine.report().consumed_offset(), &publication)?;
         let (codec_outcome, _access_report) = engine.into_parts();
-        // The COUNT fast-path: a count-class program's value is
-        // served by the document-core consumer from the lazy document's span
-        // skeleton — no executor run, no leaf materialization. A decline
-        // falls through to the ordinary residual run over the same outcome.
-        if let Some(count) = count_answer(&codec_outcome, program, resources)
-            .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-        {
-            let consumed_usize = usize::try_from(consumed).map_err(|_| overflow::<Sink::Error>(&publication))?;
-            let end = start
-                .checked_add(consumed_usize)
-                .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-            encode_one(
-                &factory,
-                &mut reused_encoder,
-                &EngineResult::owned(count),
-                items,
-                encoding_policy,
-                framing,
-                resources,
-                sink,
-                &mut publication,
-            )?;
-            items = items
-                .checked_add(1)
-                .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-            last_error = None;
-            offset = end;
-            value_index = value_index
-                .checked_add(1)
-                .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-            continue;
-        }
-
-        // Plan 133 R6's ELEMENT-ITERATION fast-path: a fan-out/fold program's
-        // values are served by the document-core consumer iterating the lazy
-        // document's span skeleton — no executor run, no whole-tree
-        // materialization. A decline falls through to the ordinary residual
-        // run over the same outcome.
-        match element_answer(
-            &codec_outcome,
-            program,
-            &factory,
-            &mut reused_encoder,
-            encoding_policy,
-            framing,
-            resources,
-            sink,
-            &mut publication,
-        )? {
-            ElementAnswer::FanOut { items: advanced } => {
-                let consumed_usize = usize::try_from(consumed).map_err(|_| overflow::<Sink::Error>(&publication))?;
-                let end = start
-                    .checked_add(consumed_usize)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                items = items
-                    .checked_add(advanced)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                last_error = None;
-                offset = end;
-                value_index = value_index
-                    .checked_add(1)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                continue;
-            }
-            ElementAnswer::Fold(state) => {
-                let consumed_usize = usize::try_from(consumed).map_err(|_| overflow::<Sink::Error>(&publication))?;
-                let end = start
-                    .checked_add(consumed_usize)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                encode_one(
-                    &factory,
-                    &mut reused_encoder,
-                    &EngineResult::owned(state),
-                    items,
-                    encoding_policy,
-                    framing,
-                    resources,
-                    sink,
-                    &mut publication,
-                )?;
-                items = items
-                    .checked_add(1)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                last_error = None;
-                offset = end;
-                value_index = value_index
-                    .checked_add(1)
-                    .ok_or_else(|| overflow::<Sink::Error>(&publication))?;
-                continue;
-            }
-            ElementAnswer::None => {}
-        }
-
         // The engine owns the reference-parity reading under the program's `?` flags and
         // pushdown boundary. A resolved value or a pushed-down missing/null
-        // streams through the residual (an identity residual forwards one item; an
-        // `.[]` residual fans out or errors). A flagged-step pushdown mismatch is
-        // suppressed. A per-value runtime mismatch — pushed-down non-null, or one
-        // discovered mid-fan-out — is a RUNTIME error: it is reported to the sink
-        // and the sequence continues to the next value (the reference's continue-on-error).
+        // streams through the residual. A flagged-step pushdown mismatch is
+        // suppressed. A per-value runtime mismatch is reported to the sink
+        // and the sequence continues (the reference's continue-on-error).
         // Decode/parse failures stopped the loop above and keep stop-on-error.
-        let outcome: Option<ValueOutcome> = match program
-            .try_run(codec_outcome, resources)
-            .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-            .with_iteration_cap(policy.max_iterations)
-        {
+        // JSON Exact count miss rebinds Whole on this value (root *is* the
+        // selection; skip is not demand.path).
+        let run = execute_or_rebind_whole(program, codec_outcome, resources, &publication, |resources| {
+            decode_rebound_sequence_item(
+                &mut provider,
+                &mut reuse,
+                whole_handle.as_ref(),
+                start_offset,
+                policy.cooperative_credits,
+                resources,
+                &publication,
+            )
+        })?;
+        let outcome: Option<ValueOutcome> = match run.with_iteration_cap(policy.max_iterations) {
             EngineRun::Suppressed => None,
             EngineRun::Pushdown(error) => Some(ValueOutcome::Mismatch(pushdown_error(error))),
+            EngineRun::ReboundWhole => {
+                return Err(publication.fail(PipelineFailure::Codec(CodecError::new(
+                    jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                        contract: "Exact count miss must rebind Whole before the graph",
+                    },
+                ))));
+            }
             EngineRun::Stream { stream, .. } => match drive_run_stream(
                 &factory,
                 &mut reused_encoder,
@@ -476,6 +405,7 @@ where
         )
         .map_err(|error| StreamingSequenceError::Pipeline(publication.fail(PipelineFailure::Codec(error))))?;
     let mut reused_encoder = ReusableEncoderSession::new();
+    let mut whole_requirement = None;
     let mut items = 0u64;
     let mut value_index = 0u64;
     let mut lines = InputLines::new();
@@ -524,6 +454,15 @@ where
             let handle = provider.bind(requirement).map_err(|error| {
                 StreamingSequenceError::Pipeline(publication.fail(PipelineFailure::AccessBind(error)))
             })?;
+            let whole_handle = bind_whole(
+                program,
+                requirement,
+                &provider,
+                resources,
+                &mut whole_requirement,
+                &publication,
+            )
+            .map_err(StreamingSequenceError::Pipeline)?;
             // One recycled access session per refill: the provider borrows
             // this window, so the session (which borrows the provider) lives
             // beside it and is dropped before the completed prefix is drained.
@@ -587,124 +526,30 @@ where
                 let consumed = require_forward_progress::<Sink::Error>(engine.report().consumed_offset(), &publication)
                     .map_err(StreamingSequenceError::Pipeline)?;
                 let (codec_outcome, _access_report) = engine.into_parts();
-                // The COUNT fast-path: a count-class program's value
-                // is served by the document-core consumer from the lazy
-                // document's span skeleton — no executor run, no leaf
-                // materialization. A decline falls through to the ordinary
-                // residual run over the same outcome (which, for a count
-                // program, is the whole program over the whole document).
-                if let Some(count) = count_answer(&codec_outcome, program, resources).map_err(|error| {
-                    StreamingSequenceError::Pipeline(publication.fail(PipelineFailure::Codec(error)))
-                })? {
-                    let consumed_usize = usize::try_from(consumed)
-                        .map_err(|_| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                    let end = start
-                        .checked_add(consumed_usize)
-                        .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                    encode_one(
-                        &factory,
-                        &mut reused_encoder,
-                        &EngineResult::owned(count),
-                        items,
-                        encoding_policy,
-                        framing,
+                let run = execute_or_rebind_whole(program, codec_outcome, resources, &publication, |resources| {
+                    decode_rebound_sequence_item(
+                        &mut provider,
+                        &mut reuse,
+                        whole_handle.as_ref(),
+                        start_offset,
+                        policy.cooperative_credits,
                         resources,
-                        sink,
-                        &mut publication,
+                        &publication,
                     )
-                    .map_err(StreamingSequenceError::Pipeline)?;
-                    items = items
-                        .checked_add(1)
-                        .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                    last_error = None;
-                    cursor = end;
-                    value_index = value_index
-                        .checked_add(1)
-                        .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                    hold_retry_floor = 0;
-                    continue;
-                }
-                // Plan 133 R6's ELEMENT-ITERATION fast-path: a fan-out/fold
-                // program's values are served by the document-core consumer
-                // iterating the lazy document's span skeleton — no executor
-                // run, no whole-tree materialization. A decline falls through
-                // to the ordinary residual run over the same outcome.
-                match element_answer(
-                    &codec_outcome,
-                    program,
-                    &factory,
-                    &mut reused_encoder,
-                    encoding_policy,
-                    framing,
-                    resources,
-                    sink,
-                    &mut publication,
-                )
-                .map_err(StreamingSequenceError::Pipeline)?
-                {
-                    ElementAnswer::FanOut { items: advanced } => {
-                        let consumed_usize = usize::try_from(consumed)
-                            .map_err(|_| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        let end = start
-                            .checked_add(consumed_usize)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        items = items
-                            .checked_add(advanced)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        last_error = None;
-                        cursor = end;
-                        value_index = value_index
-                            .checked_add(1)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        hold_retry_floor = 0;
-                        continue;
-                    }
-                    ElementAnswer::Fold(state) => {
-                        let consumed_usize = usize::try_from(consumed)
-                            .map_err(|_| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        let end = start
-                            .checked_add(consumed_usize)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        encode_one(
-                            &factory,
-                            &mut reused_encoder,
-                            &EngineResult::owned(state),
-                            items,
-                            encoding_policy,
-                            framing,
-                            resources,
-                            sink,
-                            &mut publication,
-                        )
-                        .map_err(StreamingSequenceError::Pipeline)?;
-                        items = items
-                            .checked_add(1)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        last_error = None;
-                        cursor = end;
-                        value_index = value_index
-                            .checked_add(1)
-                            .ok_or_else(|| StreamingSequenceError::Pipeline(overflow::<Sink::Error>(&publication)))?;
-                        hold_retry_floor = 0;
-                        continue;
-                    }
-                    ElementAnswer::None => {}
-                }
-                // The engine owns the reference-parity reading under the program's `?`
-                // flags and pushdown boundary. A resolved value or a pushed-down
-                // missing/null streams through the residual; a flagged-step
-                // pushdown mismatch is suppressed; a per-value runtime mismatch
-                // is reported to the sink and the sequence continues to the next
-                // value (the reference's continue-on-error). Decode/parse failures stopped
-                // the loop above and keep stop-on-error.
-                let outcome: Option<ValueOutcome> = match program
-                    .try_run(codec_outcome, resources)
-                    .map_err(|error| publication.fail(PipelineFailure::Codec(error)))
-                    .map_err(StreamingSequenceError::Pipeline)?
-                    .with_iteration_cap(policy.max_iterations)
-                {
+                })
+                .map_err(StreamingSequenceError::Pipeline)?;
+                let outcome: Option<ValueOutcome> = match run.with_iteration_cap(policy.max_iterations) {
                     EngineRun::Suppressed => None,
                     EngineRun::Pushdown(error) => Some(ValueOutcome::Mismatch(pushdown_error(error))),
+                    EngineRun::ReboundWhole => {
+                        return Err(StreamingSequenceError::Pipeline(publication.fail(
+                            PipelineFailure::Codec(CodecError::new(
+                                jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                                    contract: "Exact count miss must rebind Whole before the graph",
+                                },
+                            )),
+                        )));
+                    }
                     EngineRun::Stream { stream, .. } => match drive_run_stream(
                         &factory,
                         &mut reused_encoder,
@@ -882,4 +727,52 @@ where
             codec_value_errors,
         }),
     }
+}
+
+/// `may_rebind_whole` then charge Whole then bind. `stored` keeps the
+/// requirement alive for the handle; later calls reuse the charged Whole.
+fn bind_whole<'a, E>(
+    program: &CompiledProgram,
+    requirement: &AccessRequirement,
+    provider: &jqf_codec_core::ErasedProvider<'_>,
+    resources: &ResourceContext<'_>,
+    stored: &'a mut Option<AccessRequirement>,
+    publication: &Publication,
+) -> Result<Option<jqf_codec_core::AccessHandle<'a>>, PipelineError<E>> {
+    if stored.is_none() && may_rebind_whole(program, requirement) {
+        *stored = Some(
+            program
+                .try_rebind_whole_requirement(resources)
+                .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?,
+        );
+    }
+    match stored.as_ref() {
+        Some(req) => provider
+            .bind(req)
+            .map(Some)
+            .map_err(|error| publication.fail(PipelineFailure::AccessBind(error))),
+        None => Ok(None),
+    }
+}
+
+/// Whole-rebind decode of the same adjacent value. Continue-on-runtime-error
+/// stays the caller's law.
+fn decode_rebound_sequence_item<'source, E>(
+    provider: &mut jqf_codec_core::ErasedProvider<'source>,
+    reuse: &mut ReusableAccessSession<'source>,
+    whole_handle: Option<&jqf_codec_core::AccessHandle<'_>>,
+    start_offset: u64,
+    credits: u32,
+    resources: &mut ResourceContext<'_>,
+    publication: &Publication,
+) -> Result<jqf_engine::CodecInputOutcome<'source>, PipelineError<E>> {
+    let handle = whole_handle.ok_or_else(|| {
+        publication.fail(PipelineFailure::Codec(CodecError::new(
+            jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                contract: "Exact count miss rebinds Whole",
+            },
+        )))
+    })?;
+    decode_sequence_item(provider, reuse, handle, start_offset, credits, resources, publication)
+        .map(|engine| engine.into_parts().0)
 }

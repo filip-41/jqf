@@ -46,6 +46,10 @@ impl InputProvider for MessagepackProvider {
         self.routes.as_slice()
     }
 
+    fn supports_attribute_absence(&self) -> bool {
+        true
+    }
+
     fn open_route<'source>(
         &mut self,
         input: ProviderInput<'source>,
@@ -70,6 +74,7 @@ impl InputProvider for MessagepackProvider {
                 self.dialect,
                 prune,
                 requirement.type_demand(),
+                requirement.located_skeleton(),
             )?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::scoped_route_id(), || Ok(session));
         }
@@ -277,7 +282,8 @@ fn data_contract() -> CodecError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jqf_codec_core::AccessFootprintKind;
+    use jqf_codec_core::{AccessFootprintKind, AccessRequirement};
+    use jqf_resource::ResourceContext;
 
     /// The registration advertises Whole/`CompleteDocument` and Exact/`Located`.
     #[test]
@@ -294,5 +300,80 @@ mod tests {
         assert_eq!(routes[1].slot(), RouteSlot::new(1));
         assert_eq!(routes[1].bundle().footprint(), AccessFootprintKind::Exact);
         assert_eq!(routes[1].bundle().result(), AccessResultKind::Located);
+    }
+
+    fn attribute_exact_requirement(resources: &ResourceContext<'_>, member: Option<&str>) -> AccessRequirement {
+        use jqf_codec_core::{
+            AccessFootprint, AccessGuarantees, AccessRequirement, CodecDemand, DemandClause, ExactPath,
+        };
+        use jqf_data::ExpandedName;
+
+        let mut path = ExactPath::try_new(resources);
+        if let Some(name) = member {
+            path.try_push_semantic_member(name, resources).expect("member");
+        }
+        let footprint = AccessFootprint::try_exact(path, resources);
+        let mut demand = CodecDemand::try_new(resources);
+        demand
+            .try_insert(&DemandClause::Attribute(
+                ExpandedName::try_new("urn:test", "x").expect("expanded name"),
+            ))
+            .expect("attribute demand");
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    #[test]
+    fn supports_attribute_absence_and_binds_attribute_demand_on_exact() {
+        use jqf_codec_core::{AccessAdapter, CodecRunContext, DecodeRequest, ErasedProvider, ValidationMode};
+        use jqf_data::DialectId;
+        use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+        let resources = crate::test_support::resources();
+        let mut resources = resources;
+        let provider =
+            MessagepackProvider::try_new(crate::options::Dialect::Utf8, DiagnosticPolicy::ErrorsOnly, &resources)
+                .expect("provider");
+        assert!(provider.supports_attribute_absence());
+
+        let requirement = attribute_exact_requirement(&resources, Some("a"));
+        let registration = crate::registration().expect("registration");
+        let source = ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.msgpack",
+            &[0x81, 0xa1, b'a', 0x01],
+            0,
+        );
+        let mut provider: ErasedProvider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source,
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::MESSAGEPACK_UTF8_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        assert!(provider.supports_attribute_absence());
+        let handle = provider.bind(&requirement).expect("bind attribute on exact");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let mut context = CodecRunContext::new(&mut resources);
+        context.set_cooperative_credits(4_096);
+        let result = session.decode(&mut context).expect("decode");
+        assert!(matches!(
+            result.report().adapter(),
+            AccessAdapter::AttributeAbsence | AccessAdapter::CompleteDocumentExactWithAttributeAbsence
+        ));
     }
 }

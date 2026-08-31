@@ -13,12 +13,35 @@
 //! across a pipe boundary even when the stages carry `Each` steps (the probe
 //! `.[].a` ≡ `.[] | .a` holds for output order, error ordering, and suppression).
 //!
-//! One rewrite runs in the other direction: a `ConstructObject` whose member
+//! Two rewrites run in the other direction. A `ConstructObject` whose member
 //! producers all walk the same leading static steps HOISTS them onto an upstream
 //! stage (`{a: .p.x, b: .p.y}` → `.p | {a: .x, b: .y}`), so the part of the
 //! constructor's demand the codec can express reaches the pushdown split instead
 //! of collapsing to whole-input authority. The recognition and its declining
 //! default live on [`fuse_construct_object`].
+//!
+//! A `Choice` (comma) whose every arm is a current-start stage HOISTS the
+//! static prefix they share (`.a.b, .a.c` → `.a | (.b, .c)`). The N-arm join
+//! is the prefix-lattice of every arm: `.a.b, .a.c, .a.d` joins `.a`, and
+//! `.a.b.c, .a.b.d, .a.e` joins `.a` — the shortest prefix they all walk —
+//! not the inner pair's `.a.b`. Recognition lives on [`hoist_stage_pair`]:
+//! the join is [`shared_step_len`] then [`total_static_run_len`] (Key/Index
+//! only; stop before `?` / `.[]` / slice), an already-hoisted
+//! `FlatMap(Stage{Current}, body)` peels those steps (extra steps past the
+//! new join go back onto that arm's residual), and a literal / `empty` /
+//! call / `try` poisons the hoist — comma publishes independently, so those
+//! arms still run when a prefix would emit zero.
+//! [`fuse_construct_object`]'s literal exemption is not copied.
+//!
+//! `Alternative` (`//`) uses that same stage-pair hoist when both arms are
+//! peelable (`.a.b // .a.c` → `.a | (.b // .c)`). The `?` / Each / slice /
+//! flag fences are the same: a prefix that emits zero skips the pipe while
+//! `//` still has to try the right arm. Two semantic extras stay on
+//! Alternative only: hoisted steps are suppression-derived (the miss left the
+//! alternative's region), and a literal fallback still joins through
+//! [`hoist_spine_prefix`] because `// 1` ignores input — a comma's independent
+//! publish poisons that arm instead. `.a?.x // 1` over a scalar is `1`;
+//! hoisting `.a?` would publish nothing.
 //!
 //! [`analyze`] then classifies the fused arena's maximal static forward prefix:
 //! the leading static field/index steps of the ENTRY stage — the [`Stage`]
@@ -42,20 +65,21 @@
 //! # The named element boundary
 //!
 //! Beside the pushdown prefix, [`analyze`] NAMES the program's single element
-//! boundary — the `.[]` whose elements a projected route would stream — in
-//! (node, offset) coordinates ([`ElementBoundary`]). The naming walks an ELEMENT
-//! SPINE that is wider than the pushdown spine: it enters a `CollectArray` body
-//! (so `map`'s lowered `[.[] | f]` is nameable), a `Reduce`/`Foreach` SOURCE, and
-//! a `Bind` SOURCE — the three places the pushdown prefix stops dead because the
-//! enclosing family reads the whole input authority.
+//! boundary — the `.[]` the projection classifier records per-element demand
+//! at — in (node, offset) coordinates ([`ElementBoundary`]). The naming walks
+//! an ELEMENT SPINE that is wider than the pushdown spine: it enters a
+//! `CollectArray` body (so `map`'s lowered `[.[] | f]` is nameable), a
+//! `Reduce`/`Foreach` SOURCE, and a `Bind` SOURCE — the three places the
+//! pushdown prefix stops dead because the enclosing family reads the whole
+//! input authority.
 //!
 //! The naming is PURELY ADDITIVE. It does not move the pushdown prefix, does not
 //! widen the element-iteration lowering (which still keys off a bare-`Stage`
-//! root and the pushdown prefix), and lowers no requirement.
-//! Its consumers are the projection classifier — which records the per-element
-//! demand at exactly that boundary when the program has a sole `.[]` — and the
-//! projected-plan lowering, which is itself behind an eligibility check that
-//! declines every program.
+//! root and the pushdown prefix), and lowers no requirement. Codecs see Whole
+//! or Exact only; Fields omit rides prune (and `FanOut` construct) on that one
+//! requirement, not a third footprint. The projection classifier records the
+//! per-element demand at exactly this boundary when the program has a sole
+//! `.[]`.
 //!
 //! [`Stage`]: ProgramNode::Stage
 
@@ -72,16 +96,15 @@ use jqf_builtins::registry::builtins::id;
 /// What consumes the elements a named `ElementBoundary` yields.
 ///
 /// The boundary is named in (node, offset) coordinates; the consumer records
-/// WHICH construct the element spine descended through to reach it, which is the
-/// fact a projected route needs in order to know what it is feeding. It is a
-/// classification, not a capability: today every variant declines eligibility.
+/// WHICH construct the element spine descended through to reach it. The
+/// projection classifier uses this; codecs never see a third footprint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoundaryConsumer {
     /// The boundary stage's own remaining suffix, plus whatever graph is
-    /// downstream of it — the shape the deleted element-stream route drove.
+    /// downstream of it.
     Residual,
     /// A `reduce`/`foreach` loop whose SOURCE holds the boundary: the loop is the
-    /// residual consumer of the elements — the projected fold's leading shape.
+    /// residual consumer of the elements.
     Fold,
     /// A `SOURCE as $x | BODY` binder whose SOURCE holds the boundary.
     Binding,
@@ -90,8 +113,8 @@ pub enum BoundaryConsumer {
     Collect,
 }
 
-/// One named element boundary: the single `.[]` whose elements a projected route
-/// would stream.
+/// One named element boundary: the single `.[]` the projection classifier
+/// records per-element demand at.
 ///
 /// The boundary is a pair of (node, offset) coordinates rather than one index,
 /// because the container path can be split across a `FlatMap` upstream prefix
@@ -373,9 +396,9 @@ fn fuse_node(
         }),
         ProgramNode::Choice { left, right } => {
             let (left, right) = (*left, *right);
-            let left = fuse_child(src, left, out, shared, protected)?;
-            let right = fuse_child(src, right, out, shared, protected)?;
-            Ok(Fused::Node(push(out, ProgramNode::Choice { left, right })?))
+            let left = fuse_node(src, left, out, shared, protected)?;
+            let right = fuse_node(src, right, out, shared, protected)?;
+            fuse_choice(left, right, out)
         }
         // A `Binary` survives fusion like a `Choice`: fuse each operand graph and
         // keep the node (both operands read the whole input authority).
@@ -443,16 +466,9 @@ fn fuse_node(
         }
         ProgramNode::Alternative { left, right } => {
             let (left, right) = (*left, *right);
-            let left = fuse_child(src, left, out, shared, protected)?;
-            let right = fuse_child(src, right, out, shared, protected)?;
-            let node = push(out, ProgramNode::Alternative { left, right })?;
-            // `//` evaluates its RIGHT operand only when the left published no
-            // truthy output, so the left is the only witness. The hoist is a
-            // suppression-CROSSING one: the miss the fallback handles
-            // leaves the alternative's own region, so the hoisted upstream
-            // stage is marked suppression-derived and the strict dial treats
-            // its cell sites as marked (`hoist_spine_prefix`'s flag).
-            hoist_spine_prefix(out, node, &[left, right], Some(left), true)
+            let left = fuse_node(src, left, out, shared, protected)?;
+            let right = fuse_node(src, right, out, shared, protected)?;
+            fuse_alternative(left, right, out)
         }
         ProgramNode::Logical { operator, left, right } => {
             let (operator, left, right) = (*operator, *left, *right);
@@ -936,6 +952,190 @@ fn hoistable_member_prefix(members: &[(Fused, Fused)]) -> usize {
     common.map_or(0, static_run_len)
 }
 
+/// Fuses a comma's arms, then HOISTS the static prefix they share onto a
+/// stage UPSTREAM of the rebuilt Choice: `.a.b, .a.c` → `.a | (.b, .c)`, whose
+/// prefix the standing `FlatMap` arm of [`analyze_pushdown`] already pushes
+/// down. A Choice on the spine otherwise contributes zero prefix.
+///
+/// The N-arm join is the prefix-lattice of every arm. Comma is pairwise
+/// left-associative, so `.a.b, .a.c, .a.d` arrives as
+/// `Choice(Choice(.a.b, .a.c), .a.d)`: after the inner pair hoists to
+/// `FlatMap(.a, Choice(.b, .c))`, the outer pair peels those steps and
+/// joins them with `.a.d`. The shortest prefix every arm walks is `.a`,
+/// not the inner pair's longer join.
+///
+/// Every arm must be peelable: a current-start stage, or an already-hoisted
+/// `FlatMap(Stage{Current, steps}, body)` whose residual is `body`. The join
+/// is [`shared_step_len`] then [`total_static_run_len`], truncated by
+/// [`MAX_HOISTED_PREFIX`]: Key/Index only, optional flags equal, stop before
+/// `?` / `.[]` / slice. Extra already-hoisted steps past the new join go
+/// back onto that arm's residual. A `?` prefix that emits zero skips the
+/// pipe, while the comma still runs the right arm; hoisting Each reorders
+/// `.[] , .[]` from `1,2,1,2` to `1,1,2,2`. A literal / `empty` / call / `try`
+/// poisons the hoist — comma publishes independently. This is not
+/// [`fuse_construct_object`]'s default: that hoist exempts steps-free
+/// literals (`ignores_input`) and uses [`static_run_len`] (it will hoist an
+/// agreed `?`).
+///
+/// `Alternative` (`//`) shares [`hoist_stage_pair`] when both arms are
+/// peelable; mixed operands stay on [`fuse_alternative`].
+fn fuse_choice(left: Fused, right: Fused, out: &mut Vec<ProgramNode>) -> Result<Fused, ResourceError> {
+    hoist_stage_pair(left, right, out, StageFork::Choice)
+}
+
+/// Fuses an `Alternative` (`//`), then hoists a shared Current-start prefix
+/// the same way [`fuse_choice`] does: `.a.b // .a.c` → `.a | (.b // .c)`.
+///
+/// When both arms are peelable, [`hoist_stage_pair`] owns the rewrite so the
+/// fences cannot drift from Choice. Otherwise the operands materialize and
+/// [`hoist_spine_prefix`] joins them: a literal fallback (`// 1`) ignores
+/// input and must not poison the left's prefix the way a comma's independent
+/// publish poisons a literal arm.
+fn fuse_alternative(left: Fused, right: Fused, out: &mut Vec<ProgramNode>) -> Result<Fused, ResourceError> {
+    if hoistable_choice_prefix(&left, &right, out) > 0 {
+        return hoist_stage_pair(left, right, out, StageFork::Alternative);
+    }
+    let left = materialize(left, out)?;
+    let right = materialize(right, out)?;
+    let node = push(out, ProgramNode::Alternative { left, right })?;
+    hoist_spine_prefix(out, node, &[left, right], Some(left), true)
+}
+
+/// Choice versus Alternative: same stage-pair hoist, Alternative marks the
+/// prefix suppression-derived because the miss left `//`'s region.
+#[derive(Clone, Copy)]
+enum StageFork {
+    Choice,
+    Alternative,
+}
+
+/// HOISTS the static prefix two peelable arms share onto a stage UPSTREAM of
+/// the rebuilt fork. See [`fuse_choice`] for the fence law.
+fn hoist_stage_pair(
+    left: Fused,
+    right: Fused,
+    out: &mut Vec<ProgramNode>,
+    fork: StageFork,
+) -> Result<Fused, ResourceError> {
+    let prefix_len = hoistable_choice_prefix(&left, &right, out);
+    let mut prefix = Vec::new();
+    let mut taken = false;
+    let left = strip_choice_arm(left, prefix_len, &mut prefix, &mut taken, out)?;
+    let right = strip_choice_arm(right, prefix_len, &mut prefix, &mut taken, out)?;
+    let left = materialize(left, out)?;
+    let right = materialize(right, out)?;
+    let node = match fork {
+        StageFork::Choice => push(out, ProgramNode::Choice { left, right })?,
+        StageFork::Alternative => push(out, ProgramNode::Alternative { left, right })?,
+    };
+    if !taken {
+        return Ok(Fused::Node(node));
+    }
+    if matches!(fork, StageFork::Alternative) {
+        for step in &mut prefix {
+            step.mark_suppressed();
+        }
+    }
+    let upstream = push(
+        out,
+        ProgramNode::Stage {
+            start: StageStart::Current,
+            steps: prefix,
+        },
+    )?;
+    Ok(Fused::Node(push(out, ProgramNode::FlatMap { upstream, body: node })?))
+}
+
+/// How many leading steps a `Choice`/`Alternative` pair shares and the codec
+/// can resolve — the hoistable prefix of [`hoist_stage_pair`], or `0` when
+/// the shape declines.
+///
+/// Each arm must be peelable ([`choice_arm_prefix`]); the join is
+/// [`shared_step_len`] then [`total_static_run_len`], truncated by
+/// [`MAX_HOISTED_PREFIX`]. See [`fuse_choice`] for the law.
+fn hoistable_choice_prefix(left: &Fused, right: &Fused, out: &[ProgramNode]) -> usize {
+    let (Some(left), Some(right)) = (choice_arm_prefix(left, out), choice_arm_prefix(right, out)) else {
+        return 0;
+    };
+    total_static_run_len(&left[..shared_step_len(left, right)]).min(MAX_HOISTED_PREFIX)
+}
+
+/// The Current-start steps a Choice/Alternative arm contributes to the
+/// prefix lattice, or `None` when the arm poisons the hoist.
+///
+/// A loose Current stage is the arm itself. An already-hoisted
+/// `FlatMap(Stage{Current, steps}, body)` peels those steps — the residual
+/// is `body`. Anything else poisons: see [`fuse_choice`].
+fn choice_arm_prefix<'a>(arm: &'a Fused, out: &'a [ProgramNode]) -> Option<&'a [StageStep]> {
+    match arm {
+        Fused::Stage {
+            start: StageStart::Current,
+            steps,
+        } => Some(steps),
+        Fused::Node(id) => match &out[id.index()] {
+            ProgramNode::FlatMap { upstream, .. } => match &out[upstream.index()] {
+                ProgramNode::Stage {
+                    start: StageStart::Current,
+                    steps,
+                } => Some(steps),
+                _ => None,
+            },
+            _ => None,
+        },
+        Fused::Stage { .. } => None,
+    }
+}
+
+/// Removes the joined `prefix_len` steps from one peelable arm.
+///
+/// A loose Current stage keeps its suffix. An already-hoisted `FlatMap` whose
+/// prefix is longer than the new join keeps the extra steps on that arm's
+/// residual (un-hoist); a prefix that matches exactly unwraps to the body.
+/// See [`fuse_choice`].
+fn strip_choice_arm(
+    producer: Fused,
+    prefix_len: usize,
+    prefix: &mut Vec<StageStep>,
+    taken: &mut bool,
+    out: &mut [ProgramNode],
+) -> Result<Fused, ResourceError> {
+    if prefix_len == 0 {
+        return Ok(producer);
+    }
+    match producer {
+        stage @ Fused::Stage {
+            start: StageStart::Current,
+            ..
+        } => strip_hoisted_prefix(stage, prefix_len, prefix, taken),
+        Fused::Node(id) => {
+            let Some((upstream, body)) = choice_flatmap_rest(out, id) else {
+                return Ok(Fused::Node(id));
+            };
+            strip_leading_steps(out, upstream, prefix_len, prefix, taken)?;
+            let leftover_empty = matches!(
+                &out[upstream.index()],
+                ProgramNode::Stage { steps, .. } if steps.is_empty()
+            );
+            Ok(Fused::Node(if leftover_empty { body } else { id }))
+        }
+        producer @ Fused::Stage { .. } => Ok(producer),
+    }
+}
+
+/// Upstream stage and body of a peelable already-hoisted `FlatMap`, or `None`.
+fn choice_flatmap_rest(out: &[ProgramNode], id: ProgramNodeId) -> Option<(ProgramNodeId, ProgramNodeId)> {
+    match &out[id.index()] {
+        ProgramNode::FlatMap { upstream, body } => match &out[upstream.index()] {
+            ProgramNode::Stage {
+                start: StageStart::Current,
+                ..
+            } => Some((*upstream, *body)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The most static steps one spine hoist moves upstream.
 ///
 /// Matched to the codec requirement's own projection-path limit, the codec's own
@@ -1362,8 +1562,9 @@ fn push(out: &mut Vec<ProgramNode>, node: ProgramNode) -> Result<ProgramNodeId, 
 /// edges (never into a `Choice`): a `Stage` on the spine contributes its leading
 /// static steps up to (but excluding) the first `.[]` ([`StepAccess::Each`]) as
 /// the pushed-down prefix, while a `Choice` on the spine pushes nothing down (a
-/// whole-document comma). A program with no `Each` and no `Choice` pushes its
-/// whole path down and leaves an identity residual (the pipe/optional grammar).
+/// whole-document comma — [`fuse_choice`] declined). A program with no `Each`
+/// and no `Choice` pushes its whole path down and leaves an identity residual
+/// (the pipe/optional grammar).
 pub fn analyze(nodes: &[ProgramNode], root: ProgramNodeId) -> PushdownSplit {
     let element = name_element_boundary(nodes, root);
     let mut split = analyze_pushdown(nodes, root);
@@ -1371,9 +1572,9 @@ pub fn analyze(nodes: &[ProgramNode], root: ProgramNodeId) -> PushdownSplit {
     split
 }
 
-/// Names the program's element boundary — the single `.[]` a projected route
-/// would stream — in (node, offset) coordinates, or `None` when the shape has
-/// none it can name.
+/// Names the program's element boundary — the single `.[]` the projection
+/// classifier records — in (node, offset) coordinates, or `None` when the
+/// shape has none it can name.
 ///
 /// The walk descends the ELEMENT SPINE, which is wider than the pushdown spine:
 /// besides a `FlatMap` upstream it enters a `CollectArray` body (`map`'s lowered
@@ -1521,10 +1722,10 @@ fn descend_element_spine(
         // A comma has two members and therefore no single boundary; a call's
         // arguments read the call's input rather than the spine; the remaining
         // families read the whole input authority through several child graphs.
-        // A `ConstructObject` stays here after the member-prefix hoist
-        // (`fuse_construct_object`): the hoist extracts only STATIC steps, so it
-        // can never move a `.[]` out of a member, and the constructor's own
-        // members remain several graphs with no single element spine.
+        // A `ConstructObject` / `Choice` stays here after the member/arm-prefix
+        // hoist: the hoist extracts only STATIC steps, so it can never move a
+        // `.[]` out of a producer, and the node's own members remain several
+        // graphs with no single element spine.
         ProgramNode::Choice { .. }
         | ProgramNode::ConstructObject { .. }
         | ProgramNode::Call { .. }
@@ -1652,12 +1853,13 @@ fn analyze_pushdown(nodes: &[ProgramNode], root: ProgramNodeId) -> PushdownSplit
             // whole input, so a call ON the spine contributes zero prefix; a
             // static prefix UPSTREAM of a call
             // (`.items | map(.id)`) still pushes down through the FlatMap arm above.
-            // A `ConstructObject` reaches this arm only with NOTHING left to
-            // extract: `fuse_construct_object` has already hoisted the static
-            // prefix its members share into a `FlatMap` upstream stage, which the
-            // arm above descends. What remains inside the node is a set of member
-            // graphs that diverge at their first step, and the codec's exact-path
-            // vocabulary cannot express their union — so this stays zero.
+            // A `ConstructObject` or `Choice` reaches this arm only with NOTHING
+            // left to extract: `fuse_construct_object` / `fuse_choice` has already
+            // hoisted the static prefix the producers share into a `FlatMap`
+            // upstream stage, which the arm above descends. What remains inside
+            // the node is a set of graphs that diverge at their first step, and
+            // the codec's exact-path vocabulary cannot express their union — so
+            // this stays zero.
             // A `Variable`-start stage can never be the pushdown ENTRY: no binder
             // encloses the program root (there are no `--arg`-style outer
             // bindings), so a Variable start is always nested under a binder node
@@ -1915,6 +2117,8 @@ mod tests {
     use alloc::string::String;
     use alloc::vec;
     use alloc::vec::Vec;
+    use jqf_builtins::registry::builtins::id;
+    use jqf_builtins::registry::{BuiltinOverloadId, SemanticRevision};
     use jqf_data::Value;
 
     fn key(name: &str, optional: bool) -> StageStep {
@@ -2454,28 +2658,403 @@ mod tests {
         assert!(analyze(&fused, fused_root).is_whole_document());
     }
 
-    #[test]
-    fn top_level_choice_is_whole_document() {
-        // `.a, .b`: the spine reaches a Choice, so nothing is pushed down.
+    /// Builds a `.LEFT, .RIGHT` arena: two current-start stages under a Choice.
+    fn choice(left: Vec<StageStep>, right: Vec<StageStep>) -> (Vec<ProgramNode>, ProgramNodeId) {
+        fork(left, right, true)
+    }
+
+    /// Builds a `.LEFT // .RIGHT` arena: two current-start stages under an Alternative.
+    fn alternative(left: Vec<StageStep>, right: Vec<StageStep>) -> (Vec<ProgramNode>, ProgramNodeId) {
+        fork(left, right, false)
+    }
+
+    fn fork(left: Vec<StageStep>, right: Vec<StageStep>, comma: bool) -> (Vec<ProgramNode>, ProgramNodeId) {
         let nodes = vec![
             ProgramNode::Stage {
                 start: StageStart::Current,
-                steps: vec![key("a", false)],
+                steps: left,
             },
             ProgramNode::Stage {
                 start: StageStart::Current,
-                steps: vec![key("b", false)],
+                steps: right,
+            },
+            if comma {
+                ProgramNode::Choice {
+                    left: ProgramNodeId::from_index(0).expect("id"),
+                    right: ProgramNodeId::from_index(1).expect("id"),
+                }
+            } else {
+                ProgramNode::Alternative {
+                    left: ProgramNodeId::from_index(0).expect("id"),
+                    right: ProgramNodeId::from_index(1).expect("id"),
+                }
+            },
+        ];
+        (nodes, ProgramNodeId::from_index(2).expect("root"))
+    }
+
+    /// Builds a left-associative three-arm comma: `Choice(Choice(a, b), c)`.
+    fn choice_three(
+        first: Vec<StageStep>,
+        second: Vec<StageStep>,
+        third: Vec<StageStep>,
+    ) -> (Vec<ProgramNode>, ProgramNodeId) {
+        let nodes = vec![
+            ProgramNode::Stage {
+                start: StageStart::Current,
+                steps: first,
+            },
+            ProgramNode::Stage {
+                start: StageStart::Current,
+                steps: second,
             },
             ProgramNode::Choice {
                 left: ProgramNodeId::from_index(0).expect("id"),
                 right: ProgramNodeId::from_index(1).expect("id"),
             },
+            ProgramNode::Stage {
+                start: StageStart::Current,
+                steps: third,
+            },
+            ProgramNode::Choice {
+                left: ProgramNodeId::from_index(2).expect("id"),
+                right: ProgramNodeId::from_index(3).expect("id"),
+            },
         ];
-        let root = ProgramNodeId::from_index(2).expect("root");
+        (nodes, ProgramNodeId::from_index(4).expect("root"))
+    }
+
+    #[test]
+    fn choice_arms_hoist_the_prefix_they_share() {
+        // `.a.b, .a.c`: the arms diverge at their second step, so the join is
+        // `.a` — the exact path the codec CAN express for both. The hoist wraps
+        // the Choice; analyze_pushdown then pushes that upstream stage.
+        let (mut nodes, root) = choice(
+            vec![key("a", false), key("b", false)],
+            vec![key("a", false), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(!split.is_whole_document());
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { upstream, body } = &fused[fused_root.index()] else {
+            panic!("the hoist wraps the Choice in a FlatMap");
+        };
+        assert_eq!(split.entry(), *upstream);
+        assert!(matches!(fused[body.index()], ProgramNode::Choice { .. }));
+    }
+
+    #[test]
+    fn three_choice_arms_hoist_the_prefix_they_all_share() {
+        // `.a.b, .a.c, .a.d`: the N-arm join is the prefix-lattice of every
+        // arm — `.a` — not whole-document. See [`fuse_choice`]. The residual
+        // is the Choice of the stripped suffixes.
+        let (mut nodes, root) = choice_three(
+            vec![key("a", false), key("b", false)],
+            vec![key("a", false), key("c", false)],
+            vec![key("a", false), key("d", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(!split.is_whole_document());
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { upstream, body } = &fused[fused_root.index()] else {
+            panic!("the hoist wraps the Choice in a FlatMap");
+        };
+        assert_eq!(split.entry(), *upstream);
+        assert!(matches!(fused[body.index()], ProgramNode::Choice { .. }));
+    }
+
+    #[test]
+    fn three_uneven_choice_arms_join_the_shortest_shared_stem() {
+        // `.a.b.c, .a.b.d, .a.e`: the inner pair joins `.a.b`, but the third
+        // arm walks only `.a`. The N-arm lattice is `.a`; extra already-hoisted
+        // `.b` goes back onto that arm's residual.
+        let (mut nodes, root) = choice_three(
+            vec![key("a", false), key("b", false), key("c", false)],
+            vec![key("a", false), key("b", false), key("d", false)],
+            vec![key("a", false), key("e", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(!split.is_whole_document());
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { body, .. } = &fused[fused_root.index()] else {
+            panic!("the hoist wraps the Choice in a FlatMap");
+        };
+        let ProgramNode::Choice { left, .. } = &fused[body.index()] else {
+            panic!("the residual is the Choice");
+        };
+        let ProgramNode::FlatMap { upstream, .. } = &fused[left.index()] else {
+            panic!("un-hoisted extra steps stay on the already-hoisted arm");
+        };
+        let ProgramNode::Stage { steps, .. } = &fused[upstream.index()] else {
+            panic!("the un-hoisted leftover is a stage");
+        };
+        assert_eq!(steps.len(), 1);
+        assert!(matches!(steps[0].access(), StepAccess::Key(name) if name == "b"));
+    }
+
+    #[test]
+    fn top_level_choice_is_whole_document() {
+        // `.a, .b`: no shared prefix, so the hoist declines and the spine still
+        // reaches a Choice — whole-document, same as today's unhoisted comma.
+        let (mut nodes, root) = choice(vec![key("a", false)], vec![key("b", false)]);
         let split = analyze(&nodes, root);
         assert!(split.is_whole_document());
         assert_eq!(split.prefix_len(), 0);
         assert_eq!(split.entry(), root);
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(split.is_whole_document());
+        assert_eq!(split.prefix_len(), 0);
+    }
+
+    #[test]
+    fn choice_hoist_joins_only_steps_whose_optional_flags_agree() {
+        // `.a?.b, .a.c`: the flag decides whether a mismatch suppresses the arm
+        // or aborts it, so two spellings of `.a` do not join. See
+        // [`a_hoist_joins_only_steps_whose_optional_flags_agree`] for the
+        // constructor twin.
+        let (mut nodes, root) = choice(
+            vec![key("a", true), key("b", false)],
+            vec![key("a", false), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn choice_hoist_does_not_hoist_through_each() {
+        // `.a[], .a.b`: Each is not Key/Index, so it cannot join into the
+        // hoisted prefix. Hoisting Each itself reorders `.[] , .[]` from
+        // `1,2,1,2` to `1,1,2,2`. The shared `.a` still hoists; Each stays
+        // in the residual Choice arm.
+        let (mut nodes, root) = choice(
+            vec![key("a", false), each(false)],
+            vec![key("a", false), key("b", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { body, .. } = &fused[fused_root.index()] else {
+            panic!("the shared `.a` hoists; Each does not");
+        };
+        let ProgramNode::Choice { left, .. } = &fused[body.index()] else {
+            panic!("the residual is the Choice");
+        };
+        let ProgramNode::Stage { steps, .. } = &fused[left.index()] else {
+            panic!("the left residual is the Each suffix");
+        };
+        assert!(matches!(steps[0].access(), StepAccess::Each));
+    }
+
+    #[test]
+    fn choice_hoist_does_not_hoist_each() {
+        // `.[] , .[]` over `[1,2]` is `1,2,1,2`. `.[] | (., .)` is `1,1,2,2`.
+        let (mut nodes, root) = choice(vec![each(false)], vec![each(false)]);
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn choice_hoist_does_not_hoist_an_optional_prefix() {
+        // `.a?.b, .a?.c`: a `?` can emit ZERO, and `empty | (.b, .c)` publishes
+        // nothing while the comma still runs the right arm.
+        let (mut nodes, root) = choice(
+            vec![key("a", true), key("b", false)],
+            vec![key("a", true), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn choice_hoist_declines_a_poisoned_arm() {
+        // literals / empty / call / try: comma publishes independently, so a
+        // non-current-start arm poisons the whole hoist.
+        let left = vec![key("a", false), key("b", false)];
+        let stage = |steps: Vec<StageStep>| ProgramNode::Stage {
+            start: StageStart::Current,
+            steps,
+        };
+        let cases = [
+            (
+                "literal",
+                vec![
+                    stage(left.clone()),
+                    ProgramNode::Stage {
+                        start: StageStart::Literal(Value::Null),
+                        steps: Vec::new(),
+                    },
+                    ProgramNode::Choice {
+                        left: ProgramNodeId::from_index(0).expect("id"),
+                        right: ProgramNodeId::from_index(1).expect("id"),
+                    },
+                ],
+                2,
+            ),
+            (
+                "empty",
+                vec![
+                    stage(left.clone()),
+                    ProgramNode::Empty,
+                    ProgramNode::Choice {
+                        left: ProgramNodeId::from_index(0).expect("id"),
+                        right: ProgramNodeId::from_index(1).expect("id"),
+                    },
+                ],
+                2,
+            ),
+            (
+                "call",
+                vec![
+                    stage(left.clone()),
+                    ProgramNode::call(BuiltinOverloadId::new(id::LENGTH), SemanticRevision::new(1), Vec::new()),
+                    ProgramNode::Choice {
+                        left: ProgramNodeId::from_index(0).expect("id"),
+                        right: ProgramNodeId::from_index(1).expect("id"),
+                    },
+                ],
+                2,
+            ),
+            (
+                "try",
+                vec![
+                    stage(left.clone()),
+                    stage(left),
+                    ProgramNode::Try {
+                        body: ProgramNodeId::from_index(1).expect("id"),
+                        handler: None,
+                    },
+                    ProgramNode::Choice {
+                        left: ProgramNodeId::from_index(0).expect("id"),
+                        right: ProgramNodeId::from_index(2).expect("id"),
+                    },
+                ],
+                3,
+            ),
+        ];
+        for (law, mut nodes, root) in cases {
+            let root = ProgramNodeId::from_index(root).expect("root");
+            let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+            assert!(
+                analyze(&fused, fused_root).is_whole_document(),
+                "{law} must poison the Choice hoist"
+            );
+        }
+    }
+
+    #[test]
+    fn alternative_arms_hoist_the_prefix_they_share() {
+        // `.a.b // .a.c`: same stage-pair join as Choice. The hoist wraps the
+        // Alternative; analyze_pushdown then pushes that upstream stage.
+        let (mut nodes, root) = alternative(
+            vec![key("a", false), key("b", false)],
+            vec![key("a", false), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(!split.is_whole_document());
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { upstream, body } = &fused[fused_root.index()] else {
+            panic!("the hoist wraps the Alternative in a FlatMap");
+        };
+        assert_eq!(split.entry(), *upstream);
+        assert!(matches!(fused[body.index()], ProgramNode::Alternative { .. }));
+        let ProgramNode::Stage { steps, .. } = &fused[upstream.index()] else {
+            panic!("the hoisted prefix is a stage");
+        };
+        assert!(steps.iter().all(StageStep::cell_suppressed));
+    }
+
+    #[test]
+    fn top_level_alternative_is_whole_document() {
+        // `.a // .b`: no shared prefix, so the stage-pair hoist declines and
+        // the spine still reaches an Alternative — whole-document.
+        let (mut nodes, root) = alternative(vec![key("a", false)], vec![key("b", false)]);
+        let split = analyze(&nodes, root);
+        assert!(split.is_whole_document());
+        assert_eq!(split.prefix_len(), 0);
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(split.is_whole_document());
+        assert_eq!(split.prefix_len(), 0);
+    }
+
+    #[test]
+    fn alternative_hoist_joins_only_steps_whose_optional_flags_agree() {
+        let (mut nodes, root) = alternative(
+            vec![key("a", true), key("b", false)],
+            vec![key("a", false), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn alternative_hoist_does_not_hoist_through_each() {
+        let (mut nodes, root) = alternative(
+            vec![key("a", false), each(false)],
+            vec![key("a", false), key("b", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert_eq!(split.prefix_len(), 1);
+        let ProgramNode::FlatMap { body, .. } = &fused[fused_root.index()] else {
+            panic!("the shared `.a` hoists; Each does not");
+        };
+        let ProgramNode::Alternative { left, .. } = &fused[body.index()] else {
+            panic!("the residual is the Alternative");
+        };
+        let ProgramNode::Stage { steps, .. } = &fused[left.index()] else {
+            panic!("the left residual is the Each suffix");
+        };
+        assert!(matches!(steps[0].access(), StepAccess::Each));
+    }
+
+    #[test]
+    fn alternative_hoist_does_not_hoist_each() {
+        let (mut nodes, root) = alternative(vec![each(false)], vec![each(false)]);
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn alternative_hoist_does_not_hoist_an_optional_prefix() {
+        // `.a?.b // .a?.c`: a `?` can emit ZERO, and `empty | (.b // .c)`
+        // publishes nothing while `//` still has to try the right arm.
+        let (mut nodes, root) = alternative(
+            vec![key("a", true), key("b", false)],
+            vec![key("a", true), key("c", false)],
+        );
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        assert!(analyze(&fused, fused_root).is_whole_document());
+    }
+
+    #[test]
+    fn alternative_literal_fallback_still_hoists_the_left_prefix() {
+        // `.a.b // 1`: the right ignores input, so it does not poison the
+        // left's prefix — unlike comma, whose independent publish would.
+        let mut nodes = vec![
+            ProgramNode::Stage {
+                start: StageStart::Current,
+                steps: vec![key("a", false), key("b", false)],
+            },
+            ProgramNode::Stage {
+                start: StageStart::Literal(Value::Null),
+                steps: Vec::new(),
+            },
+            ProgramNode::Alternative {
+                left: ProgramNodeId::from_index(0).expect("id"),
+                right: ProgramNodeId::from_index(1).expect("id"),
+            },
+        ];
+        let root = ProgramNodeId::from_index(2).expect("root");
+        let (fused, fused_root, _) = fuse_with_callables(&mut nodes, root, &[]).expect("fuses");
+        let split = analyze(&fused, fused_root);
+        assert!(!split.is_whole_document());
+        assert_eq!(split.prefix_len(), 2);
     }
 
     #[test]

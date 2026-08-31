@@ -563,23 +563,10 @@ impl jqf_codec_core::InputProvider for CsvPayloadProvider {
         resources: &mut ResourceContext<'_>,
     ) -> Result<ErasedAccessSession<'source>, CodecError> {
         if slot == SCOPED_ROUTE_SLOT {
-            if requirement.footprint().is_whole()
-                || requirement.schedule().is_empty_complete()
-                || requirement.result() != AccessResultKind::Located
-            {
-                return Err(CodecError::new(CodecFailureKind::ProviderRouteMismatch));
-            }
-            let path = requirement
-                .footprint()
-                .exact_path()
-                .ok_or_else(|| CodecError::new(CodecFailureKind::ProviderRouteMismatch))?;
+            let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
             // Dispatch never falls back: a `ProviderRouteMismatch` here is a hard error, not a floor retry. A longer
             // path still opens this session; the session answers the residual as the floor would (a CSV field is a
             // string, so step 1 is a type mismatch).
-            let origin = requirement
-                .schedule()
-                .singleton_origin()
-                .ok_or_else(|| CodecError::new(CodecFailureKind::ProviderRouteMismatch))?;
             let header = self.header.clone();
             let header_end = self.header_end;
             let options = self.options;
@@ -598,13 +585,10 @@ impl jqf_codec_core::InputProvider for CsvPayloadProvider {
         // Whole-record validation is served by the ordinary whole-document slot: a record-independent program binds the
         // lazy whole document, which validates to the same full strictness and never materializes when nothing reads
         // it.
-        if slot != DECODE_ROUTE_SLOT
-            || !requirement.footprint().is_whole()
-            || !requirement.schedule().is_empty_complete()
-            || requirement.result() != AccessResultKind::CompleteDocument
-        {
+        if slot != DECODE_ROUTE_SLOT {
             return Err(CodecError::new(CodecFailureKind::ProviderRouteMismatch));
         }
+        requirement.expect_whole(AccessResultKind::CompleteDocument)?;
         let options = self.options;
         let header = self.header.clone();
         let header_end = self.header_end;

@@ -13,7 +13,7 @@ use jqf_runtime::records::{
 };
 
 use crate::args::CliFormat;
-use crate::errors::{CliFailure, ExitClass, render_failure};
+use crate::errors::{CliFailure, ExitClass, render_failure, requirement_failure};
 use crate::output::StdoutSink;
 use crate::plan::{COOPERATIVE_CREDITS, RouteContext, RouteOutcome};
 use crate::record_route;
@@ -535,7 +535,7 @@ pub(crate) fn render_record_drive_failure(error: RecordDriveError<std::io::Error
         RecordDriveError::Setup {
             step: "requirement",
             error,
-        } => CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())),
+        } => requirement_failure(&error),
         RecordDriveError::Setup {
             step: "record-ceiling",
             error,

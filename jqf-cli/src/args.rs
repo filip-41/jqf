@@ -419,7 +419,7 @@ Options:
   --explain
       Print the request's plan to stderr: the routing facts the engine
       derived (route-ladder eligibility, demand class, pushed-down path,
-      boundary consumer, projected plan), then the route that served the
+      boundary consumer), then the route that served the
       request, its wall-clock time, and its cost snapshot. Every fact is
       read through the same accessors the route selector reads, so the
       explain block cannot drift from the route it describes. Never

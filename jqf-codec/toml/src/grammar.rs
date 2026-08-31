@@ -249,7 +249,7 @@ fn keep_member(lookup: &PruneLookup, id: u32, name: &[u8]) -> Option<u32> {
     if id == PRUNE_ALL {
         Some(PRUNE_ALL)
     } else {
-        lookup.member_prune(id, name).or(Some(PRUNE_ALL))
+        lookup.member_prune(id, name)
     }
 }
 
@@ -604,6 +604,8 @@ pub(crate) struct Lexer<'a, 'ctx> {
     pub(crate) name_ids: BTreeMap<String, u32>,
     /// When false the walker still skips comment bytes but does not own the text.
     pub(crate) collect_comments: bool,
+    /// Child/member count of the last Skip-mode array or inline table this lexer closed.
+    pub(crate) skip_container_len: Option<u64>,
 }
 
 /// What the value grammar does with what it parses.
@@ -771,6 +773,7 @@ impl TomlGrammar {
                         names: Vec::new(),
                         name_ids: BTreeMap::new(),
                         collect_comments: true,
+                        skip_container_len: None,
                     },
                     doc: &mut self.doc,
                     prune: self.prune.as_ref(),
@@ -1497,6 +1500,7 @@ impl Lexer<'_, '_> {
         } else {
             None
         };
+        let mut count = 0u64;
         loop {
             self.skip_trivia()?;
             match self.peek() {
@@ -1507,6 +1511,7 @@ impl Lexer<'_, '_> {
                 None => return Err(self.syntax(start, "invalid-array", "unterminated array")),
                 _ => {
                     let value = self.parse_value()?;
+                    count = count.saturating_add(1);
                     if let Some(items) = items.as_mut() {
                         items.push(value);
                     }
@@ -1525,6 +1530,9 @@ impl Lexer<'_, '_> {
                     }
                 }
             }
+        }
+        if self.mode == ValueMode::Skip {
+            self.skip_container_len = Some(count);
         }
         Ok(Tree::Array {
             items: items.unwrap_or_default(),
@@ -1561,9 +1569,13 @@ impl Lexer<'_, '_> {
         // independently of `entries` so the check applies in Skip mode too, where no value tree is built.
         let mut seen: BTreeMap<u32, KeySeen> = BTreeMap::new();
         let mut implicit = ImplicitIndex::default();
+        let mut count = 0u64;
         self.skip_inline_trivia()?;
         if self.peek() == Some(b'}') {
             self.bump();
+            if self.mode == ValueMode::Skip {
+                self.skip_container_len = Some(0);
+            }
             return Ok(Tree::InlineTable {
                 entries: entries.unwrap_or_default(),
                 span: source_span(start, self.offset),
@@ -1583,6 +1595,7 @@ impl Lexer<'_, '_> {
             }
             self.skip_ws();
             let value = self.parse_value()?;
+            count = count.saturating_add(1);
             if let Some(entries) = entries.as_mut() {
                 insert_inline_dotted(entries, &mut implicit, path, value);
             }
@@ -1616,6 +1629,9 @@ impl Lexer<'_, '_> {
                     ));
                 }
             }
+        }
+        if self.mode == ValueMode::Skip {
+            self.skip_container_len = Some(count);
         }
         Ok(Tree::InlineTable {
             entries: entries.unwrap_or_default(),

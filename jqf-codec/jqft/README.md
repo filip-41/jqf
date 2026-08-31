@@ -17,8 +17,8 @@ What it has:
   dialects
 - `jqft.canonical@1` / `jqfjson.canonical@1` / `jqfb.canonical@1` — output
   profiles
-- whole-document decode for the text formats; jqfb also advertises an
-  exact-path located walk
+- Whole and Exact decode for the text formats; jqfb Exact is the
+  node-table walk
 - deterministic canonical encode under each output profile
 - `FORMAT_ID`, `JQFJSON_FORMAT_ID`, `FORMAT_ID_JQFB`, and the dialect /
   route id constants

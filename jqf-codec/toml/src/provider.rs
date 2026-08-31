@@ -43,6 +43,10 @@ impl InputProvider for TomlProvider {
         self.routes.as_slice()
     }
 
+    fn supports_attribute_absence(&self) -> bool {
+        true
+    }
+
     fn open_route<'source>(
         &mut self,
         input: ProviderInput<'source>,
@@ -66,10 +70,99 @@ impl InputProvider for TomlProvider {
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
             let coverage = jqf_codec_core::required_builder_coverage(requirement);
-            let session = crate::scoped::NativeScopedSession::try_new(path.steps(), origin, dialect, coverage)?;
+            let session = crate::scoped::NativeScopedSession::try_new(
+                path.steps(),
+                origin,
+                dialect,
+                coverage,
+                requirement.located_skeleton(),
+            )?;
             ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || Ok(session))
         } else {
             Err(CodecError::new(jqf_codec_core::CodecFailureKind::ProviderRouteMismatch))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jqf_codec_core::{
+        AccessAdapter, AccessFootprint, AccessGuarantees, AccessRequirement, CodecDemand, CodecRunContext,
+        DemandClause, DiagnosticPolicy, ErasedProvider, ExactPath, ValidationMode,
+    };
+    use jqf_data::{DialectId, ExpandedName};
+    use jqf_resource::ResourceContext;
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    fn resources() -> ResourceContext<'static> {
+        crate::test_support::resources()
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.toml",
+            bytes,
+            0,
+        )
+    }
+
+    fn attribute_exact_requirement(resources: &ResourceContext<'_>, member: Option<&str>) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        if let Some(name) = member {
+            path.try_push_semantic_member(name, resources).expect("member");
+        }
+        let footprint = AccessFootprint::try_exact(path, resources);
+        let mut demand = CodecDemand::try_new(resources);
+        demand
+            .try_insert(&DemandClause::Attribute(
+                ExpandedName::try_new("urn:test", "x").expect("expanded name"),
+            ))
+            .expect("attribute demand");
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    #[test]
+    fn supports_attribute_absence_and_binds_attribute_demand_on_exact() {
+        let mut resources = resources();
+        let provider =
+            TomlProvider::try_new(DiagnosticPolicy::ErrorsOnly, DialectKind::Toml10, &resources).expect("provider");
+        assert!(provider.supports_attribute_absence());
+
+        let requirement = attribute_exact_requirement(&resources, Some("a"));
+        let registration = crate::registration_1_0().expect("registration");
+        let mut provider: ErasedProvider = registration
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(b"a = 1\n"),
+                jqf_codec_core::DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::TOML_JQF_1_0_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                &mut resources,
+            )
+            .expect("provider");
+        assert!(provider.supports_attribute_absence());
+        let handle = provider.bind(&requirement).expect("bind attribute on exact");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let mut context = CodecRunContext::new(&mut resources);
+        context.set_cooperative_credits(4_096);
+        let result = session.decode(&mut context).expect("decode");
+        assert!(matches!(
+            result.report().adapter(),
+            AccessAdapter::AttributeAbsence | AccessAdapter::CompleteDocumentExactWithAttributeAbsence
+        ));
     }
 }

@@ -376,6 +376,13 @@ pub(crate) fn run_one_owned_value<Sink: ItemSink>(
                 return Err(publication.fail(PipelineFailure::Halt { status, message }));
             }
         },
+        EngineRun::ReboundWhole => {
+            return Err(publication.fail(PipelineFailure::Codec(CodecError::new(
+                jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                    contract: "-n/-s runs Whole; Exact count miss cannot rebound",
+                },
+            ))));
+        }
     };
     Ok((outcome, items))
 }

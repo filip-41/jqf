@@ -9,6 +9,10 @@
 //! Each case is therefore asserted against the floor as well as against a literal, by running the same program twice:
 //! once as written (pushed down) and once behind `. as $z |`, which forces the whole-document route. The two must agree
 //! — that agreement is the property, and a fixed `actual_type` broke it silently.
+//!
+//! YAML native Exact republishes the selection as the product root; oracles start at `located.node()`. Walking an empty
+//! path from the document root on that product would count the mapping, not the sequence. Floor agreement is still why
+//! the oracle rows pass.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -85,6 +89,90 @@ fn the_two_legal_negative_observations_still_answer_null() {
     // raise by the fix above.
     assert_eq!(run(".a", "null\n").0, "null\n");
     assert_eq!(run(".z", "a: 1\n").0, "null\n");
+}
+
+#[test]
+fn path_length_on_a_mapping_member_matches_the_floor() {
+    // Empty-path count on the Exact product is the sequence (3), not the mapping (1).
+    let input = "users:\n- 1\n- 2\n- 3\n";
+    let (scoped_out, scoped_err) = run(".users | length", input);
+    let (floor_out, floor_err) = run(". as $z | .users | length", input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        ".users | length must answer the same pushed down as it does at the floor"
+    );
+    assert_eq!(scoped_out, "3\n");
+    // A non-container Exact hit Declines and rebinds Whole: string length.
+    assert_eq!(run(".users | length", "users: ab\n").0, "2\n");
+}
+
+#[test]
+fn path_has_on_a_mapping_member_matches_the_floor() {
+    let input = "users:\n  id: 1\n";
+    let (scoped_out, scoped_err) = run(r#".users | has("id")"#, input);
+    let (floor_out, floor_err) = run(r#". as $z | .users | has("id")"#, input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        ".users | has must answer the same pushed down as it does at the floor"
+    );
+    assert_eq!(scoped_out, "true\n");
+    assert_eq!(run(r#".users | has("id")"#, "users: {}\n").0, "false\n");
+}
+
+#[test]
+fn path_all_on_a_sequence_member_matches_the_floor() {
+    let input = "users:\n  - id: 1\n  - id: 2\n";
+    let (scoped_out, scoped_err) = run(".users | all(.id)", input);
+    let (floor_out, floor_err) = run(". as $z | .users | all(.id)", input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        ".users | all must answer the same pushed down as it does at the floor"
+    );
+    assert_eq!(scoped_out, "true\n");
+    assert_eq!(run(".users | any(.id)", "users: []\n").0, "false\n");
+}
+
+#[test]
+fn path_min_on_a_numeric_sequence_matches_the_floor() {
+    let input = "scores:\n- 3\n- 1\n- 2\n";
+    let (scoped_out, scoped_err) = run(".scores | min", input);
+    let (floor_out, floor_err) = run(". as $z | .scores | min", input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        ".scores | min must answer the same pushed down as it does at the floor"
+    );
+    assert_eq!(scoped_out, "1\n");
+    assert_eq!(run(".scores | min", "scores: []\n").0, "null\n");
+}
+
+#[test]
+fn path_collect_length_miss_matches_the_floor() {
+    // Collect probe decline must not length the Exact-republished array as if it were the mapping.
+    let input = "users:\n- name: a\n- 5\n";
+    let (scoped_out, scoped_err) = run("[.users[].name] | length", input);
+    let (floor_out, floor_err) = run(". as $z | [.users[].name] | length", input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        "[.users[].name] | length must answer the same pushed down as it does at the floor"
+    );
+}
+
+#[test]
+fn path_element_on_a_sequence_member_matches_the_floor() {
+    let input = "users:\n- name: a\n- name: b\n";
+    let (scoped_out, scoped_err) = run(".users[].name", input);
+    let (floor_out, floor_err) = run(". as $z | .users[].name", input);
+    assert_eq!(
+        (scoped_out.as_str(), scoped_err.as_str()),
+        (floor_out.as_str(), floor_err.as_str()),
+        ".users[].name must answer the same pushed down as it does at the floor"
+    );
+    assert_eq!(scoped_out, "\"a\"\n\"b\"\n");
 }
 
 #[test]

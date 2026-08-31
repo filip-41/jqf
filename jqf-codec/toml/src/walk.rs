@@ -17,7 +17,7 @@
 //! range's in-range region or element spans, or a negative observation with the exact step semantics of the tree
 //! navigator.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -27,7 +27,7 @@ use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, Span};
 
 use crate::grammar::{Doc, Key, KeySeen, Lexer, Path, ValueMode};
-use crate::locate::{ScopedStep, resolve_bound, resolve_range, tree_kind};
+use crate::locate::{OwnedStep, resolve_bound, resolve_range, tree_kind};
 use crate::provider::DialectKind;
 
 /// The located answer of the walk.
@@ -42,6 +42,8 @@ pub(crate) enum LocatedWalk {
         end: usize,
         leading: Vec<String>,
         inline: Vec<String>,
+        child_count: Option<u64>,
+        container: Option<jqf_data::ContainerSpanKind>,
     },
     /// A table or array-of-tables: its subtree's STATEMENT spans in source order (each span is one complete header or
     /// assignment statement), plus any comment run between its last statement and the next `[header]` — the section
@@ -50,26 +52,62 @@ pub(crate) enum LocatedWalk {
     /// `key_depth` and `element` are the walk's exact target: how many named header components to honor after the spans
     /// re-parse, and whether that target is one array-of-tables ELEMENT rather than the array. The materializer must
     /// select that target — the re-parsed root's first child is the outermost ancestor, not the answer.
+    ///
+    /// `child_count` is unique immediate children from the walk's table state: object keys (or AOT length), never
+    /// flattened dotted header strings. `[a.b]` is nested tables, not a JSON key `"a.b"`.
     Table {
         spans: Vec<Span>,
         foot: Vec<String>,
         key_depth: usize,
         element: bool,
+        child_count: u64,
+        container: jqf_data::ContainerSpanKind,
     },
     /// A table that exists only as the target of a dotted key inside ONE inline table: no contiguous source region (its
     /// members are entries written with longer dotted paths) and no statement spans, so the materializer rebuilds `{
     /// <rest> = <value>, ... }` from the collected pieces — each contributing entry's remaining key path (decoded
     /// text, after the matched target prefix) and its value's source span.
-    ImplicitTable { pieces: Vec<(Vec<String>, usize, usize)> },
+    ///
+    /// `child_count` is unique first remaining key components (nested remainder stays nested).
+    ImplicitTable {
+        pieces: Vec<(Vec<String>, usize, usize)>,
+        child_count: u64,
+    },
     /// A resolved range over an array VALUE: the contiguous in-range region (bytes from the first in-range element to
-    /// the last, separators included); `empty` for a degenerate range.
-    RangeValue { start: usize, end: usize, empty: bool },
+    /// the last, separators included); `empty` for a degenerate range. `child_count` is the in-range width the walk
+    /// already counted while scanning the array.
+    RangeValue {
+        start: usize,
+        end: usize,
+        empty: bool,
+        child_count: u64,
+    },
     /// A resolved range over an array-of-tables: each in-range element's subtree statement spans.
     RangeTables { elements: Vec<Vec<Span>> },
     /// The step at which navigation stopped: no member or position exists.
     Missing { step: usize },
     /// The step at which a kind mismatch stopped the path.
     TypeMismatch { step: usize, actual: ValueKind },
+}
+
+fn classify_toml_value(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    child_count: Option<u64>,
+) -> (Option<jqf_data::ContainerSpanKind>, Option<u64>) {
+    let Some(slice) = bytes.get(start..end) else {
+        return (None, None);
+    };
+    let first = slice
+        .iter()
+        .copied()
+        .find(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
+    match first {
+        Some(b'[') => (Some(jqf_data::ContainerSpanKind::Array), child_count),
+        Some(b'{') => (Some(jqf_data::ContainerSpanKind::Object), child_count),
+        _ => (None, None),
+    }
 }
 
 /// The statement-span collector armed once the answer's shape is known.
@@ -116,7 +154,7 @@ struct PendingIndex {
 pub(crate) struct Walker<'a, 'ctx> {
     lex: Lexer<'a, 'ctx>,
     doc: Doc,
-    steps: &'ctx [ScopedStep],
+    steps: &'ctx [OwnedStep],
     /// How many target steps are resolved.
     step: usize,
     /// Open negative-array-of-tables frames, OUTERMOST first: every array-of-tables header whose Index step names a
@@ -146,7 +184,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
     pub(crate) fn try_new(
         source: ResolvedSource<'a>,
         dialect: DialectKind,
-        steps: &'ctx [ScopedStep],
+        steps: &'ctx [OwnedStep],
         resources: &'ctx ResourceContext<'ctx>,
         collect_comments: bool,
     ) -> Self {
@@ -163,6 +201,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                 names: Vec::new(),
                 name_ids: BTreeMap::new(),
                 collect_comments,
+                skip_container_len: None,
             },
             doc,
             steps,
@@ -431,7 +470,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         let mut k = 0usize;
         while k < relative.len() && self.step + k < self.steps.len() {
             match (&self.steps[self.step + k], self.doc.name_text(relative[k].id)) {
-                (ScopedStep::Member(name), text) if name.as_str() == text => k += 1,
+                (OwnedStep::Member(name), text) if name.as_str() == text => k += 1,
                 _ => break,
             }
         }
@@ -471,14 +510,14 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             // The element-level match handles every step kind; returning it keeps the table-header fallthrough below
             // unreachable.
             return match &self.steps[self.step + k] {
-                ScopedStep::Index(index) if u32::try_from(*index).is_ok_and(|i| i == element) => {
+                OwnedStep::Index(index) if u32::try_from(*index).is_ok_and(|i| i == element) => {
                     self.step += k + 1;
                     self.container = flat.clone();
                     if self.step == self.steps.len() {
                         self.answer_table(flat.clone());
                     }
                 }
-                ScopedStep::Index(index) if *index < 0 => {
+                OwnedStep::Index(index) if *index < 0 => {
                     // A negative index cannot resolve during the single statement pass (the element count is only known
                     // at EOF): resolve the remaining steps against every element and pick `len + index` at finish, with
                     // the tree navigator's wrapping law. The current header is the FIRST element, so its resolution
@@ -499,17 +538,17 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                         self.answer_table(flat.clone());
                     }
                 }
-                ScopedStep::Index(_) => {
+                OwnedStep::Index(_) => {
                     // A different element: the target's element may open later; the container is the ARRAY itself.
                     self.step += k;
                     self.container = prefix;
                 }
-                ScopedStep::Range { .. } => {
+                OwnedStep::Range { .. } => {
                     self.step += k;
                     self.container = prefix.clone();
                     self.arm_range(prefix);
                 }
-                ScopedStep::Member(_) => {
+                OwnedStep::Member(_) => {
                     self.set_answer(LocatedWalk::TypeMismatch {
                         step: self.step + k,
                         actual: ValueKind::Array,
@@ -528,7 +567,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
     /// The step after k resolved member steps addresses the table `prefix`, which only member steps may enter.
     fn header_next_step_is_not_a_table(&mut self, prefix: Path, k: usize) {
         match &self.steps[self.step + k] {
-            ScopedStep::Index(_) | ScopedStep::Range { .. } => {
+            OwnedStep::Index(_) | OwnedStep::Range { .. } => {
                 // A header descending PAST an array-of-tables belongs to some ELEMENT's subtree — the walk may still
                 // be waiting at the index step for a LATER element to open — so it proves nothing about the
                 // container's kind and is ignored until the target element's own boundary arrives (the floor reads only
@@ -542,7 +581,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                     actual: ValueKind::Object,
                 });
             }
-            ScopedStep::Member(_) => {
+            OwnedStep::Member(_) => {
                 self.container = prefix;
                 self.step += k;
             }
@@ -562,7 +601,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         let mut t = 0usize;
         while t < keypath.len() && self.step + t < self.steps.len() {
             match (&self.steps[self.step + t], self.doc.name_text(keypath[t].id)) {
-                (ScopedStep::Member(name), text) if name.as_str() == text => t += 1,
+                (OwnedStep::Member(name), text) if name.as_str() == text => t += 1,
                 _ => break,
             }
         }
@@ -578,12 +617,13 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             let leading = core::mem::take(&mut self.statement_comments);
             self.statement_value_answer = true;
             self.lex.parse_value()?;
-            self.set_answer(LocatedWalk::Value {
-                start: value_start,
-                end: self.lex.offset,
+            self.set_answer(self.located_value(
+                value_start,
+                self.lex.offset,
                 leading,
-                inline: Vec::new(),
-            });
+                Vec::new(),
+                self.lex.skip_container_len,
+            ));
             return Ok(());
         }
         if t == keypath.len() && t < remaining {
@@ -596,7 +636,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             self.lex.parse_value()?;
             return Ok(());
         }
-        if t < remaining && t < keypath.len() && !matches!(self.steps[self.step + t], ScopedStep::Member(_)) {
+        if t < remaining && t < keypath.len() && !matches!(self.steps[self.step + t], OwnedStep::Member(_)) {
             // A numeric index or range over the implicit table a dotted key synthesized: the same object mismatch a
             // `[header]` table reports. Falling through would finish as Missing (null).
             self.lex.parse_value()?;
@@ -630,7 +670,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         if matches!(self.collector, Collector::Range { .. }) {
             return;
         }
-        let ScopedStep::Range { start, end } = &self.steps[self.step] else {
+        let OwnedStep::Range { start, end } = &self.steps[self.step] else {
             unreachable!("arm_range is only reached from the Range step arm");
         };
         let (start, end) = (*start, *end);
@@ -646,11 +686,30 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         self.answer = Some(answer);
     }
 
+    fn located_value(
+        &self,
+        start: usize,
+        end: usize,
+        leading: Vec<String>,
+        inline: Vec<String>,
+        child_count: Option<u64>,
+    ) -> LocatedWalk {
+        let (container, child_count) = classify_toml_value(self.lex.bytes, start, end, child_count);
+        LocatedWalk::Value {
+            start,
+            end,
+            leading,
+            inline,
+            child_count,
+            container,
+        }
+    }
+
     // ---- the navigated value descent ----
 
     /// Scans one value region (validating it with the shared lexer) while resolving the remaining steps.
     /// `self.lex.offset` must equal `start` on entry; it is left at the region's end on return.
-    fn navigate_value(&mut self, start: usize, steps: &[ScopedStep], step_offset: usize) -> Result<(), CodecError> {
+    fn navigate_value(&mut self, start: usize, steps: &[OwnedStep], step_offset: usize) -> Result<(), CodecError> {
         debug_assert_eq!(self.lex.offset, start);
         match self.lex.peek() {
             Some(b'{') => self.navigate_inline_table(start, steps, step_offset),
@@ -681,10 +740,10 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
     fn navigate_inline_table(
         &mut self,
         start: usize,
-        steps: &[ScopedStep],
+        steps: &[OwnedStep],
         step_offset: usize,
     ) -> Result<(), CodecError> {
-        let ScopedStep::Member(_) = &steps[0] else {
+        let OwnedStep::Member(_) = &steps[0] else {
             // An index or range over an object is a kind mismatch.
             self.lex.parse_value()?;
             self.set_answer(LocatedWalk::TypeMismatch {
@@ -728,7 +787,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             let mut k = 0usize;
             while k < steps.len() && k < path.len() {
                 match (&steps[k], self.lex.name_text(path[k].id)) {
-                    (ScopedStep::Member(name), text) if name.as_str() == text => k += 1,
+                    (OwnedStep::Member(name), text) if name.as_str() == text => k += 1,
                     _ => break,
                 }
             }
@@ -743,12 +802,13 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                 if k == steps.len() {
                     // The member's value carries NO comments: the statement's comments belong to the inline table's own
                     // value, never to one of its members (the floor's attachment law).
-                    self.set_answer(LocatedWalk::Value {
-                        start: entry_value_start,
-                        end: entry_value_end,
-                        leading: Vec::new(),
-                        inline: Vec::new(),
-                    });
+                    self.set_answer(self.located_value(
+                        entry_value_start,
+                        entry_value_end,
+                        Vec::new(),
+                        Vec::new(),
+                        self.lex.skip_container_len,
+                    ));
                 } else {
                     self.lex.offset = entry_value_start;
                     self.navigate_value(entry_value_start, &steps[k..], step_offset + k)?;
@@ -769,7 +829,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                         entry_value_end,
                     ));
                 }
-            } else if !matches!(steps[k], ScopedStep::Member(_)) {
+            } else if !matches!(steps[k], OwnedStep::Member(_)) {
                 // A non-member step addresses the implicit table this entry claims at depth k: an object mismatch,
                 // final (a dotted key creates only tables, and no entry can re-answer the position as a value).
                 if self.answer.is_none() {
@@ -824,17 +884,21 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                     step: step_offset + deepest_cover,
                 });
             } else {
-                self.set_answer(LocatedWalk::ImplicitTable { pieces: implicit });
+                let child_count = implicit_table_child_count(&implicit);
+                self.set_answer(LocatedWalk::ImplicitTable {
+                    pieces: implicit,
+                    child_count,
+                });
             }
         }
         Ok(())
     }
 
     /// Scans one array region, resolving the leading index or range step.
-    fn navigate_array(&mut self, start: usize, steps: &[ScopedStep], step_offset: usize) -> Result<(), CodecError> {
+    fn navigate_array(&mut self, start: usize, steps: &[OwnedStep], step_offset: usize) -> Result<(), CodecError> {
         match &steps[0] {
-            ScopedStep::Index(_) | ScopedStep::Range { .. } => {}
-            ScopedStep::Member(_) => {
+            OwnedStep::Index(_) | OwnedStep::Range { .. } => {}
+            OwnedStep::Member(_) => {
                 // A member over an array is a kind mismatch.
                 self.lex.parse_value()?;
                 self.set_answer(LocatedWalk::TypeMismatch {
@@ -848,7 +912,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         // closing `]`; a later descent into one element must restore that end, never the element's end (which sits
         // before the already-consumed `]` and reads as trailing content — or swallows the element's own type error).
         self.lex.bump(); // '['
-        let mut regions: Vec<(usize, usize)> = Vec::new();
+        let mut regions: Vec<(usize, usize, Option<u64>)> = Vec::new();
         loop {
             self.lex.skip_trivia()?;
             match self.lex.peek() {
@@ -862,7 +926,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                 _ => {
                     let element_start = self.lex.offset;
                     self.lex.parse_value()?;
-                    regions.push((element_start, self.lex.offset));
+                    regions.push((element_start, self.lex.offset, self.lex.skip_container_len));
                     self.lex.skip_trivia()?;
                     match self.lex.peek() {
                         Some(b',') => {
@@ -885,18 +949,19 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
         }
         let after_array = self.lex.offset;
         match &steps[0] {
-            ScopedStep::Index(index) => match jqf_data::resolve_index(regions.len(), *index) {
+            OwnedStep::Index(index) => match jqf_data::resolve_index(regions.len(), *index) {
                 Some(position) => {
-                    let (element_start, element_end) = regions[position];
+                    let (element_start, element_end, child_count) = regions[position];
                     if steps.len() == 1 {
                         // The element's value carries NO comments: the statement's comments belong to the ARRAY's own
                         // value, never to one of its elements.
-                        self.set_answer(LocatedWalk::Value {
-                            start: element_start,
-                            end: element_end,
-                            leading: Vec::new(),
-                            inline: Vec::new(),
-                        });
+                        self.set_answer(self.located_value(
+                            element_start,
+                            element_end,
+                            Vec::new(),
+                            Vec::new(),
+                            child_count,
+                        ));
                     } else {
                         // The remaining steps resolve inside the element.
                         self.lex.offset = element_start;
@@ -908,23 +973,25 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                     self.set_answer(LocatedWalk::Missing { step: step_offset });
                 }
             },
-            ScopedStep::Range { start: rs, end: re } => {
+            OwnedStep::Range { start: rs, end: re } => {
                 let (lo, hi) = resolve_range(regions.len(), *rs, *re);
                 if lo >= hi {
                     self.set_answer(LocatedWalk::RangeValue {
                         start: 0,
                         end: 0,
                         empty: true,
+                        child_count: 0,
                     });
                 } else {
                     self.set_answer(LocatedWalk::RangeValue {
                         start: regions[lo].0,
                         end: regions[hi - 1].1,
                         empty: false,
+                        child_count: u64::try_from(hi - lo).unwrap_or(u64::MAX),
                     });
                 }
             }
-            ScopedStep::Member(_) => unreachable!("handled above"),
+            OwnedStep::Member(_) => unreachable!("handled above"),
         }
         Ok(())
     }
@@ -959,13 +1026,13 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             target, spans, foot, ..
         } = core::mem::replace(&mut self.collector, Collector::Idle)
         {
-            table_answer(&target, spans, foot)
+            table_answer(&self.doc, &target, spans, foot)
         } else {
             // The resolved element is a table and the next suffix step indexes or slices it: the same typed mismatch
             // every other table arm reports, never a Missing (the floor raises here).
             if matches!(
                 self.steps.get(index_step + 1),
-                Some(ScopedStep::Index(_) | ScopedStep::Range { .. })
+                Some(OwnedStep::Index(_) | OwnedStep::Range { .. })
             ) {
                 return LocatedWalk::TypeMismatch {
                     step: index_step + 1,
@@ -1017,7 +1084,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
             }
             Collector::Table {
                 target, spans, foot, ..
-            } => table_answer(&target, spans, foot),
+            } => table_answer(&self.doc, &target, spans, foot),
             Collector::Idle => {
                 // An unresolved Index/Range step over the resolved table is the same typed mismatch every other table
                 // arm reports — unless the container is an ARRAY-OF-TABLES still waiting for its element to open: an
@@ -1025,7 +1092,7 @@ impl<'a, 'ctx> Walker<'a, 'ctx> {
                 // (an array-of-tables indexes; a table does not).
                 let index_step_over_a_table = matches!(
                     self.steps.get(self.step),
-                    Some(ScopedStep::Index(_) | ScopedStep::Range { .. })
+                    Some(OwnedStep::Index(_) | OwnedStep::Range { .. })
                 ) && self.doc.array_count(&self.container).is_none();
                 if index_step_over_a_table {
                     return LocatedWalk::TypeMismatch {
@@ -1048,14 +1115,45 @@ fn is_element_boundary(frame: &PendingIndex, flat: &Path, is_array: bool) -> boo
     is_array && flat.starts_with(&frame.array) && flat.0.len() == frame.array.0.len() + 1
 }
 
-/// The walk's table answer carries the exact target the materializer honors.
-fn table_answer(target: &Path, spans: Vec<Span>, foot: Vec<String>) -> LocatedWalk {
+/// The walk's table answer carries the exact target the materializer honors, plus the unique immediate
+/// children the table state already recorded (object keys or AOT length).
+fn table_answer(doc: &Doc, target: &Path, spans: Vec<Span>, foot: Vec<String>) -> LocatedWalk {
+    let (container, child_count) = table_container_facts(doc, target);
     LocatedWalk::Table {
         spans,
         foot,
         key_depth: target.key_depth(),
         element: target.ends_with_element(),
+        child_count,
+        container,
     }
+}
+
+/// Unique immediate children of a located table: AOT length, or the table's own key set. Dotted headers
+/// contribute the first remaining component only (`[a.b]` is nested `b` under `a`).
+fn table_container_facts(doc: &Doc, target: &Path) -> (jqf_data::ContainerSpanKind, u64) {
+    if !target.ends_with_element()
+        && let Some(count) = doc.array_count(target)
+    {
+        return (jqf_data::ContainerSpanKind::Array, u64::from(count));
+    }
+    let n = doc.table(target).keys.len();
+    (
+        jqf_data::ContainerSpanKind::Object,
+        u64::try_from(n).unwrap_or(u64::MAX),
+    )
+}
+
+/// Unique first remaining key components: `a.b` / `a.c` under one implicit table is two children; a nested
+/// remainder (`b.c` / `b.d`) is one child `b`.
+fn implicit_table_child_count(pieces: &[(Vec<String>, usize, usize)]) -> u64 {
+    let mut seen = BTreeSet::new();
+    for (path, ..) in pieces {
+        if let Some(first) = path.first() {
+            seen.insert(first.as_str());
+        }
+    }
+    u64::try_from(seen.len()).unwrap_or(u64::MAX)
 }
 
 /// Clamps a non-negative authored bound to `usize`.
@@ -1082,11 +1180,11 @@ mod tests {
         )
     }
 
-    fn member(name: &str) -> ScopedStep {
-        ScopedStep::Member(String::from(name))
+    fn member(name: &str) -> OwnedStep {
+        OwnedStep::Member(String::from(name))
     }
 
-    fn walk(bytes: &[u8], steps: &[ScopedStep]) -> LocatedWalk {
+    fn walk(bytes: &[u8], steps: &[OwnedStep]) -> LocatedWalk {
         let resources = crate::test_support::resources();
         Walker::try_new(source(bytes), DialectKind::Toml10, steps, &resources, true)
             .walk()
@@ -1109,7 +1207,7 @@ mod tests {
         let bytes = b"a = 1\n[t]\nx = 2\n[[arr]]\ny = 3\n[[arr]]\ny = 4\n";
         let located = walk(bytes, &[member("t"), member("x")]);
         assert_eq!(value_of(bytes, &located), "2");
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(1), member("y")]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(1), member("y")]);
         assert_eq!(value_of(bytes, &located), "4");
         // A table-typed answer collects its subtree's statement spans.
         let located = walk(bytes, &[member("t")]);
@@ -1127,32 +1225,32 @@ mod tests {
         // resolution is stashed and `len + index` picks the answer at finish.
         let bytes = b"[[arr]]\nx = 1\n[[arr]]\nx = 2\n";
         // No suffix: the last element's table.
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-1)]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-1)]);
         let LocatedWalk::Table { spans, .. } = &located else {
             panic!("expected the last element table, got {located:?}");
         };
         assert_eq!(spans.len(), 2, "the last [[arr]] header and its assignment");
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-2)]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-2)]);
         let LocatedWalk::Table { spans, .. } = &located else {
             panic!("expected the first element table, got {located:?}");
         };
         assert_eq!(spans.len(), 2);
         // A suffix resolves inside the LAST element: element 1's `x`.
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-1), member("x")]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-1), member("x")]);
         assert_eq!(value_of(bytes, &located), "2");
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-2), member("x")]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-2), member("x")]);
         assert_eq!(value_of(bytes, &located), "1");
         // Out of bounds is Missing, exactly the tree navigator's observation.
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-3)]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-3)]);
         assert!(matches!(located, LocatedWalk::Missing { .. }));
         // A missing array is Missing too (a TOML source cannot express an empty array-of-tables: every `[[arr]]` header
         // creates an element).
         let bytes = b"x = 1\n";
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-1)]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-1)]);
         assert!(matches!(located, LocatedWalk::Missing { .. }));
         // The last element MISSING the member answers Missing, never an earlier element's value.
         let bytes = b"[[arr]]\nx = 1\n[[arr]]\ny = 2\n";
-        let located = walk(bytes, &[member("arr"), ScopedStep::Index(-1), member("x")]);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(-1), member("x")]);
         assert!(matches!(located, LocatedWalk::Missing { .. }));
     }
 
@@ -1166,7 +1264,7 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Index(-1),
+                OwnedStep::Index(-1),
                 member("sub"),
                 member("deep"),
                 member("y"),
@@ -1176,7 +1274,7 @@ mod tests {
         // The same law for an EARLIER element: its descent must reach its own boundary's stash, not vanish before the
         // last element opens.
         let bytes = b"[[a]]\n[a.sub]\ny = 1\n[[a]]\nx = 2\n";
-        let located = walk(bytes, &[member("a"), ScopedStep::Index(-2), member("sub"), member("y")]);
+        let located = walk(bytes, &[member("a"), OwnedStep::Index(-2), member("sub"), member("y")]);
         assert_eq!(value_of(bytes, &located), "1");
     }
 
@@ -1191,9 +1289,9 @@ mod tests {
         let steps = |outer: i64, inner: i64| {
             vec![
                 member("x"),
-                ScopedStep::Index(outer),
+                OwnedStep::Index(outer),
                 member("a"),
-                ScopedStep::Index(inner),
+                OwnedStep::Index(inner),
                 member("y"),
             ]
         };
@@ -1209,7 +1307,7 @@ mod tests {
         // element.
         let located = walk(
             bytes,
-            &[member("x"), ScopedStep::Index(-1), member("a"), ScopedStep::Index(-1)],
+            &[member("x"), OwnedStep::Index(-1), member("a"), OwnedStep::Index(-1)],
         );
         let Value::Object(object) = materialize_walk(bytes, &located) else {
             panic!("expected the wrapped element table, got {located:?}");
@@ -1246,11 +1344,11 @@ mod tests {
             bytes,
             &[
                 member("p"),
-                ScopedStep::Index(-1),
+                OwnedStep::Index(-1),
                 member("q"),
-                ScopedStep::Index(-1),
+                OwnedStep::Index(-1),
                 member("r"),
-                ScopedStep::Index(-1),
+                OwnedStep::Index(-1),
                 member("s"),
             ],
         );
@@ -1268,9 +1366,9 @@ mod tests {
         let steps = |outer: i64| {
             vec![
                 member("x"),
-                ScopedStep::Index(outer),
+                OwnedStep::Index(outer),
                 member("a"),
-                ScopedStep::Index(0),
+                OwnedStep::Index(0),
                 member("y"),
             ]
         };
@@ -1286,11 +1384,11 @@ mod tests {
         let steps = |p: i64, q: i64, r: i64| {
             vec![
                 member("p"),
-                ScopedStep::Index(p),
+                OwnedStep::Index(p),
                 member("q"),
-                ScopedStep::Index(q),
+                OwnedStep::Index(q),
                 member("r"),
-                ScopedStep::Index(r),
+                OwnedStep::Index(r),
                 member("s"),
             ]
         };
@@ -1309,9 +1407,9 @@ mod tests {
             bytes,
             &[
                 member("x"),
-                ScopedStep::Index(1),
+                OwnedStep::Index(1),
                 member("a"),
-                ScopedStep::Index(0),
+                OwnedStep::Index(0),
                 member("y"),
             ],
         );
@@ -1326,11 +1424,11 @@ mod tests {
             bytes,
             &[
                 member("p"),
-                ScopedStep::Index(1),
+                OwnedStep::Index(1),
                 member("q"),
-                ScopedStep::Index(1),
+                OwnedStep::Index(1),
                 member("r"),
-                ScopedStep::Index(0),
+                OwnedStep::Index(0),
                 member("s"),
             ],
         );
@@ -1345,7 +1443,7 @@ mod tests {
         // The ignore law is scoped to ARRAY-OF-TABLES containers: a header descending past a genuine TABLE while an
         // index step addresses it IS the kind proof the floor sees too, and the object mismatch stands.
         let bytes = b"[a]\nv = 0\n[a.sub]\nw = 1\n";
-        let located = walk(bytes, &[member("a"), ScopedStep::Index(0), member("x")]);
+        let located = walk(bytes, &[member("a"), OwnedStep::Index(0), member("x")]);
         assert!(matches!(
             located,
             LocatedWalk::TypeMismatch {
@@ -1364,7 +1462,7 @@ mod tests {
             bytes,
             &[
                 member("p"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(0),
                     end: Some(2),
                 },
@@ -1401,7 +1499,7 @@ mod tests {
         // The floor attaches a statement's comments to the statement's own VALUE, never to a descended member or array
         // element: the walk's member/element answers must publish the same empty comment set.
         let bytes = b"# list comment\nl = [1, 2]\n# point comment\npoint = { x = 1 } # trailing\n";
-        let located = walk(bytes, &[member("l"), ScopedStep::Index(1)]);
+        let located = walk(bytes, &[member("l"), OwnedStep::Index(1)]);
         let LocatedWalk::Value { leading, inline, .. } = &located else {
             panic!("expected the element value, got {located:?}");
         };
@@ -1524,11 +1622,11 @@ mod tests {
         let bytes = b"point = { x = 1, y = 2 }\nlist = [10, 20, 30]\n";
         let located = walk(bytes, &[member("point"), member("y")]);
         assert_eq!(value_of(bytes, &located), "2");
-        let located = walk(bytes, &[member("list"), ScopedStep::Index(1)]);
+        let located = walk(bytes, &[member("list"), OwnedStep::Index(1)]);
         assert_eq!(value_of(bytes, &located), "20");
-        let located = walk(bytes, &[member("list"), ScopedStep::Index(-1)]);
+        let located = walk(bytes, &[member("list"), OwnedStep::Index(-1)]);
         assert_eq!(value_of(bytes, &located), "30");
-        let located = walk(bytes, &[member("list"), ScopedStep::Index(3)]);
+        let located = walk(bytes, &[member("list"), OwnedStep::Index(3)]);
         assert!(matches!(located, LocatedWalk::Missing { step: 1 }));
     }
 
@@ -1548,7 +1646,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            walk(bytes, &[member("a"), ScopedStep::Index(0)]),
+            walk(bytes, &[member("a"), OwnedStep::Index(0)]),
             LocatedWalk::TypeMismatch {
                 step: 1,
                 actual: ValueKind::Number,
@@ -1589,7 +1687,7 @@ mod tests {
         // Target ends at the dotted path's implicit table: the collected pieces name the remaining path and the value
         // span.
         let located = walk(bytes, &[member("animal"), member("type")]);
-        let LocatedWalk::ImplicitTable { pieces } = located else {
+        let LocatedWalk::ImplicitTable { pieces, .. } = located else {
             panic!("expected an implicit table, got {located:?}");
         };
         assert_eq!(pieces.len(), 1);
@@ -1621,7 +1719,7 @@ mod tests {
         ));
         // `.a.b[0]`: a non-member step over the implicit table is an object mismatch at the covered depth.
         assert!(matches!(
-            walk(bytes, &[member("a"), member("b"), ScopedStep::Index(0)]),
+            walk(bytes, &[member("a"), member("b"), OwnedStep::Index(0)]),
             LocatedWalk::TypeMismatch {
                 step: 2,
                 actual: ValueKind::Object,
@@ -1652,7 +1750,7 @@ mod tests {
         // order).
         let bytes = b"a = { b.d = 2, b.c = 1 }\n";
         let located = walk(bytes, &[member("a"), member("b")]);
-        let LocatedWalk::ImplicitTable { pieces } = located else {
+        let LocatedWalk::ImplicitTable { pieces, .. } = located else {
             panic!("expected an implicit table, got {located:?}");
         };
         assert_eq!(pieces.len(), 2);
@@ -1663,7 +1761,7 @@ mod tests {
         // A nested dotted rest path stays a path in the pieces.
         let bytes = b"a = { b.c.d = 1, b.c.e = 2 }\n";
         let located = walk(bytes, &[member("a"), member("b")]);
-        let LocatedWalk::ImplicitTable { pieces } = located else {
+        let LocatedWalk::ImplicitTable { pieces, .. } = located else {
             panic!("expected an implicit table, got {located:?}");
         };
         assert_eq!(pieces.len(), 2);
@@ -1671,7 +1769,7 @@ mod tests {
         assert_eq!(pieces[1].0, ["c", "e"]);
         // The target may end one level deeper.
         let located = walk(bytes, &[member("a"), member("b"), member("c")]);
-        let LocatedWalk::ImplicitTable { pieces } = located else {
+        let LocatedWalk::ImplicitTable { pieces, .. } = located else {
             panic!("expected an implicit table, got {located:?}");
         };
         assert_eq!(pieces.len(), 2);
@@ -1709,8 +1807,8 @@ mod tests {
         // enclosing scan then read the entry separator from the wrong offset and reported a bogus "expected ',' or '}'"
         // on valid input. The enclosing scan must continue from the entry value's own end.
         let bytes = b"a = { b = [ { c.d = 1 } ], e = 2 }\n";
-        let located = walk(bytes, &[member("a"), member("b"), ScopedStep::Index(0), member("c")]);
-        let LocatedWalk::ImplicitTable { pieces } = located else {
+        let located = walk(bytes, &[member("a"), member("b"), OwnedStep::Index(0), member("c")]);
+        let LocatedWalk::ImplicitTable { pieces, .. } = located else {
             panic!("expected an implicit table, got {located:?}");
         };
         assert_eq!(pieces.len(), 1);
@@ -1727,13 +1825,13 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(1),
                     end: Some(3),
                 },
             ],
         );
-        let LocatedWalk::RangeValue { start, end, empty } = located else {
+        let LocatedWalk::RangeValue { start, end, empty, .. } = located else {
             panic!("expected a range, got {located:?}");
         };
         assert!(!empty);
@@ -1744,7 +1842,7 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(3),
                     end: Some(1),
                 },
@@ -1757,7 +1855,7 @@ mod tests {
             bytes,
             &[
                 member("p"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(1),
                     end: Some(3),
                 },
@@ -1781,13 +1879,13 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(-2),
                     end: None,
                 },
             ],
         );
-        let LocatedWalk::RangeValue { start, end, empty } = located else {
+        let LocatedWalk::RangeValue { start, end, empty, .. } = located else {
             panic!("expected a range, got {located:?}");
         };
         assert!(!empty);
@@ -1798,13 +1896,13 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: None,
                     end: Some(-3),
                 },
             ],
         );
-        let LocatedWalk::RangeValue { start, end, empty } = located else {
+        let LocatedWalk::RangeValue { start, end, empty, .. } = located else {
             panic!("expected a range, got {located:?}");
         };
         assert!(!empty);
@@ -1814,7 +1912,7 @@ mod tests {
             bytes,
             &[
                 member("a"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(-1),
                     end: Some(-1),
                 },
@@ -1827,7 +1925,7 @@ mod tests {
             bytes,
             &[
                 member("p"),
-                ScopedStep::Range {
+                OwnedStep::Range {
                     start: Some(-2),
                     end: None,
                 },
@@ -1851,6 +1949,7 @@ mod tests {
             end,
             leading,
             inline,
+            ..
         } = walk(bytes, &[member("k1")])
         else {
             panic!("expected a value");
@@ -1994,6 +2093,7 @@ mod tests {
                 end,
                 leading,
                 inline,
+                ..
             } => crate::lazy::build_wrapped_value(
                 bytes,
                 *start,
@@ -2009,6 +2109,7 @@ mod tests {
                 foot,
                 key_depth,
                 element,
+                ..
             } => crate::lazy::build_statement_table(
                 bytes,
                 spans,
@@ -2019,7 +2120,7 @@ mod tests {
                 jqf_data::BuilderCoverage::minimal_semantic(),
                 &mut resources,
             ),
-            LocatedWalk::ImplicitTable { pieces } => crate::lazy::build_implicit_table(
+            LocatedWalk::ImplicitTable { pieces, .. } => crate::lazy::build_implicit_table(
                 bytes,
                 pieces,
                 DialectKind::Toml10,
@@ -2037,7 +2138,7 @@ mod tests {
     #[test]
     fn an_indexed_array_of_tables_element_materializes_as_the_element() {
         let bytes = b"[[bin]]\nname=\"a\"\n[[bin]]\nname=\"b\"\n";
-        let located = walk(bytes, &[member("bin"), ScopedStep::Index(0)]);
+        let located = walk(bytes, &[member("bin"), OwnedStep::Index(0)]);
         let Value::Object(object) = materialize_walk(bytes, &located) else {
             panic!("expected the element object, got {located:?}");
         };
@@ -2045,7 +2146,7 @@ mod tests {
             panic!("name is not a string");
         };
         assert_eq!(name.as_str(), "a");
-        let located = walk(bytes, &[member("bin"), ScopedStep::Index(-1)]);
+        let located = walk(bytes, &[member("bin"), OwnedStep::Index(-1)]);
         let Value::Object(object) = materialize_walk(bytes, &located) else {
             panic!("expected the last element object");
         };
@@ -2080,18 +2181,18 @@ mod tests {
     #[test]
     fn index_then_navigate_keeps_the_element_answer_and_its_type_error() {
         let bytes = b"b=[[1,2],[3,4]]\n";
-        let located = walk(bytes, &[member("b"), ScopedStep::Index(1), ScopedStep::Index(0)]);
+        let located = walk(bytes, &[member("b"), OwnedStep::Index(1), OwnedStep::Index(0)]);
         assert_eq!(value_of(bytes, &located), "3");
         let bytes = b"a=[1,2]\n";
         assert!(matches!(
-            walk(bytes, &[member("a"), ScopedStep::Index(0), member("b")]),
+            walk(bytes, &[member("a"), OwnedStep::Index(0), member("b")]),
             LocatedWalk::TypeMismatch {
                 step: 2,
                 actual: ValueKind::Number,
             }
         ));
         assert!(matches!(
-            walk(bytes, &[member("a"), ScopedStep::Index(0), ScopedStep::Index(1)]),
+            walk(bytes, &[member("a"), OwnedStep::Index(0), OwnedStep::Index(1)]),
             LocatedWalk::TypeMismatch {
                 step: 2,
                 actual: ValueKind::Number,
@@ -2104,7 +2205,7 @@ mod tests {
     fn a_numeric_index_over_a_dotted_key_table_is_a_type_mismatch() {
         let bytes = b"a.b=1\n";
         assert!(matches!(
-            walk(bytes, &[member("a"), ScopedStep::Index(0)]),
+            walk(bytes, &[member("a"), OwnedStep::Index(0)]),
             LocatedWalk::TypeMismatch {
                 step: 1,
                 actual: ValueKind::Object,
@@ -2112,11 +2213,154 @@ mod tests {
         ));
         let bytes = b"[t]\nx=1\n";
         assert!(matches!(
-            walk(bytes, &[member("t"), ScopedStep::Index(0)]),
+            walk(bytes, &[member("t"), OwnedStep::Index(0)]),
             LocatedWalk::TypeMismatch {
                 step: 1,
                 actual: ValueKind::Object,
             }
         ));
+    }
+
+    /// A `[table]` records unique immediate children: assignments plus nested tables, never flattened dotted headers.
+    #[test]
+    fn a_table_walk_records_immediate_child_count() {
+        let bytes = b"[t]\nx = 1\ny = 2\nz = 3\n";
+        let located = walk(bytes, &[member("t")]);
+        let LocatedWalk::Table {
+            child_count, container, ..
+        } = located
+        else {
+            panic!("expected a table, got {located:?}");
+        };
+        assert_eq!(container, jqf_data::ContainerSpanKind::Object);
+        assert_eq!(child_count, 3);
+        // `[a.b]` / `[a.c]` nest under `a`; the object length is two tables, not keys named `"a.b"` / `"a.c"`.
+        let bytes = b"[a.b]\nx = 1\n[a.c]\ny = 2\n";
+        let located = walk(bytes, &[member("a")]);
+        let LocatedWalk::Table {
+            child_count, container, ..
+        } = located
+        else {
+            panic!("expected the ancestor table, got {located:?}");
+        };
+        assert_eq!(container, jqf_data::ContainerSpanKind::Object);
+        assert_eq!(child_count, 2);
+        let located = walk(bytes, &[member("a"), member("b")]);
+        let LocatedWalk::Table { child_count, .. } = located else {
+            panic!("expected the inner table");
+        };
+        assert_eq!(child_count, 1);
+        // An array-of-tables name is the array length, not the union of element keys.
+        let bytes = b"[[arr]]\nx = 1\n[[arr]]\ny = 2\n[[arr]]\nz = 3\n";
+        let located = walk(bytes, &[member("arr")]);
+        let LocatedWalk::Table {
+            child_count,
+            container,
+            element,
+            ..
+        } = located
+        else {
+            panic!("expected the array of tables, got {located:?}");
+        };
+        assert!(!element);
+        assert_eq!(container, jqf_data::ContainerSpanKind::Array);
+        assert_eq!(child_count, 3);
+        let located = walk(bytes, &[member("arr"), OwnedStep::Index(0)]);
+        let LocatedWalk::Table {
+            child_count,
+            container,
+            element,
+            ..
+        } = located
+        else {
+            panic!("expected one element table");
+        };
+        assert!(element);
+        assert_eq!(container, jqf_data::ContainerSpanKind::Object);
+        assert_eq!(child_count, 1);
+    }
+
+    /// Implicit dotted pieces count unique first remaining components; a nested remainder stays one child.
+    #[test]
+    fn an_implicit_table_walk_records_nested_object_length() {
+        let bytes = b"root = { a.b = 1, a.c = 2 }\n";
+        let located = walk(bytes, &[member("root"), member("a")]);
+        let LocatedWalk::ImplicitTable { child_count, pieces } = located else {
+            panic!("expected an implicit table, got {located:?}");
+        };
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(child_count, 2, "a.b and a.c are two children of a");
+        let bytes = b"root = { a.b.c = 1, a.b.d = 2 }\n";
+        let located = walk(bytes, &[member("root"), member("a")]);
+        let LocatedWalk::ImplicitTable { child_count, pieces } = located else {
+            panic!("expected a nested implicit table, got {located:?}");
+        };
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(child_count, 1, "both pieces share first remaining component b");
+        let located = walk(bytes, &[member("root"), member("a"), member("b")]);
+        let LocatedWalk::ImplicitTable { child_count, .. } = located else {
+            panic!("expected the inner implicit table");
+        };
+        assert_eq!(child_count, 2);
+    }
+
+    /// A range walk records in-range width without a second parse of the region.
+    #[test]
+    fn a_range_walk_records_in_range_child_count() {
+        let bytes = b"a = [10, 20, 30, 40]\n";
+        let located = walk(
+            bytes,
+            &[
+                member("a"),
+                OwnedStep::Range {
+                    start: Some(1),
+                    end: Some(3),
+                },
+            ],
+        );
+        let LocatedWalk::RangeValue { child_count, empty, .. } = located else {
+            panic!("expected a value range, got {located:?}");
+        };
+        assert!(!empty);
+        assert_eq!(child_count, 2);
+        let bytes = b"[[p]]\nx = 1\n[[p]]\nx = 2\n[[p]]\nx = 3\n";
+        let located = walk(
+            bytes,
+            &[
+                member("p"),
+                OwnedStep::Range {
+                    start: Some(1),
+                    end: Some(3),
+                },
+            ],
+        );
+        let LocatedWalk::RangeTables { elements } = located else {
+            panic!("expected a table range, got {located:?}");
+        };
+        assert_eq!(elements.len(), 2);
+    }
+
+    /// Contiguous inline-table / array Exact still carries skip-mode cardinality from the one validating pass.
+    #[test]
+    fn a_contiguous_value_walk_still_records_skip_container_len() {
+        let bytes = b"point = { x = 1, y = 2 }\nlist = [10, 20, 30]\n";
+        let located = walk(bytes, &[member("point")]);
+        let LocatedWalk::Value {
+            child_count, container, ..
+        } = located
+        else {
+            panic!("expected the inline table, got {located:?}");
+        };
+        assert_eq!(container, Some(jqf_data::ContainerSpanKind::Object));
+        assert_eq!(child_count, Some(2));
+        let located = walk(bytes, &[member("list")]);
+        let LocatedWalk::Value {
+            child_count, container, ..
+        } = located
+        else {
+            panic!("expected the array, got {located:?}");
+        };
+        assert_eq!(container, Some(jqf_data::ContainerSpanKind::Array));
+        assert_eq!(child_count, Some(3));
     }
 }

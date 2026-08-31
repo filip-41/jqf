@@ -1015,7 +1015,7 @@ pub enum ProgramNode {
 }
 
 impl ProgramNode {
-    /// A framed binary. [`crate::exec::mark_post_fuse_facts`] may rewrite `shape`.
+    /// A framed binary. Post-fuse marking may rewrite `shape`.
     pub fn binary(op: BinaryKind, left: ProgramNodeId, right: ProgramNodeId) -> Self {
         Self::Binary {
             op,
@@ -1063,7 +1063,6 @@ pub struct Program {
     scans: Vec<CorrelatedScan>,
     topk: Vec<PartialSort>,
     anti: Vec<AntiJoinScan>,
-    has_reachable_flatmap: bool,
 }
 
 /// Whether the live graph reachable from `root` contains a [`ProgramNode::FlatMap`].
@@ -1163,14 +1162,12 @@ impl Program {
     /// Assembles a program from a lowered arena, its derived split, and the
     /// binder-occurrence slot count the executor sizes its env vector from.
     ///
-    /// The correlated-scan table is derived HERE rather than on demand (the
-    /// one fact that still derives on demand, [`Self::projection_class`], is
-    /// consulted exactly once per compiled program by the engine's
-    /// count-demand derivation at construction — see its doc) because its
-    /// reader is the executor's per-node dispatch, not a route selector: a
+    /// The correlated-scan table is derived HERE rather than on demand because
+    /// its reader is the executor's per-node dispatch, not a route selector: a
     /// per-element route seeds one machine per element, and re-deriving a table
     /// per seed would charge every streamed element for a fact that cannot
-    /// change between them.
+    /// change between them. [`Self::projection_class`] still walks on demand
+    /// because the class borrows interned field names.
     pub fn new(nodes: Vec<ProgramNode>, root: ProgramNodeId, split: PushdownSplit, slots: u32) -> Self {
         let has_reachable_flatmap = reachable_has_flatmap(&nodes, root);
         let (scans, topk, anti) = if has_reachable_flatmap {
@@ -1186,17 +1183,14 @@ impl Program {
             scans,
             topk,
             anti,
-            has_reachable_flatmap,
         }
     }
 
-    /// Whether the live graph reachable from the root contains a `FlatMap`.
-    ///
-    /// Derived once in [`Self::new`]. Scan/topk/anti tables stay empty when
-    /// this is false; later finish/codec/lazy readers reuse the same fact.
+    /// Compile tests: whether the live graph reachable from the root contains a `FlatMap`.
+    #[cfg(test)]
     #[must_use]
-    pub const fn has_reachable_flatmap(&self) -> bool {
-        self.has_reachable_flatmap
+    pub(crate) fn has_reachable_flatmap(&self) -> bool {
+        reachable_has_flatmap(&self.nodes, self.root)
     }
 
     /// The correlated `select` scans this program's executor may drive from a
@@ -1247,13 +1241,11 @@ impl Program {
     ///
     /// The class is a compile-time constant of the program, but it is still
     /// derived here on demand rather than stored as a field:
-    /// [`crate::analysis::ProjectionClass`] BORROWS this program's arena (its
-    /// field names are arena interner strings), so it cannot live in a
-    /// self-referential struct. The engine consults it exactly ONCE per
-    /// compiled program — the count-demand derivation at construction — and
-    /// caches the OWNED demand that consumed it
-    /// (`jqf_engine::compile::CompiledProgram::count_demand`), so the walk
-    /// never runs inside a per-record loop.
+    /// [`crate::analysis::ProjectionClass`] borrows this program's arena (its
+    /// field names are interned strings), so it cannot live in a
+    /// self-referential struct. Finish walks it once to derive count demand.
+    /// Explain and the public accessor walk it again; that is not a per-record
+    /// loop.
     pub fn projection_class(&self) -> ProjectionClass<'_> {
         // A SOLE named boundary licenses exact per-boundary classification;
         // nested iteration keeps the conservative join over every `.[]`.
@@ -1271,13 +1263,14 @@ impl Program {
         crate::analysis::is_range_locate(self.nodes(), self.root())
     }
 
-    /// The program's NAMED element boundary — the single `.[]` a projected route
-    /// would stream — or `None` when the shape names none.
+    /// The program's NAMED element boundary — the single `.[]` the projection
+    /// classifier records per-element demand at — or `None` when the shape
+    /// names none.
     ///
     /// Unlike the element-iteration row recognizer this is not one:
     /// it reaches inside `Reduce`/`Foreach` sources and through `map`'s lowered
-    /// body, shapes the deleted element-stream route never took. Naming a
-    /// boundary changes no routing.
+    /// body, places the pushdown prefix never enters. Naming a boundary
+    /// changes no routing.
     pub const fn element_boundary(&self) -> Option<ElementBoundary> {
         self.split.element_boundary()
     }

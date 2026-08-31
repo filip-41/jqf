@@ -14,7 +14,7 @@ use jqf_runtime::values::{
 use jqf_sdk::{Input, Outcome, Report};
 
 use crate::args::CliFormat;
-use crate::errors::{CliFailure, render_failure};
+use crate::errors::{CliFailure, render_failure, requirement_failure};
 use crate::output::StdoutSink;
 use crate::plan::{COOPERATIVE_CREDITS, RouteContext, RouteOutcome};
 use crate::{eprint_line_buffered, flush_stderr, print_diagnostic_records, record_and_render_failure, record_route};
@@ -350,16 +350,14 @@ pub(crate) fn whole_requirement(
 ) -> Result<jqf_codec_core::AccessRequirement, CliFailure> {
     ctx.compiled
         .try_requirement(ctx.resources)
-        .map_err(|error| CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())))
+        .map_err(|error| requirement_failure(&error))
         .map(|requirement| crate::routes::with_decode_fact_intent(requirement, ctx, false))
 }
 
 /// Renders an adjacent-value drive's failure with the message its boundary owns.
 fn render_value_drive_failure(error: ValueDriveError<std::io::Error>) -> CliFailure {
     match error {
-        ValueDriveError::Setup { error, .. } => {
-            CliFailure::compile(format!("cannot lower program requirement: {}", error.kind()))
-        }
+        ValueDriveError::Setup { error, .. } => requirement_failure(&error),
         ValueDriveError::Pipeline(failure) => render_failure(&failure),
         ValueDriveError::Sink(failure) => CliFailure::from(format!("stdout failed: {failure}")),
         ValueDriveError::Resource(error) => CliFailure::Codec {

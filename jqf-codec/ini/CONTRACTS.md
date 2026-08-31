@@ -129,6 +129,6 @@ has no tag vocabulary.
 
 ## Boundaries
 
-The only advertised access slot is whole-document complete. A richer
-demand is served by core's exact adapter over that slot. Adjacent values
-are a requirement mismatch.
+Access slots are Whole/`CompleteDocument` and Exact/`Located`. Exact
+scans the whole input, materializes only the hit, and republishes it as
+the product root. Adjacent values are a requirement mismatch.

@@ -286,33 +286,17 @@ pub const FLAG_ASCII: u32 = 4;
 /// Do not read the input; run the program once over `null` (`-n`). Beats slurp, exactly as in the CLI (the reference's
 /// own precedence).
 pub const FLAG_NULL_INPUT: u32 = 8;
-/// Tab indentation instead of spaces (`--indent -1`, jq's spelling).
-pub const FLAG_TAB_INDENT: u32 = 16;
 
 // ---------------------------------------------------------------------------
 // Envelope building
 // ---------------------------------------------------------------------------
 
-/// Escapes one string as a JSON string literal body (no surrounding quotes).
+/// Escapes one string as a JSON string literal body (no surrounding quotes). The law is
+/// [`jqf_codec_json::push_json_escaped`]: quote, backslash, C0, and DEL `0x7F`.
 fn json_escape(body: &str) -> String {
-    let mut out = String::with_capacity(body.len() + 2);
-    for ch in body.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0C}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write as _;
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out
+    let mut out = Vec::with_capacity(body.len());
+    jqf_codec_json::push_json_escaped(&mut out, body.as_bytes());
+    String::from_utf8(out).expect("JSON string escape is UTF-8")
 }
 
 /// Standard base64, for binary published output.
@@ -1000,6 +984,29 @@ mod tests {
             0,
             false,
         )
+    }
+
+    /// Envelope string bodies use the JSON encoder law, including DEL `0x7F`.
+    #[test]
+    fn tab_indent_is_the_indent_argument_not_a_flag() {
+        let rust_name = concat!("FLAG_TAB", "_INDENT");
+        let js_name = concat!("TAB", "_INDENT");
+        let rust = include_str!("lib.rs");
+        let js = include_str!("../jqf.js");
+        assert!(
+            !rust.contains(rust_name),
+            "tab indent is the indent i32, not a flags bit"
+        );
+        assert!(!js.contains(js_name), "jqf.js FLAGS must not export a tab-indent bit");
+    }
+
+    #[test]
+    fn json_escape_matches_encoder_law_on_quote_c0_and_del() {
+        let input = std::str::from_utf8(b"\"\\\x00\x08\x0c\n\r\t\x1f\x7fok").expect("utf-8");
+        let mut expected = Vec::new();
+        jqf_codec_json::push_json_escaped(&mut expected, input.as_bytes());
+        assert_eq!(json_escape(input).as_bytes(), expected.as_slice());
+        assert!(json_escape(input).contains("\\u007f"), "DEL must be \\u007f");
     }
 
     #[test]

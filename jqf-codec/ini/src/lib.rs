@@ -25,6 +25,7 @@ mod materialize;
 mod options;
 mod provider;
 mod scan;
+mod scoped;
 mod tag;
 
 /// Compiles the README examples as doctests.
@@ -66,6 +67,10 @@ const DOTENV_DIALECTS: [DialectIdRef<'static>; 2] = [
     DialectIdRef::from_static(DOTENV_JQF_1_0_DIALECT_ID),
 ];
 
+const fn route_id(grammar: options::Grammar, kind: u8, specialization: u8) -> jqf_codec_core::PhysicalRouteId {
+    jqf_codec_core::PhysicalRouteId::derive_or_panic(grammar.format_id(), kind, specialization)
+}
+
 /// Stable physical identity of whole-document decoding.
 ///
 /// # Panics
@@ -73,10 +78,20 @@ const DOTENV_DIALECTS: [DialectIdRef<'static>; 2] = [
 /// Panics when the route identity cannot be derived (the identity is nonzero by construction for these fixed inputs).
 #[must_use]
 pub(crate) const fn decode_route_id(grammar: options::Grammar) -> jqf_codec_core::PhysicalRouteId {
-    match jqf_codec_core::PhysicalRouteId::derive(grammar.format_id(), 1, 1) {
-        Some(id) => id,
-        None => panic!("nonzero route identity"),
-    }
+    route_id(grammar, 1, 1)
+}
+
+/// Stable physical identity of the native scoped (exact-path) decode route.
+///
+/// Encode already occupies `(format, 2, 1)`, so scoped decode uses `(format, 1, 2)` — still a decode kind, a second
+/// specialization. Two routes must not share one identity, or a route receipt cannot tell them apart.
+///
+/// # Panics
+///
+/// Panics when the route identity cannot be derived (the identity is nonzero by construction for these fixed inputs).
+#[must_use]
+pub(crate) const fn scoped_route_id(grammar: options::Grammar) -> jqf_codec_core::PhysicalRouteId {
+    route_id(grammar, 1, 2)
 }
 
 /// Stable physical identity of deterministic semantic encoding.
@@ -86,10 +101,7 @@ pub(crate) const fn decode_route_id(grammar: options::Grammar) -> jqf_codec_core
 /// Panics when the route identity cannot be derived (the identity is nonzero by construction for these fixed inputs).
 #[must_use]
 pub(crate) const fn encode_route_id(grammar: options::Grammar) -> jqf_codec_core::PhysicalRouteId {
-    match jqf_codec_core::PhysicalRouteId::derive(grammar.format_id(), 2, 1) {
-        Some(id) => id,
-        None => panic!("nonzero route identity"),
-    }
+    route_id(grammar, 2, 1)
 }
 
 fn registration_for(
@@ -150,6 +162,24 @@ pub fn registration_dotenv() -> Result<CodecRegistration<'static>, RegistrationE
 #[cfg(test)]
 mod tests {
     use super::{CodecOperations, RegistrationError};
+
+    #[test]
+    fn the_route_identities_are_pairwise_distinct() {
+        // Two different routes must not share one physical identity. Decode is (1, 1), encode already took (2, 1),
+        // scoped decode is (1, 2).
+        for grammar in [
+            super::options::Grammar::Properties,
+            super::options::Grammar::Ini,
+            super::options::Grammar::Dotenv,
+        ] {
+            let decode = super::decode_route_id(grammar);
+            let scoped = super::scoped_route_id(grammar);
+            let encode = super::encode_route_id(grammar);
+            assert_ne!(decode, scoped);
+            assert_ne!(decode, encode);
+            assert_ne!(scoped, encode);
+        }
+    }
 
     #[test]
     fn all_three_registrations_are_valid_and_serve_their_dialects() {

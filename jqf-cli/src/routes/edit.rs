@@ -11,7 +11,7 @@ use jqf_engine::{CompileOptions, try_compile_program};
 use jqf_sdk::{FacadeFraming, Input, Outcome, PipelinePolicy, Report};
 
 use crate::args::CliInputSelection;
-use crate::errors::{CliFailure, compile_failure};
+use crate::errors::{CliFailure, compile_failure, requirement_failure};
 use crate::input::{parse_diff_document, trailing_bytes};
 use crate::output::{EditBufferSink, write_output_bytes};
 use crate::plan::{RouteContext, RouteOutcome};
@@ -145,7 +145,7 @@ pub(crate) fn diff(ctx: &mut RouteContext<'_, '_>) -> Result<RouteOutcome, CliFa
     .map_err(|error| compile_failure(&error, "diff($__old; $__new)"))?;
     let requirement = compiled
         .try_requirement(ctx.resources)
-        .map_err(|error| CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())))
+        .map_err(|error| requirement_failure(&error))
         .map(|requirement| crate::routes::with_decode_fact_intent(requirement, ctx, false))?;
     // The stdin drive sees an EMPTY source for `--diff` (the route reads its own two files; the eager input is never
     // read) — the drive exists only to attach the input-family cursor the fixed program never pulls. It must still
@@ -290,7 +290,7 @@ pub(crate) fn null_first(ctx: &mut RouteContext<'_, '_>) -> Result<RouteOutcome,
     let requirement = ctx
         .compiled
         .try_whole_document_requirement(ctx.resources)
-        .map_err(|error| CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())))
+        .map_err(|error| requirement_failure(&error))
         .map(|requirement| crate::routes::with_decode_fact_intent(requirement, ctx, false))?;
     let request = crate::routes::base_request(ctx, Input::Whole(ctx.input))
         .with_resources(ctx.resources)
@@ -348,7 +348,7 @@ pub(crate) fn slurped(ctx: &mut RouteContext<'_, '_>) -> Result<RouteOutcome, Cl
     let requirement = ctx
         .compiled
         .try_whole_document_requirement(ctx.resources)
-        .map_err(|error| CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())))
+        .map_err(|error| requirement_failure(&error))
         .map(|requirement| crate::routes::with_decode_fact_intent(requirement, ctx, false))?;
     let request = crate::routes::base_request(ctx, Input::Whole(ctx.input))
         .with_resources(ctx.resources)

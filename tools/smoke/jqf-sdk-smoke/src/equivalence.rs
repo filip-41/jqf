@@ -328,17 +328,16 @@ const EQUIVALENCE_CLASSES: &[EquivalenceClass] = &[
             "{}",
         ],
         non_members: &[],
-        // the class is an ELEMENT row, so it now takes the
-        // LAZY WHOLE-DOCUMENT route with the element demand hint (the codec's
-        // span skeleton survives for the document-core consumer to iterate
-        // it) on every input — the `{}` input included (the missing container
-        // declines to the whole-document floor, which raises "Cannot iterate
-        // over null" identically).
+        // ELEMENT row with a nonempty PATH: Exact-locates `.catalog` and
+        // carries the element hint. The packed requirement is Located on every
+        // input, including `{}` — JSON Exact miss rebinds Whole from that
+        // packed job, and the floor raises "Cannot iterate over null"
+        // identically.
         rungs: &[
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
         ],
     },
     EquivalenceClass {
@@ -541,16 +540,14 @@ const EQUIVALENCE_CLASSES: &[EquivalenceClass] = &[
             "measures the first ELEMENT rather than the container: 1 on {\"a\":[1,2,3]} where \
              the class answers 3",
         )],
-        // both spellings are COUNT rows (the collect row's
-        // Structure witness holds and the container row needs no witness), so
-        // they lower the lazy whole-document requirement with the count hint —
-        // the count consumer answers from the span skeleton — on every one of
-        // these inputs.
+        // both spellings are COUNT rows with a nonempty PATH: Exact-locates
+        // `.a` and carries the count hint. The packed requirement is Located
+        // on every one of these inputs.
         rungs: &[
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
         ],
     },
     EquivalenceClass {
@@ -1169,13 +1166,16 @@ const EQUIVALENCE_CLASSES: &[EquivalenceClass] = &[
             "[.catalog[] | .stock] | length",
             "collects the member values instead of counting the selected items",
         )],
+        // Direct spelling is a COUNT row with nonempty PATH: Exact-locates
+        // `.catalog`. The map spelling is RouteOnly-exempt (piped CollectArray
+        // is not the recognized container-path form).
         rungs: &[
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
-            AccessResultKind::CompleteDocument,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
+            AccessResultKind::Located,
         ],
     },
 ];

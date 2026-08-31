@@ -1,10 +1,9 @@
 # Embedding jqf
 
-Rust embeds `jqf-sdk` directly; C
-and everything with a C FFI embeds `jqf-sdk-ffi`; Python and the browser have
-bindings built on those. Resource governance applies to embedded calls the same
-way it applies to the binary — every execution runs under an accounted ledger
-you configure.
+Rust embeds `jqf-sdk` directly; C and everything with a C FFI embeds
+`jqf-sdk-ffi`; Python and the browser have bindings built on those. Resource
+governance applies to embedded calls the same way it applies to the binary —
+every execution runs under an accounted ledger you configure.
 
 ## Rust: `jqf-sdk`
 
@@ -17,8 +16,8 @@ pub fn execute<S: ItemSink>(request: Request<'_, '_, '_>, sink: &mut S)
 ```
 
 A request names a compiled program, an input (`Whole` bytes, a `Streaming`
-reader, or `Records`), a codec catalog, formats and dialects, policy, and a `ResourceContext`. The sketch (from
-`jqf-sdk/examples/compile_execute.rs`):
+reader, or `Records`), a codec catalog, formats and dialects, policy, and a
+`ResourceContext`. The sketch (from `jqf-sdk/examples/compile_execute.rs`):
 
 ```rust
 let registration = jqf_codec_json::registration()?;
@@ -49,16 +48,16 @@ let outcome = execute(
 
 ### Compile
 
-`try_compile_program` is the same entry the CLI uses. It takes the
-program source, a requirement policy, `CompileOptions`, and the request
-ledger. `CompileOptions::new()` is the ordinary lane; the split-expression
-lane (`$index` for `--split-exp` / `--split-exp-file`) is
-`CompileOptions::split_exp()` and sees no `--arg` family bindings. What
-those options *do* is
-[Engine compiler](engine-compiler.md).
+`try_compile_program` is the same entry the CLI uses. It takes the program
+source, a requirement policy, `CompileOptions`, and the request ledger.
+`CompileOptions::new()` is the ordinary lane; the split-expression lane
+(`$index` for `--split-exp` / `--split-exp-file`) is
+`CompileOptions::split_exp()` and sees no `--arg` family bindings. What those
+options *do* is [Engine compiler](engine-compiler.md). What *execute* does with
+the compiled job is [Engine executor](engine-exec.md).
 
-**Codecs are dependency edges.** Registration is one line per
-codec — `jqf_codec_yaml::registration()`, `jqf_codec_toml::registration_1_0()`,
+**Codecs are dependency edges.** Registration is one line per codec —
+`jqf_codec_yaml::registration()`, `jqf_codec_toml::registration_1_0()`,
 `jqf_codec_html::registration_fragment()`, … — and a build understands exactly
 the formats it registered. The CLI itself is just a caller that registers all
 twenty-three.
@@ -68,10 +67,9 @@ The one thing `jqf-sdk` gates by feature is the builtin extension families
 — all six on by default, droppable with `--no-default-features`. See
 [Builtins](builtins.md).
 
-`Request` borrows the program, so a resident service
-reuses one compilation across calls. Requests are `!Send` — one request runs on
-one thread; parallelism inside a request belongs to
-[the runtime](parallelism.md).
+`Request` borrows the program, so a resident service reuses one compilation
+across calls. Requests are `!Send` — one request runs on one thread; parallelism
+inside a request belongs to [the runtime](parallelism.md).
 
 ## C: `jqf-sdk-ffi`
 

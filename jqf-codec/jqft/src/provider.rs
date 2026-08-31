@@ -1,17 +1,15 @@
 //! jqft-family decoder provider and access session.
 //!
-//! Route inventory: ONE advertised slot here, slot 0 Whole/ `CompleteDocument`, for both text formats (`jqft`,
-//! `jqfjson`) — the binary `jqfb` image advertises its own table in `jqfb_decode.rs` (slot 0 Whole plus slot 1
-//! Exact/Located). Any demand richer than the advertised slot is served by the binder's generic whole-route fallbacks,
-//! so a program never declines. The route-slot duty pins each format's inventory in BOTH the codec smoke and
-//! `jqf-sdk-smoke` in the same commit; a later pass adds more slots and re-pins both inventories.
+//! Route inventory: two advertised slots for both text formats (`jqft`, `jqfjson`) — slot 0 Whole/`CompleteDocument`
+//! and slot 1 Exact/`Located`. The binary `jqfb` image advertises the same table in `jqfb_decode.rs` (its Exact slot
+//! is the node-table walk). Attribute demand is not Direct on the text Exact slot (markup `.&` is real). The
+//! route-slot duty pins each format's inventory in BOTH the codec smoke and `jqf-sdk-smoke` in the same commit.
 
 use alloc::vec::Vec;
 
 use jqf_codec_core::{
-    AccessFootprintKind, AccessGuarantees, AccessRequirement, AccessResultKind, CodecError, CodecFailureKind,
-    DiagnosticPolicy, ErasedAccessSession, InputProvider, ProviderInput, RecycledSessionState, RouteDescription,
-    RouteSlot,
+    AccessGuarantees, AccessRequirement, AccessResultKind, CodecError, CodecFailureKind, DiagnosticPolicy,
+    ErasedAccessSession, InputProvider, ProviderInput, RecycledSessionState, RouteDescription, RouteSlot,
 };
 use jqf_data::DataError;
 use jqf_resource::ResourceContext;
@@ -54,16 +52,7 @@ impl JqftProvider {
         resources: &ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
         let guarantees = AccessGuarantees::strict(diagnostics);
-        // Slot 0: Whole/CompleteDocument.
-        let routes = RouteDescription::try_table(
-            &[(
-                RouteSlot::new(0),
-                AccessFootprintKind::Whole,
-                AccessResultKind::CompleteDocument,
-            )],
-            guarantees,
-            resources,
-        )?;
+        let routes = RouteDescription::try_standard_document_table(guarantees, resources)?;
         Ok(Self {
             routes,
             kind,
@@ -84,21 +73,35 @@ impl InputProvider for JqftProvider {
         requirement: &AccessRequirement,
         _resources: &mut ResourceContext<'_>,
     ) -> Result<ErasedAccessSession<'source>, CodecError> {
-        if slot != RouteSlot::new(0)
-            || !requirement.footprint().is_whole()
-            || !requirement.schedule().is_empty_complete()
-            || requirement.result() != AccessResultKind::CompleteDocument
-        {
+        let source = input.source();
+        if slot == RouteSlot::new(0) {
+            requirement.expect_whole(AccessResultKind::CompleteDocument)?;
+            let coverage = jqf_codec_core::required_builder_coverage(requirement);
+            let state = crate::parse::JqftParseState::try_new(source, self.kind, self.allow_adjacent_values, coverage);
+            let route = match self.kind {
+                JqftKind::Jqft => crate::JQFT_FULL_PHYSICAL_ROUTE_ID,
+                JqftKind::Jqfjson => crate::JQFJSON_FULL_PHYSICAL_ROUTE_ID,
+            };
+            return ErasedAccessSession::try_new_source_with_route(source, route, || Ok(state));
+        }
+        if slot != RouteSlot::new(1) {
             return Err(CodecError::new(CodecFailureKind::ProviderRouteMismatch));
         }
-        let source = input.source();
+        let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
         let coverage = jqf_codec_core::required_builder_coverage(requirement);
-        let state = crate::parse::JqftParseState::try_new(source, self.kind, self.allow_adjacent_values, coverage);
+        let session = crate::scoped::NativeScopedSession::try_new(
+            path.steps(),
+            origin,
+            self.kind,
+            coverage,
+            self.allow_adjacent_values,
+            requirement.located_skeleton(),
+        )?;
         let route = match self.kind {
-            JqftKind::Jqft => crate::JQFT_FULL_PHYSICAL_ROUTE_ID,
-            JqftKind::Jqfjson => crate::JQFJSON_FULL_PHYSICAL_ROUTE_ID,
+            JqftKind::Jqft => crate::JQFT_LOCATED_PHYSICAL_ROUTE_ID,
+            JqftKind::Jqfjson => crate::JQFJSON_LOCATED_PHYSICAL_ROUTE_ID,
         };
-        ErasedAccessSession::try_new_source_with_route(source, route, || Ok(state))
+        ErasedAccessSession::try_new_source_with_route(source, route, || Ok(session))
     }
 
     fn try_reopen_route(
@@ -108,7 +111,8 @@ impl InputProvider for JqftProvider {
         requirement: &AccessRequirement,
         _resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
-        // Slot 0 decodes ONE whole document per adjacent value and resets in place; jqft has no other route.
+        // Slot 0 decodes ONE whole document per adjacent value and resets in place. Slot 1 is never recycled; the next
+        // `---` unit is a new session at `consumed_offset`.
         if slot != RouteSlot::new(0)
             || !requirement.footprint().is_whole()
             || !requirement.schedule().is_empty_complete()

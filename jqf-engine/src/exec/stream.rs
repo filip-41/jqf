@@ -1,8 +1,9 @@
 //! The public run stream and the typed run entry.
 //!
 //! One job: hide [`super::StageMachine`] and [`super::GraphMachine`] behind
-//! [`EngineRunStream`], and expose [`try_run`] / [`EngineRun`] as the
-//! crate's poll surface. Sibling modules own evaluation; this file owns
+//! [`EngineRunStream`], and expose [`try_run_program`] / [`EngineRun`] as the
+//! crate's poll surface. Production residual seed is [`try_run_program`]
+//! (`&Program` plus skip). Sibling modules own evaluation; this file owns
 //! the facade.
 
 #[allow(clippy::wildcard_imports)]
@@ -20,6 +21,27 @@ pub(crate) enum Machine<'program, 'source> {
     Stage(StageMachine<'program, 'source>),
     /// The graph executor for a `Choice`/`FlatMap` residual.
     Graph(GraphMachine<'program, 'source>),
+    /// Owned values from a document oracle (count, keys, fan-out, …).
+    Owned(OwnedStream),
+    /// A shortcut that proved a typed failure without seeding a graph.
+    Fail(Option<EngineRunError>),
+}
+
+/// Polls one owned value per advance. Used by document oracles that already
+/// hold every published item.
+pub(crate) struct OwnedStream {
+    items: alloc::vec::IntoIter<Value>,
+    iteration_cap: Option<u64>,
+    iterations_done: u64,
+}
+
+impl core::fmt::Debug for OwnedStream {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("OwnedStream")
+            .field("remaining", &self.items.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// The iterative executor driving one residual to an ordered result stream.
@@ -38,6 +60,8 @@ impl core::fmt::Debug for EngineRunStream<'_, '_> {
         match &self.machine {
             Machine::Stage(machine) => machine.fmt(formatter),
             Machine::Graph(machine) => machine.fmt(formatter),
+            Machine::Owned(owned) => owned.fmt(formatter),
+            Machine::Fail(_) => formatter.write_str("Fail"),
         }
     }
 }
@@ -50,7 +74,7 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
     #[must_use]
     pub fn take_fact_deltas(&mut self) -> Vec<FactDelta> {
         match &mut self.machine {
-            Machine::Stage(_) => Vec::new(),
+            Machine::Stage(_) | Machine::Owned(_) | Machine::Fail(_) => Vec::new(),
             Machine::Graph(machine) => core::mem::take(&mut machine.fact_deltas),
         }
     }
@@ -62,7 +86,7 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
     #[must_use]
     pub fn fact_deltas(&self) -> &[FactDelta] {
         match &self.machine {
-            Machine::Stage(_) => &[],
+            Machine::Stage(_) | Machine::Owned(_) | Machine::Fail(_) => &[],
             Machine::Graph(machine) => machine.fact_deltas.as_slice(),
         }
     }
@@ -186,6 +210,45 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
         Ok(seeded)
     }
 
+    /// Seeds from [`Program`]: tables come from the program, and a graph
+    /// machine holds that borrow so nested seeds inherit through
+    /// [`GraphMachine::seed_nested`]. `topk` is the only table the caller
+    /// may override (the recognizer floor passes `&[]`).
+    pub(crate) fn from_program(
+        program: &'program Program,
+        prefix_len: usize,
+        input: EngineResult<'source>,
+        runtime_index: Option<(u32, Value)>,
+        topk: &'program [PartialSort],
+    ) -> Result<Self, CodecError> {
+        let mut seeded = Self::seed(
+            program.nodes(),
+            program.root(),
+            program.split().entry(),
+            prefix_len,
+            program.slots(),
+            program.scans(),
+            topk,
+            program.anti_joins(),
+            input,
+            runtime_index,
+        )?;
+        if let Machine::Graph(machine) = &mut seeded.machine {
+            machine.program = Some(program);
+        }
+        Ok(seeded)
+    }
+
+    /// Whether a graph machine seeded here holds [`Program`]. Stage residuals
+    /// stay steps-only.
+    #[cfg(test)]
+    pub(crate) fn graph_holds_program(&self) -> Option<bool> {
+        match &self.machine {
+            Machine::Graph(machine) => Some(machine.program.is_some()),
+            _ => None,
+        }
+    }
+
     /// Seeds the fast-path stage executor directly over a residual step slice.
     /// Used by the executor's own unit tests to exercise the stage machine in
     /// isolation; the run path reaches it through [`EngineRunStream::seed`].
@@ -193,6 +256,33 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
     pub(crate) fn seed_stage(steps: &'program [StageStep], base: usize, input: EngineResult<'source>) -> Self {
         Self {
             machine: Machine::Stage(StageMachine::seed(steps, base, input)),
+        }
+    }
+
+    /// One owned value, identity residual. Compile shortcuts that publish a
+    /// single answer (count, keys, has, type, fold).
+    pub(crate) fn seed_value(value: Value) -> Self {
+        const EMPTY: &[StageStep] = &[];
+        Self {
+            machine: Machine::Stage(StageMachine::seed(EMPTY, 0, EngineResult::owned(value))),
+        }
+    }
+
+    /// Ordered owned values from an element fan-out.
+    pub(crate) fn seed_owned(values: Vec<Value>) -> Self {
+        Self {
+            machine: Machine::Owned(OwnedStream {
+                items: values.into_iter(),
+                iteration_cap: None,
+                iterations_done: 0,
+            }),
+        }
+    }
+
+    /// A typed shortcut failure (for example `length` over a boolean).
+    pub(crate) fn seed_fail(error: EngineRunError) -> Self {
+        Self {
+            machine: Machine::Fail(Some(error)),
         }
     }
 
@@ -207,6 +297,11 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
         match &mut self.machine {
             Machine::Stage(machine) => machine.poll(resources),
             Machine::Graph(machine) => machine.poll(resources),
+            Machine::Owned(owned) => owned.poll(resources),
+            Machine::Fail(error) => match error.take() {
+                Some(error) => Err(error),
+                None => Ok(RunPoll::Complete),
+            },
         }
     }
 
@@ -222,8 +317,30 @@ impl<'program, 'source> EngineRunStream<'program, 'source> {
         match &mut self.machine {
             Machine::Stage(machine) => machine.iteration_cap = cap,
             Machine::Graph(machine) => machine.iteration_cap = cap,
+            Machine::Owned(owned) => owned.iteration_cap = cap,
+            Machine::Fail(_) => {}
         }
         self
+    }
+}
+
+impl OwnedStream {
+    fn poll(&mut self, resources: &mut ResourceContext<'_>) -> Result<RunPoll<'static>, EngineRunError> {
+        if self.items.as_slice().is_empty() {
+            return Ok(RunPoll::Complete);
+        }
+        match resources
+            .admit_work_transition()
+            .map_err(|error| EngineRunError::from(EngineError::Control(error)))?
+        {
+            WorkAdmission::Pending => return Ok(RunPoll::Pending),
+            WorkAdmission::Granted(_) => {}
+        }
+        admit_iteration(&mut self.iterations_done, self.iteration_cap)?;
+        match self.items.next() {
+            Some(value) => Ok(RunPoll::Item(EngineResult::owned(value))),
+            None => Ok(RunPoll::Complete),
+        }
     }
 }
 
@@ -248,7 +365,10 @@ pub enum RunInput {
 /// missing/mismatch-on-null produced, tagged by [`RunInput`]). The two
 /// pre-residual arms fire only when the pushed-down step itself failed, so no
 /// input exists to iterate: [`EngineRun::Suppressed`] (a flagged-step mismatch)
-/// and [`EngineRun::Pushdown`] (an unflagged one).
+/// and [`EngineRun::Pushdown`] (an unflagged one). [`EngineRun::ReboundWhole`]
+/// is Exact count or element miss on a document whose root *is* the selection
+/// (JSON Exact): skip is not `demand.path`, so the host decodes Whole and
+/// runs the graph.
 #[derive(Debug)]
 #[allow(
     clippy::large_enum_variant,
@@ -276,6 +396,13 @@ pub enum EngineRun<'program, 'source> {
     /// It is always the index class: the codec resolves only a static
     /// `Key`/`Index` prefix, so an iterate mismatch reaches the residual instead.
     Pushdown(EngineRunError),
+    /// Exact count or element miss on a Located document whose root *is* the
+    /// selection. JSON Exact republishes PATH as the document root, so
+    /// `node == root` cannot tell Exact from Whole. Residual skip is
+    /// `split.prefix_len`, not `demand.path` — running Whole on this outcome
+    /// walks PATH twice. The host rebinds Whole-document access and calls
+    /// [`crate::CompiledProgram::try_run_whole_value`].
+    ReboundWhole,
 }
 
 impl EngineRun<'_, '_> {
@@ -298,11 +425,9 @@ impl EngineRun<'_, '_> {
 /// Interprets one codec input outcome into an engine-typed run under the
 /// program's per-component optional (`?`) flags and pushdown boundary.
 ///
-/// This is the typed run entry [`crate::CompiledProgram::try_run`] drives. It
-/// threads the arena (`nodes`, `root`), the pushdown boundary (`prefix_len`), and
-/// the ENTRY stage's steps (`entry_steps`, whose `[..prefix_len]` prefix the
-/// codec resolved; a pushed-down mismatch's `?` flag lookup indexes them). The
-/// reading, in this exact precedence:
+/// Production residual seed is [`try_run_program`]: `&Program` plus skip.
+/// This slice form is the test/floor unpack (raw arena, optional top-k
+/// override). The reading, in this exact precedence:
 ///
 /// 1. a resolved value → [`EngineRun::Stream`] over the residual, tagged
 ///    `Resolved` (identity residual forwards it; a graph residual runs it);
@@ -321,38 +446,14 @@ impl EngineRun<'_, '_> {
 ///
 /// Returns [`CodecError`] only when seeding the executor against the request
 /// ledger fails; the typed error arms are `Ok` variants.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one run entry: the arena, its root, the pushdown entry and prefix, the entry steps, \
-              the slot count, and the codec outcome are each a distinct boundary"
-)]
-pub(crate) fn try_run<'program, 'source>(
-    nodes: &'program [ProgramNode],
-    root: ProgramNodeId,
-    entry: ProgramNodeId,
-    prefix_len: usize,
-    entry_steps: &'program [StageStep],
-    slots: u32,
-    scans: &'program [CorrelatedScan],
-    topk: &'program [PartialSort],
-    anti: &'program [AntiJoinScan],
+fn interpret_outcome<'program, 'source>(
     outcome: CodecInputOutcome<'source>,
-    runtime_index: Option<(u32, Value)>,
+    entry_steps: &'program [StageStep],
+    seed: impl FnOnce(EngineResult<'source>) -> Result<EngineRunStream<'program, 'source>, CodecError>,
 ) -> Result<EngineRun<'program, 'source>, CodecError> {
     Ok(match outcome {
         CodecInputOutcome::Result(result) => EngineRun::Stream {
-            stream: EngineRunStream::seed(
-                nodes,
-                root,
-                entry,
-                prefix_len,
-                slots,
-                scans,
-                topk,
-                anti,
-                result,
-                runtime_index,
-            )?,
+            stream: seed(result)?,
             input: RunInput::Resolved,
         },
         CodecInputOutcome::Missing { .. }
@@ -360,18 +461,7 @@ pub(crate) fn try_run<'program, 'source>(
             actual_type: ValueKind::Null,
             ..
         } => EngineRun::Stream {
-            stream: EngineRunStream::seed(
-                nodes,
-                root,
-                entry,
-                prefix_len,
-                slots,
-                scans,
-                topk,
-                anti,
-                EngineResult::owned(Value::Null),
-                runtime_index,
-            )?,
+            stream: seed(EngineResult::owned(Value::Null))?,
             input: RunInput::Missing,
         },
         CodecInputOutcome::TypeMismatch {
@@ -390,6 +480,39 @@ pub(crate) fn try_run<'program, 'source>(
                 EngineRun::Pushdown(pushdown_mismatch(step, step_index, actual_type, hint)?)
             }
         }
+    })
+}
+
+/// Residual seed from [`Program`] plus skip. Nested machines inherit tables
+/// through [`GraphMachine::seed_nested`]. `prefix_len == 0` is Whole.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] only when seeding the executor against the request
+/// ledger fails; the typed error arms are `Ok` variants.
+pub(crate) fn try_run_program<'program, 'source>(
+    program: &'program Program,
+    prefix_len: usize,
+    outcome: CodecInputOutcome<'source>,
+    runtime_index: Option<(u32, Value)>,
+) -> Result<EngineRun<'program, 'source>, CodecError> {
+    interpret_outcome(outcome, program.entry_stage_steps(), |input| {
+        EngineRunStream::from_program(program, prefix_len, input, runtime_index, program.topk_sorts())
+    })
+}
+
+/// Residual seed from [`Program`] with an explicit partial-sort table.
+///
+/// The recognizer differential's forced floor passes `&[]`. Production
+/// [`try_run_program`] uses [`Program::topk_sorts`].
+#[cfg(test)]
+pub(crate) fn try_run_with_table<'program, 'source>(
+    program: &'program Program,
+    outcome: CodecInputOutcome<'source>,
+    topk: &'program [PartialSort],
+) -> Result<EngineRun<'program, 'source>, CodecError> {
+    interpret_outcome(outcome, program.entry_stage_steps(), |input| {
+        EngineRunStream::from_program(program, program.split().prefix_len(), input, None, topk)
     })
 }
 

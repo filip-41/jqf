@@ -50,10 +50,12 @@
 //! [`StepOutcome::EmitThenFail`] remains the vocabulary for a genuinely atomic
 //! emit-then-fail transition and keeps its producerless unit test.
 //!
-//! Sibling layout: [`frames`] owns types and helpers, [`eval`] seeds and
+//! Sibling layout: [`frames`] owns graph-machine types and helpers,
+//! [`stage_machine`] is the bare-Stage fast path, [`eval`] seeds and
 //! dispatches, [`fold`] owns bind/countdown/reduce, [`pathmode`] hands off to
-//! the path register, [`dispatch`] owns the remaining evaluators, [`route`]
-//! is the emission-routing and break-unwind seam, and [`stream`] is the
+//! the path register, [`dispatch`] maps a resolved call onto the family
+//! evaluator, [`route`] is the emission-routing and break-unwind seam,
+//! [`oracles`] answers the committed document shortcut, and [`stream`] is the
 //! public poll facade.
 
 // The error vocabulary lives in `jqf-builtins`; exec re-exports it so the
@@ -76,6 +78,9 @@ pub(crate) use prelude::*;
 mod frames;
 pub(crate) use frames::*;
 
+mod stage_machine;
+pub(crate) use stage_machine::*;
+
 mod dispatch;
 mod eval;
 mod fold;
@@ -83,8 +88,12 @@ mod pathmode;
 mod route;
 mod stream;
 pub use frames::{FactDelta, RunPoll};
-pub(crate) use stream::try_run;
+pub(crate) use stream::try_run_program;
+#[cfg(test)]
+pub(crate) use stream::try_run_with_table;
 pub use stream::{EngineRun, EngineRunStream, RunInput};
+
+mod oracles;
 
 #[cfg(test)]
 mod tests;

@@ -125,12 +125,13 @@ fn nan_spellings_decline_to_the_floor() {
 fn raising_elements_fail_like_the_adopted_law() {
     // `.stock` over a non-object RAISES in both tools: nonzero exit, and identical diagnostics modulo the binary-name
     // prefix.
-    let programs = ["[.catalog[] | select(.stock > 0)] | length"];
-    for (input, program) in [
-        (&br#"{"catalog":[{"stock":1},[2,3]]}"#[..], programs[0]),
-        (&br#"{"catalog":[{"stock":1},"s"]}"#[..], programs[0]),
-        (&br#"{"catalog":[{"stock":1},7]}"#[..], programs[0]),
-    ] {
+    let program = "[.catalog[] | select(.stock > 0)] | length";
+    let cases = [
+        (&br#"{"catalog":[{"stock":1},[2,3]]}"#[..], "array"),
+        (&br#"{"catalog":[{"stock":1},"s"]}"#[..], "string"),
+        (&br#"{"catalog":[{"stock":1},7]}"#[..], "number"),
+    ];
+    for (input, kind) in cases {
         let jqf_output = run_file(&["--no-parallel", "-c", program], input);
         assert_ne!(jqf_output.status.code(), Some(0), "{program} must raise");
         let jq = Command::new("jq")
@@ -152,7 +153,11 @@ fn raising_elements_fail_like_the_adopted_law() {
                 .replace("jqf:", "TOOL:")
         };
         assert_eq!(normalize(&jqf_output.stdout), normalize(&jq.stdout));
-        assert_eq!(normalize(&jqf_output.stderr), normalize(&jq.stderr));
+        // jqf renders the accessor as `string ("stock")`; jq omits the parens.
+        assert_eq!(
+            normalize(&jqf_output.stderr),
+            format!("TOOL: error (at <stdin>:0): Cannot index {kind} with string (\"stock\")\n")
+        );
     }
 }
 

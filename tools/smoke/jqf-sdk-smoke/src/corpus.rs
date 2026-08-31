@@ -6,9 +6,9 @@
 //! `corpus/compat-rows.tsv`.
 
 use crate::harness::{OracleRoute, oracle_run_over, program_for, resources};
-use jqf_codec_core::AccessResultKind;
+use jqf_codec_core::{AccessRequirement, AccessResultKind};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CompiledProgram, ProjectionClass};
+use jqf_engine::{CompiledProgram, HostIo, ProjectionClass};
 use jqf_sdk::CodecCatalog;
 
 const FORCE_ROUTE_CORPUS_ROWS: usize = 5696;
@@ -19,9 +19,10 @@ const FORCE_ROUTE_CORPUS_ROWS: usize = 5696;
 /// Admits the range rungs (boundary-less count and bare-slice publish), the
 /// recognized count demand, and the recognized element-iteration demand. A
 /// container count `PATH | length` belongs because a non-array container
-/// declines to this very floor.
-fn sweep_admits(program: &CompiledProgram) -> bool {
-    program.range_locate_eligible() || program.count_demand().is_some() || program.element_demand().is_some()
+/// declines to this very floor. Count/element presence is read off the
+/// instantiated packed plan, not `CompiledProgram` demand getters.
+fn sweep_admits(program: &CompiledProgram, requirement: &AccessRequirement) -> bool {
+    program.host_io() == HostIo::SpanCut || requirement.count().is_some() || requirement.element().is_some()
 }
 
 /// A row whose program does not COMPILE has no class and no route. That is only
@@ -78,11 +79,18 @@ pub(crate) fn assert_force_route_corpus(
             ProjectionClass::Fields(_) => fields += 1,
             ProjectionClass::Subtree => subtree += 1,
         }
-        if !sweep_admits(&program) {
+        let requirement = program.try_requirement(&resources).map_err(|error| {
+            format!(
+                "force-route row {} cannot instantiate requirement: {:?}",
+                row.index,
+                error.kind()
+            )
+        })?;
+        if !sweep_admits(&program, &requirement) {
             continue;
         }
         eligible += 1;
-        let count_or_element = program.count_demand().is_some() || program.element_demand().is_some();
+        let count_or_element = requirement.count().is_some() || requirement.element().is_some();
         drop(program);
 
         let designated = oracle_run_over(
@@ -139,7 +147,9 @@ pub(crate) fn assert_force_route_corpus(
     // A lane that forces nothing proves nothing: `route ≡ floor` must be a real
     // comparison, never floor ≡ floor in disguise.
     if forced == 0 {
-        return Err("force-route swept the corpus without taking a projected route".to_owned());
+        return Err(
+            "force-route swept the corpus without taking a designated count, element, or range-locate route".to_owned(),
+        );
     }
     Ok(())
 }

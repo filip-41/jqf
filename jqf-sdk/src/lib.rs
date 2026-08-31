@@ -44,45 +44,11 @@ pub use diagnostics::{Diagnostics, record_json, render_record};
 // take, the resource context they need, the source vocabulary for the input
 // slice, and the format/dialect and policy vocabulary for the request.
 pub use drive::{
-    CatalogIndex,
-    CodecCatalog,
-    EditRun,
-    EncodedItemReport,
-    EventStreamReport,
-    // `encode_ordered` + `OrderedResultProducer` are the ordered-publication
-    // boundary whose only in-tree implementor and caller is the sdk-smoke
-    // receipt tool; no production drive publishes through it (see the trait
-    // doc in drive/mod.rs).
-    FacadeFraming,
-    ItemSink,
-    OrderedEncodingPolicy,
-    OrderedEncodingReport,
-    OrderedResultPoll,
-    OrderedResultProducer,
-    PipelineDisposition,
-    PipelineError,
-    PipelineFailure,
-    PipelinePolicy,
-    PipelineReport,
-    PublicationStatus,
-    RECORD_BATCH_ENTRIES,
-    RECORD_BATCH_TARGET_BYTES,
-    RaisedError,
-    RangeLocateRun,
-    RecordIssueReport,
-    RecordSequenceReport,
-    RegistryFailure,
-    RoundtripRun,
-    RuntimeMismatchClass,
-    SequenceReport,
-    SequenceValueError,
-    StreamingEventStreamError,
-    StreamingSequenceError,
-    UNKNOWN_INPUT_LINE,
-    decode_record_values,
-    decode_source_values,
-    encode_ordered,
-    is_per_value_codec_kind,
+    CatalogIndex, CodecCatalog, EncodedItemReport, EventStreamReport, FacadeFraming, ItemSink, PipelineDisposition,
+    PipelineError, PipelineFailure, PipelinePolicy, PipelineReport, PublicationStatus, RECORD_BATCH_ENTRIES,
+    RECORD_BATCH_TARGET_BYTES, RaisedError, RecordIssueReport, RecordSequenceReport, RegistryFailure,
+    RuntimeMismatchClass, SequenceReport, SequenceValueError, StreamingEventStreamError, StreamingSequenceError,
+    UNKNOWN_INPUT_LINE, decode_record_values, decode_source_values, is_per_value_codec_kind,
 };
 pub use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 pub use jqf_data::{DialectId, FormatId};

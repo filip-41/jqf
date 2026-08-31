@@ -38,14 +38,33 @@ fn element_requirement_carries_the_hint() {
         (".", false, false),
     ] {
         let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
-        let demand = program.element_demand();
+        let demand = match program.shortcut() {
+            Shortcut::Element { demand, .. } => Some(demand),
+            _ => None,
+        };
         assert_eq!(demand.is_some(), should, "{source}");
         let requirement = program.try_requirement(&resources).expect("lowers");
-        assert_eq!(requirement.element().is_some(), should, "{source} hint");
-        if should {
+        if !should {
+            continue;
+        }
+        let empty_path = demand.expect("row").path.is_empty();
+        if empty_path {
+            assert!(requirement.element().is_some(), "{source} Whole element keeps the hint");
+            assert!(requirement.footprint().is_whole(), "{source} empty prefix stays Whole");
+            assert_eq!(
+                requirement.lazy_frontier(),
+                u32::from(!eager),
+                "{source} fan-out stays lazy; unbounded fold is eager"
+            );
+        } else {
+            assert_eq!(program.access(), Access::Exact, "{source}");
             assert!(
-                requirement.footprint().is_whole(),
-                "{source} must lower the whole document"
+                !requirement.footprint().is_whole(),
+                "{source} Exact-locates the container"
+            );
+            assert!(
+                requirement.element().is_some(),
+                "{source} Exact still carries the element hint"
             );
             assert_eq!(
                 requirement.lazy_frontier(),
@@ -76,7 +95,10 @@ fn unbounded_count_and_collect_are_eager_bounded_element_stays_lazy() {
         jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
     );
     let count = try_compile_program(".catalog | length", policy, CompileOptions::new(), &resources).expect("compiles");
-    assert!(count.count_demand().is_some(), "PATH|length is a count row");
+    assert!(
+        matches!(count.shortcut(), Shortcut::Count(_)),
+        "PATH|length is a count row"
+    );
     assert_eq!(
         count.try_requirement(&resources).expect("lowers").lazy_frontier(),
         0,
@@ -85,7 +107,7 @@ fn unbounded_count_and_collect_are_eager_bounded_element_stays_lazy() {
     let collected =
         try_compile_program("[.catalog[] | .id]", policy, CompileOptions::new(), &resources).expect("compiles");
     assert!(
-        collected.element_demand().is_some(),
+        matches!(collected.shortcut(), Shortcut::Element { .. }),
         "collected fan-out is an element row"
     );
     assert_eq!(
@@ -95,7 +117,10 @@ fn unbounded_count_and_collect_are_eager_bounded_element_stays_lazy() {
     );
     let limited =
         try_compile_program("limit(2; .catalog[] | .id)", policy, CompileOptions::new(), &resources).expect("compiles");
-    assert!(limited.element_demand().is_some(), "limit fan-out is an element row");
+    assert!(
+        matches!(limited.shortcut(), Shortcut::Element { .. }),
+        "limit fan-out is an element row"
+    );
     assert_eq!(
         limited.try_requirement(&resources).expect("lowers").lazy_frontier(),
         1,
@@ -211,18 +236,15 @@ fn tag_accessor_inserts_intrinsic_tag_clause() {
         )),
         "xpath names content fact"
     );
-    assert!(
+    assert!(matches!(
         try_compile_program("keys", policy, CompileOptions::new(), &resources)
             .expect("compiles")
-            .keys_demand()
-            .is_some()
-    );
-    assert_eq!(
-        try_compile_program(".users | keys", policy, CompileOptions::new(), &resources)
-            .expect("compiles")
-            .keys_demand()
-            .expect("path")
-            .len(),
-        1
-    );
+            .shortcut(),
+        Shortcut::Keys(_)
+    ));
+    let keys = try_compile_program(".users | keys", policy, CompileOptions::new(), &resources).expect("compiles");
+    let Shortcut::Keys(path) = keys.shortcut() else {
+        panic!("PATH | keys is a keys row");
+    };
+    assert_eq!(path.len(), 1);
 }

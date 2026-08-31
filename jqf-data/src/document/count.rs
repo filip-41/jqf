@@ -1,18 +1,36 @@
 //! Count answers from a document's built skeleton, without building leaves.
 //!
-//! Walks a container path and either returns a count or declines. A declined demand is the caller's problem: they run
-//! the ordinary materializing path. Never guesses.
+//! [`Document::count_children_from`] walks a container path from a start handle and either returns a count or
+//! declines. A declined demand is the caller's problem: they run the ordinary materializing path. Never guesses.
 //!
 //! [`CountRow::Collect`] sums one output per item of a static key/index suffix (a miss is null, which still counts as
-//! one). [`CountRow::Container`] is the container's own length. A span-backed container asks
-//! [`LazySpanMaterializer::count_span`]. A string or number declines.
+//! one). [`CountRow::Container`] is the container's own length. A span-backed container with a cached child count
+//! answers from that cache; otherwise it asks [`LazySpanMaterializer::count_span`]. A string or number declines.
 
 use jqf_resource::ResourceContext;
 
 use alloc::vec::Vec;
 
 use crate::document::NodeSemantic;
-use crate::{DataError, Document, SliceRange, Value, ValueKind, ValueView, resolve_index};
+use crate::{DataError, Document, NodeHandle, SliceRange, Value, ValueKind, ValueView, resolve_index};
+
+/// Smallest vs largest element of a numeric array (or numeric probe).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MinMaxOp {
+    /// `min` / `min_by` — first of the smallest-key run.
+    Min,
+    /// `max` / `max_by` — last of the largest-key run.
+    Max,
+}
+
+/// Packed `min`/`max`/`min_by`/`max_by` the Exact locate walk can answer without rematerializing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinMaxHint {
+    /// Smallest vs largest.
+    pub op: MinMaxOp,
+    /// `None` is bare `min`/`max`. `Some` is the single object key `min_by`/`max_by` probes.
+    pub probe: Option<alloc::string::String>,
+}
 
 /// Resolves one normalized (non-negative or open) slice range against an observed container length into an
 /// inclusive-start/exclusive-end span.
@@ -39,6 +57,15 @@ pub(crate) fn resolve_range(len: usize, range: Option<SliceRange>) -> (usize, us
             (start, end.max(start))
         }
     }
+}
+
+/// Cached span cardinality as a slice width.
+///
+/// Filter and probe caches store a proven total, not a length to slice; they do not use this helper.
+fn cached_span_width(len: u64, range: Option<SliceRange>) -> CountVerdict {
+    let len = usize::try_from(len).unwrap_or(usize::MAX);
+    let (start, end) = resolve_range(len, range);
+    CountVerdict::Count((end - start) as u64)
 }
 
 /// Descends tag-LAYER nodes to their payload view ([`Document::payload_view`]'s law): a kindless layer owns exactly one
@@ -511,31 +538,36 @@ pub enum CountVerdict {
 }
 
 impl<'document> Document<'document> {
-    /// Answers one count demand from this document's skeleton, without materializing leaves.
+    /// Answers one count demand starting at `start`, then walking [`CountDemand::path`].
     ///
-    /// Navigates the container path over the built skeleton, then:
+    /// Navigates over the built skeleton, then:
     ///
     /// - a BUILT container is counted from the projection arenas (an array's items, an object's members — duplicates
     ///   already resolved by the build) and the probe is walked per item over the arenas;
-    /// - a deferred [`crate::document::ContainerSpanKind`] container is   counted by the format-owned
-    ///   [`crate::LazySpanMaterializer::count_span`] leaf;
+    /// - a deferred [`crate::document::ContainerSpanKind`] container with a cached child count answers from that
+    ///   cache; otherwise the format-owned [`crate::LazySpanMaterializer::count_span`] leaf lexes the span;
     /// - any shape the skeleton cannot prove (null or missing, a non-container, a path step through a span, a
     ///   string/number   container, a probe the step cannot handle) is [`CountVerdict::Decline`].
     ///
     /// A missing step on the way to the container declines; the floor renders it (`PATH | length` answers 0, `PATH |
     /// keys | length` raises).
     ///
+    /// Exact starts at the located node with an empty path. `node == root` is not Exact vs Whole: JSON Exact
+    /// republishes the selection as the product root, YAML/HTML native Exact also publish a subtree whose root is that
+    /// selection, and `CompleteDocumentExact` fallback keeps the full graph and names the child.
+    ///
     /// # Errors
     ///
     /// Returns [`DataError`] only for a genuinely invalid document or a refused capability; every "cannot prove it"
     /// shape is a [`CountVerdict::Decline`], never an error.
-    pub fn count_children_demand(
+    pub fn count_children_from(
         &self,
+        start: NodeHandle,
         demand: &CountDemand,
         resources: &mut ResourceContext<'_>,
     ) -> Result<CountVerdict, DataError> {
         // A document without semantic nodes cannot be navigated; the caller's ordinary route serves it.
-        let Ok(root) = self.value_view(self.root_handle()) else {
+        let Ok(root) = self.value_view(start) else {
             return Ok(CountVerdict::Decline);
         };
         let mut view = root;
@@ -590,6 +622,9 @@ impl<'document> Document<'document> {
         // does.
         let view = &descend_tag_layers(self, *view)?;
         if view.is_container_span()? {
+            if let Some(len) = self.cached_span_child_count(view.node()) {
+                return Ok(cached_span_width(len, range));
+            }
             return self.count_span_leaf(view, range, &[], resources);
         }
         match view.kind()? {
@@ -637,7 +672,23 @@ impl<'document> Document<'document> {
         let view = &descend_tag_layers(self, *view)?;
         if view.is_container_span()? {
             if let Some(filter) = filter {
+                if range.is_none()
+                    && let Some(hits) = self.cached_span_filter_count(view.node())
+                {
+                    return Ok(CountVerdict::Count(hits));
+                }
                 return self.count_span_leaf_filtered(view, range, filter, resources);
+            }
+            if probe.is_empty()
+                && let Some(len) = self.cached_span_child_count(view.node())
+            {
+                return Ok(cached_span_width(len, range));
+            }
+            if !probe.is_empty()
+                && range.is_none()
+                && let Some(hits) = self.cached_span_probe_count(view.node())
+            {
+                return Ok(CountVerdict::Count(hits));
             }
             return self.count_span_leaf(view, range, probe, resources);
         }
@@ -973,6 +1024,17 @@ mod tests {
         ) -> Result<Value, DataError> {
             panic!("a span the consumer cannot read must decline before the leaf")
         }
+
+        fn visit_span_elements(
+            &self,
+            _text: &str,
+            _container: crate::ContainerSpanKind,
+            _demand: &crate::ElementDemand,
+            _resources: &mut ResourceContext<'_>,
+            _visit: &mut dyn FnMut(&Value, &mut ResourceContext<'_>) -> Result<(), DataError>,
+        ) -> Result<crate::ElementVerdict, DataError> {
+            panic!("a span the consumer cannot read must decline before the leaf")
+        }
     }
 
     static UNREACHABLE_LEAF: UnreachableLeaf = UnreachableLeaf;
@@ -980,6 +1042,26 @@ mod tests {
     /// Publishes a one-node document whose ROOT is a deferred container span over `bytes`, with a leaf that refuses to
     /// be called.
     fn document_over_root_span(bytes: &'static [u8], resources: &mut ResourceContext<'_>) -> Document<'static> {
+        document_over_root_span_with_counts(bytes, None, None, resources)
+    }
+
+    fn document_over_root_span_with_counts(
+        bytes: &'static [u8],
+        child_count: Option<u64>,
+        filter_count: Option<u64>,
+        resources: &mut ResourceContext<'_>,
+    ) -> Document<'static> {
+        document_over_root_span_with_oracles(bytes, child_count, filter_count, None, None, resources)
+    }
+
+    fn document_over_root_span_with_oracles(
+        bytes: &'static [u8],
+        child_count: Option<u64>,
+        filter_count: Option<u64>,
+        values: Option<alloc::vec::Vec<Value>>,
+        minmax: Option<Value>,
+        resources: &mut ResourceContext<'_>,
+    ) -> Document<'static> {
         let source = jqf_source::SourceRef::new(jqf_source::SourceId::new(7), jqf_source::SourceKind::Input);
         let resolved = jqf_source::ResolvedSource::new(source, source.kind().as_str(), bytes, 0);
         let recipe =
@@ -1004,6 +1086,11 @@ mod tests {
             )
         }
         .expect("span root");
+        builder
+            .set_container_span_counts(root, child_count, filter_count)
+            .expect("span counts");
+        builder.set_container_span_values(root, values).expect("span values");
+        builder.set_container_span_minmax(root, minmax).expect("span minmax");
         let mut finalizer = builder.begin_finish(root, resources).expect("finalizer");
         loop {
             match finalizer.poll(resources).expect("finalizer polls") {
@@ -1037,7 +1124,7 @@ mod tests {
         };
         assert_eq!(
             document
-                .count_children_demand(&count, &mut resources)
+                .count_children_from(document.root_handle(), &count, &mut resources)
                 .expect("declines, never errors"),
             CountVerdict::Decline
         );
@@ -1055,6 +1142,304 @@ mod tests {
                 .visit_elements(&elements, &mut resources, |_, _| Ok(()))
                 .expect("declines, never errors"),
             crate::ElementVerdict::Decline
+        );
+    }
+
+    /// A cached child count answers Container without calling the span leaf. The leaf panics, so this pin is the
+    /// Exact locate law: one proving scan records cardinality; count does not lex the span again.
+    #[test]
+    fn cached_span_child_count_does_not_call_the_span_leaf() {
+        static JSON: &[u8] = b"[1,2,3]";
+        let mut resources = ledger();
+        let document = document_over_root_span_with_counts(JSON, Some(3), None, &mut resources);
+        let root = document.root_handle();
+        assert_eq!(document.container_span_child_count(root).expect("handle"), Some(3));
+        let count = CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        assert_eq!(
+            document
+                .count_children_from(root, &count, &mut resources)
+                .expect("cached count"),
+            CountVerdict::Count(3)
+        );
+        let sliced = CountDemand {
+            range: Some((Some(1), Some(3))),
+            ..count
+        };
+        assert_eq!(
+            document
+                .count_children_from(root, &sliced, &mut resources)
+                .expect("cached slice width"),
+            CountVerdict::Count(2)
+        );
+    }
+
+    /// A cached collect-filter total answers Collect without calling the span leaf. Same proving-scan law as
+    /// [`cached_span_child_count_does_not_call_the_span_leaf`].
+    #[test]
+    fn cached_span_filter_count_does_not_call_the_span_leaf() {
+        static JSON: &[u8] = b"[{\"active\":true},{\"active\":false}]";
+        let mut resources = ledger();
+        let document = document_over_root_span_with_counts(JSON, Some(2), Some(1), &mut resources);
+        let root = document.root_handle();
+        assert_eq!(document.container_span_filter_count(root).expect("handle"), Some(1));
+        let filter = CountFilter {
+            path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("active"))],
+            test: CountTest::Compare {
+                op: CountCompare::Equal,
+                rhs: CountLiteral::Bool(true),
+            },
+        };
+        let count = CountDemand {
+            row: CountRow::Collect,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: Some(filter),
+        };
+        assert_eq!(
+            document
+                .count_children_from(root, &count, &mut resources)
+                .expect("cached filter count"),
+            CountVerdict::Count(1)
+        );
+    }
+
+    /// Cached `FanOut` values answer visit without calling the span leaf.
+    #[test]
+    fn cached_span_values_do_not_call_the_span_leaf() {
+        static JSON: &[u8] = b"[{\"id\":1},{\"id\":2}]";
+        let mut resources = ledger();
+        let values = alloc::vec![
+            Value::Number(crate::Number::integer(crate::Integer::from_i64(1))),
+            Value::Number(crate::Number::integer(crate::Integer::from_i64(2))),
+        ];
+        let document = document_over_root_span_with_oracles(JSON, None, None, Some(values), None, &mut resources);
+        let root = document.root_handle();
+        assert_eq!(
+            document
+                .container_span_values(root)
+                .expect("handle")
+                .expect("cached")
+                .len(),
+            2
+        );
+        let demand = crate::ElementDemand {
+            row: crate::ElementRow::FanOut,
+            path: Vec::new(),
+            range: None,
+            probe: crate::ElementProbe::Path(alloc::vec![CountStep::ObjectKey(alloc::string::String::from("id"))]),
+            increment: None,
+            filter: None,
+        };
+        let mut seen = alloc::vec::Vec::new();
+        assert_eq!(
+            document
+                .visit_elements(&demand, &mut resources, |value, _| {
+                    seen.push(value.clone());
+                    Ok(())
+                })
+                .expect("cached fan-out"),
+            crate::ElementVerdict::Completed(2)
+        );
+        assert_eq!(seen.len(), 2);
+    }
+
+    /// Cached minmax winner answers without calling the span leaf.
+    #[test]
+    fn cached_span_minmax_does_not_call_the_span_leaf() {
+        static JSON: &[u8] = b"[3,1,2]";
+        let mut resources = ledger();
+        let winner = Value::Number(crate::Number::integer(crate::Integer::from_i64(1)));
+        let document =
+            document_over_root_span_with_oracles(JSON, None, None, None, Some(winner.clone()), &mut resources);
+        let root = document.root_handle();
+        let got = document.container_span_minmax(root).expect("handle").expect("cached");
+        let crate::Value::Number(got_n) = got.untagged() else {
+            panic!("number")
+        };
+        let crate::Value::Number(win_n) = winner.untagged() else {
+            panic!("number")
+        };
+        assert_eq!(got_n.as_machine(), win_n.as_machine());
+    }
+
+    /// `{users: [null, null, null]}` and the `users` array handle.
+    fn mapping_with_three_null_users(resources: &ResourceContext<'_>) -> (Document<'static>, crate::NodeHandle) {
+        let mut builder = crate::AccountedDocumentBuilder::try_new("test", None).expect("builder");
+        let root = builder
+            .add_node(
+                "test.object",
+                crate::AccountedSemanticNode::Object {
+                    member_role: "test.member",
+                },
+                None,
+                resources,
+            )
+            .expect("root");
+        let users = builder
+            .add_node(
+                "test.array",
+                crate::AccountedSemanticNode::Array { item_role: "test.item" },
+                None,
+                resources,
+            )
+            .expect("users");
+        for _ in 0..3 {
+            let item = builder
+                .add_node("test.null", crate::AccountedSemanticNode::Null, None, resources)
+                .expect("item");
+            builder
+                .add_occurrence(crate::LocalOwnerRef::Node(users), "test.item", None, item, resources)
+                .expect("item occurrence");
+        }
+        builder
+            .add_occurrence(
+                crate::LocalOwnerRef::Node(root),
+                "test.member",
+                Some(crate::AccountedOccurrenceKey::Text("users")),
+                users,
+                resources,
+            )
+            .expect("users member");
+        let document = builder.finish(root, resources).expect("document");
+        let users_view = document
+            .value_view(document.root_handle())
+            .expect("root view")
+            .object()
+            .expect("object kind")
+            .expect("object")
+            .get("users")
+            .expect("users member");
+        let users_handle = document.node_handle(users_view.node()).expect("users handle");
+        (document, users_handle)
+    }
+
+    /// Exact-locate counts from the located node, not the document root.
+    ///
+    /// Named-child Exact (`CompleteDocumentExact` fallback) keeps the full graph:
+    /// empty-path count from the root of `{users: [null, null, null]}` is 1.
+    /// From the `users` node it is 3. Walking `path` from the root is the Whole
+    /// row. [`Document::count_children_from`] / [`Document::visit_elements_from`]
+    /// are the walks execute hits.
+    #[test]
+    fn count_from_a_child_node_does_not_count_the_document_root() {
+        let mut resources = ledger();
+        let (document, users_handle) = mapping_with_three_null_users(&resources);
+        let empty = CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        let from_root = CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("users"))],
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &empty, &mut resources)
+                .expect("root empty path"),
+            CountVerdict::Count(1),
+            "empty path from the mapping is the member count"
+        );
+        assert_eq!(
+            document
+                .count_children_from(users_handle, &empty, &mut resources)
+                .expect("users empty path"),
+            CountVerdict::Count(3),
+            "empty path from the located array is the element count"
+        );
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &from_root, &mut resources)
+                .expect("root walk"),
+            CountVerdict::Count(3),
+            "Whole still walks PATH from the document root"
+        );
+        let mut n = 0u64;
+        let visit_demand = crate::ElementDemand {
+            row: crate::ElementRow::FanOut,
+            path: Vec::new(),
+            range: None,
+            probe: crate::ElementProbe::Path(Vec::new()),
+            increment: None,
+            filter: None,
+        };
+        let verdict = document
+            .visit_elements_from(users_handle, &visit_demand, &mut resources, |_, _| {
+                n += 1;
+                Ok(())
+            })
+            .expect("visit from located node");
+        assert_eq!(verdict, crate::ElementVerdict::Completed(3));
+        assert_eq!(n, 3);
+        assert_ne!(
+            users_handle,
+            document.root_handle(),
+            "named-child Exact is not identified by node == root"
+        );
+    }
+
+    /// JSON Exact republishes the selection as the document root: `node == root`
+    /// and empty-path count is the array length. That is still Exact, not Whole.
+    #[test]
+    fn count_from_a_republished_root_is_the_located_container() {
+        let mut resources = ledger();
+        let mut builder = crate::AccountedDocumentBuilder::try_new("test", None).expect("builder");
+        let root = builder
+            .add_node(
+                "test.array",
+                crate::AccountedSemanticNode::Array { item_role: "test.item" },
+                None,
+                &resources,
+            )
+            .expect("root");
+        for _ in 0..3 {
+            let item = builder
+                .add_node("test.null", crate::AccountedSemanticNode::Null, None, &resources)
+                .expect("item");
+            builder
+                .add_occurrence(crate::LocalOwnerRef::Node(root), "test.item", None, item, &resources)
+                .expect("item occurrence");
+        }
+        let document = builder.finish(root, &resources).expect("document");
+        let empty = CountDemand {
+            row: CountRow::Container,
+            path: Vec::new(),
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        let rewalk = CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("users"))],
+            range: None,
+            probe: Vec::new(),
+            filter: None,
+        };
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &empty, &mut resources)
+                .expect("republished root"),
+            CountVerdict::Count(3),
+            "JSON Exact empty path is the selection's length"
+        );
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &rewalk, &mut resources)
+                .expect("rewalk PATH"),
+            CountVerdict::Decline,
+            "walking PATH again on a republished array declines"
         );
     }
 

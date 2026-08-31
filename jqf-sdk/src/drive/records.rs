@@ -8,9 +8,9 @@ use super::{
     RaisedError, RecordBatch, RecordBatchLimit, RecordEntry, RecordIssueCode, RecordIssueReport, RecordIssueSeverity,
     RecordPoll, ResolvedSource, ResourceContext, ReusableAccessSession, ReusableEncoderSession, RouteSlot,
     SequenceError, SequenceValueError, StreamStop, String, Value, ValueOutcome, Vec, allocation_failure, checked_delta,
-    drive_run_stream, materialize_sequence_value, note_single_document_output, null_first_input_line, overflow,
-    publish_all, pushdown_error, report_single_run, resume, run_one_owned_value, set_lazy_deferred,
-    try_lower_root_requirement, validate_credits,
+    drive_run_stream, execute_or_rebind_whole, materialize_sequence_value, may_rebind_whole,
+    note_single_document_output, null_first_input_line, overflow, publish_all, pushdown_error, report_single_run,
+    resume, run_one_owned_value, set_lazy_deferred, try_lower_root_requirement, validate_credits,
 };
 
 use core::cell::Cell;
@@ -295,7 +295,7 @@ pub(crate) fn execute_record_sequence<'source, Sink: ItemSink>(
     // Rebuilt from the program (AccessRequirement is not Clone); identity
     // is a whole-document requirement with no prune, so the rebuild is the
     // same lowering the caller already passed.
-    let identity_requirement = if program.is_identity() && policy.split.is_none() {
+    let identity_requirement = if program.host_io() == jqf_engine::HostIo::Echo && policy.split.is_none() {
         Some(
             program
                 .try_requirement(resources)
@@ -309,6 +309,23 @@ pub(crate) fn execute_record_sequence<'source, Sink: ItemSink>(
     let handle = provider
         .bind(requirement)
         .map_err(|error| publication.fail(PipelineFailure::AccessBind(error)))?;
+    let whole_requirement = if may_rebind_whole(program, requirement) {
+        Some(
+            program
+                .try_rebind_whole_requirement(resources)
+                .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?,
+        )
+    } else {
+        None
+    };
+    let whole_handle = match &whole_requirement {
+        Some(req) => Some(
+            provider
+                .bind(req)
+                .map_err(|error| publication.fail(PipelineFailure::AccessBind(error)))?,
+        ),
+        None => None,
+    };
     let encoder = catalog
         .encoder(output_format, output_dialect)
         .map_err(|error| publication.fail(PipelineFailure::Registry(error)))?;
@@ -471,13 +488,36 @@ pub(crate) fn execute_record_sequence<'source, Sink: ItemSink>(
                 last_error = None;
                 continue;
             }
-            let outcome: Option<ValueOutcome> = match program
-                .try_run(codec_outcome, resources)
-                .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-                .with_iteration_cap(policy.max_iterations)
-            {
+            let run = execute_or_rebind_whole(program, codec_outcome, resources, &publication, |resources| {
+                let handle = whole_handle.as_ref().ok_or_else(|| {
+                    publication.fail(PipelineFailure::Codec(CodecError::new(
+                        jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                            contract: "Exact count miss rebinds Whole",
+                        },
+                    )))
+                })?;
+                decode_record_item(
+                    &mut provider,
+                    &mut reuse,
+                    handle,
+                    payload_start,
+                    payload_end,
+                    policy.cooperative_credits,
+                    resources,
+                    &publication,
+                )
+                .map(|engine| engine.into_parts().0)
+            })?;
+            let outcome: Option<ValueOutcome> = match run.with_iteration_cap(policy.max_iterations) {
                 EngineRun::Suppressed => None,
                 EngineRun::Pushdown(error) => Some(ValueOutcome::Mismatch(pushdown_error(error))),
+                EngineRun::ReboundWhole => {
+                    return Err(publication.fail(PipelineFailure::Codec(CodecError::new(
+                        jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                            contract: "Exact count miss must rebind Whole before the graph",
+                        },
+                    ))));
+                }
                 EngineRun::Stream { stream, .. } => match drive_run_stream(
                     &factory,
                     &mut reused_encoder,
@@ -1659,7 +1699,7 @@ fn record_identity_echo<'source, E>(
     policy: &PipelinePolicy<'_>,
     publication: &Publication,
 ) -> Result<Option<RecordEcho<'source>>, PipelineError<E>> {
-    if !program.is_identity() || policy.split.is_some() {
+    if program.host_io() != jqf_engine::HostIo::Echo || policy.split.is_some() {
         return Ok(None);
     }
     let Some(suffix) = record_echo_suffix(output_format, framing, policy) else {

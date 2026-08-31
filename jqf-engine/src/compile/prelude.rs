@@ -10,8 +10,6 @@ pub(crate) use core::fmt;
 
 #[cfg(test)]
 extern crate std;
-#[cfg(test)]
-pub(crate) use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) use jqf_codec_core::{AccessRequirement, CodecError, CodecFailureKind, DemandClause};
 pub(crate) use jqf_resource::policy::MismatchPolicy;
@@ -31,13 +29,13 @@ pub(crate) use crate::codec_requirement::{
     CodecRequirementPolicy, StaticForwardStep, try_lower_forward_requirement, try_lower_prune_tree,
     try_lower_root_requirement,
 };
-pub(crate) use crate::exec::{EngineRun, try_run};
+pub(crate) use crate::exec::{EngineRun, try_run_program};
 pub(crate) use crate::program::{
     BinaryKind, CallableDef, CountedKind, EnginePullKind, EngineSlot, LabelSlot, LogicalOp, ModifyMode,
     ObjectMemberNode, Program, ProgramNode, ProgramNodeId, SliceBound, SliceBounds, StageStart, StageStep, StepAccess,
     VarSlot,
 };
-pub(crate) use jqf_builtins::codec_result::CodecInputOutcome;
+pub(crate) use jqf_builtins::codec_result::{CodecInputOutcome, EngineResult};
 pub(crate) use jqf_builtins::constant::{
     constant_object_key, decode_literal_segment, evaluate_constant, lower_number, static_template_text,
 };

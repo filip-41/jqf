@@ -287,41 +287,7 @@ fn anti_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<AntiJoinScan> {
     };
     let select = anti_select_through_binds(nodes, *body)?;
     let predicate = select_predicate(nodes, select)?;
-    // The `first/1` expansion's label wraps the whole body.
-    let ProgramNode::Label {
-        body, slot: label_slot, ..
-    } = &nodes[predicate.index()]
-    else {
-        return None;
-    };
-    let ProgramNode::FlatMap {
-        upstream,
-        body: first_out_body,
-        ..
-    } = &nodes[body.index()]
-    else {
-        return None;
-    };
-    if !anti_first_break_matches(nodes, *first_out_body, *label_slot) {
-        return None;
-    }
-    let ProgramNode::Choice { left, right } = &nodes[upstream.index()] else {
-        return None;
-    };
-    if !is_literal_true(nodes, *right) {
-        return None;
-    }
-    // `(g | false)`: the generator piped into the literal `false`.
-    let ProgramNode::FlatMap {
-        upstream: generator,
-        body: piped_false,
-    } = &nodes[left.index()]
-    else {
-        return None;
-    };
-    if !is_literal_false(nodes, *piped_false) {
-        return None;
-    }
+    let generator = isempty_first_generator(nodes, predicate)?;
     // The generator: the bound container iterated, with the negated equality
     // short-circuited by `and empty`.
     let ProgramNode::FlatMap {
@@ -374,6 +340,45 @@ fn anti_row(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<AntiJoinScan> {
         key_stage,
         probe,
     })
+}
+
+/// If `id` is the prelude `isempty(g)` expansion `first((g|false), true)`,
+/// return `g`. Shared by the anti-join row and the `any`/`all` shortcut.
+pub(crate) fn isempty_first_generator(nodes: &[ProgramNode], id: ProgramNodeId) -> Option<ProgramNodeId> {
+    let ProgramNode::Label {
+        body, slot: label_slot, ..
+    } = &nodes[id.index()]
+    else {
+        return None;
+    };
+    let ProgramNode::FlatMap {
+        upstream,
+        body: first_out_body,
+        ..
+    } = &nodes[body.index()]
+    else {
+        return None;
+    };
+    if !anti_first_break_matches(nodes, *first_out_body, *label_slot) {
+        return None;
+    }
+    let ProgramNode::Choice { left, right } = &nodes[upstream.index()] else {
+        return None;
+    };
+    if !is_literal_true(nodes, *right) {
+        return None;
+    }
+    let ProgramNode::FlatMap {
+        upstream: generator,
+        body: piped_false,
+    } = &nodes[left.index()]
+    else {
+        return None;
+    };
+    if !is_literal_false(nodes, *piped_false) {
+        return None;
+    }
+    Some(*generator)
 }
 
 /// The `first/1` expansion ends in `., break $label` — the break slot must

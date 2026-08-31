@@ -14,10 +14,12 @@ What it has:
   analyze, and finish
 - `CompileOptions` — CLI bindings (`cli_vars`), compile-lane flags
   (`split_exp`), and source label (`source_label`, default `"<top-level>"`)
-- `CompiledProgram` — the opaque arena, plus `try_requirement` and `try_run`
+- `CompiledProgram` — the opaque arena, plus packed `try_requirement`,
+  `execute`, and `host_io`
 - `CodecRequirementPolicy` — validation and diagnostic axes the lowering keeps
 - `EngineRun` / `EngineRunStream` / `RunPoll` — one interpreted result stream
-- `ExplainPlan` / `PlanRecord` — the explain surface
+- `ExplainPlan` / `PlanRecord` / `ShortcutKind` — the explain surface; the
+  plan snapshots the committed shortcut, not a bag of route flags
 - `ProjectionClass` / `BoundaryConsumer` — analysis facts the drives consult
 - the builtin registry and error vocabulary, re-exported from `jqf-builtins`
 
@@ -50,11 +52,14 @@ let _ = compiled.try_requirement(&resources).unwrap();
 
 ## Run
 
-`CompiledProgram::try_run` drives the residual graph after a codec has
-resolved the pushed-down prefix. `try_run_whole_value` runs the whole
-program when nothing resolved that prefix (`-n`, `-s`, and their record
-siblings). One value is in flight per frame; an unsuppressed failure
-discards the frame stack.
+`CompiledProgram::execute` matches the committed shortcut, then the
+residual graph. `try_run_whole_value` runs the whole program when
+nothing resolved a prefix (`-n`, `-s`, and their record siblings). One
+value is in flight per frame; an unsuppressed failure discards the
+frame stack. `host_io` is Echo | SpanCut | Run: identity echo and
+range-locate span cut stay host I/O. Count and element visit go
+through `Document::count_children_from` / `visit_elements_from` at the
+located node.
 
 ## Contracts
 

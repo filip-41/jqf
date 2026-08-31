@@ -16,36 +16,39 @@
 //!    offset) for every invalid input. Nothing is materialized. The same walk records the exact-path observation
 //!    (last-value-wins object semantics, signed array-index semantics) so a second navigate traversal is not required.
 //!    Publishing still waits for validation `Done`.
-//! 2. **Materialize** — a fresh [`JsonParseState`] re-parse of just the selected span into a demand-scoped
-//!    [`DocumentProduct`]; retained memory is therefore proportional to the selected subtree, not the whole input.
-//!    When the bound requirement carries [`jqf_codec_core::AccessRequirement::type_demand`], this phase skips the
-//!    payload and builds a kind-only document (empty array/object, or a dummy scalar) from the located value's first
-//!    payload byte. `PATH | type` answers array/object/string/number/boolean/null without retaining members. The
-//!    validate walk still visits every unread byte.
+//! 2. **Publish** — the validate walk already recorded the last-wins span. Count and element
+//!    ([`jqf_codec_core::AccessRequirement::located_skeleton`]) publish that range as a lazy container root; oracles
+//!    count and visit the skeleton. Array `length`, collect-filter, `FanOut` probe/construct, and bare `min`/`max`
+//!    record the oracle answer on that same walk — last-wins replaces the pointer and the cached answer — so count
+//!    and those oracles do not lex the hit span again. Type demand builds a kind-only node from the first payload
+//!    byte. Print and jobs without a locate-walk cache still re-parse the located span through [`JsonParseState`].
+//!    The validate walk still visits every unread byte.
 //!
 //! The published [`AccessOutcome::Located`] carries the identical [`ExactSelectionRecord`] the
 //! whole-decode-then-navigate path publishes, so the SDK/CLI behaviour (located value / `null` / typed error) is
 //! byte-identical.
 //!
-//! Input-charge asymmetry: the scoped route trades retained memory for input work. It reads the input up to two times
-//! — the validate pass scans the whole input (and records the exact-path span), and the materialize pass re-parses
-//! just the located span — so its work-byte charge is up to ~2x the input, versus the whole route's single pass. That
-//! asymmetry is the deliberate cost of bounding *retained* memory to the selected subtree instead of the whole
-//! document; the binder only prefers this route for `Located` requirements whose demand fits the scoped ceiling, where
-//! the retained-memory saving is worth the extra input scan.
+//! Count and element Exact charge one validating scan: last-wins updates a pointer; the published root is that span
+//! with the array cardinality, collect-filter hits, `FanOut` values, and min/max winner recorded on the winner. Print of
+//! a fat Exact hit still re-parses the located bytes — that extra read is the cost of a built subtree, not of count.
+//! The binder prefers this route for `Located` requirements whose demand fits the scoped ceiling.
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::mem;
 
 use jqf_codec_core::{
-    AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, PruneTree, SelectionOrigin,
+    AccessInput, AccessOutcome, AccessRequirement, AccessResult, AccessSession, CodecError, CodecFailureKind,
+    CodecRunContext, DocumentProduct, ExactSelectionRecord, LocatedOutcome, OwnedStep, PortableStep, PruneTree,
+    SelectionOrigin, own_steps,
 };
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError,
-    DiagnosticCoverage, DocumentCapabilityFamily, DocumentSchemaPrototype, DocumentSchemaRecipe, LazySpanMaterializer,
-    ValueKind,
+    AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind,
+    CountDemand, CountMember, CountRow, CountStep, CountTest, DataError, DiagnosticCoverage, DocumentCapabilityFamily,
+    DocumentSchemaPrototype, DocumentSchemaRecipe, DocumentSourceBindingPoll, DocumentSourceBindingStage,
+    ElementDemand, ElementProbe, ElementRow, LazySpanMaterializer, MinMaxHint, MinMaxOp, Number, ObjectBuilder,
+    ObjectKey, Value, ValueKind,
 };
 use jqf_resource::{OwnedDepthGuard, ResourceContext};
 use jqf_source::ResolvedSource;
@@ -59,23 +62,6 @@ use crate::lex::{
 };
 use crate::parse::{JsonParseState, OwnedRunPoll, reset_reusable_frames};
 use crate::storage::{EscapeState, JsonGrammar, NumberLex, NumberState, ParseMode};
-
-/// One owned exact-path step, decoupled from the requirement's lifetime so the scoped session can live in the
-/// core-owned carrier.
-pub(crate) enum ScopedStep {
-    Member(String),
-    Index(i64),
-    /// A contiguous element RANGE over an array container. Bounds are signed-or-open exactly as the portable step
-    /// carries them; this route resolves them against the OBSERVED array length, which is the `SemanticIndex` precedent
-    /// applied to a pair of bounds.
-    ///
-    /// A range step is always TERMINAL: the engine admits exactly one trailing range in a pushdown prefix, so a
-    /// non-terminal one is a contract violation rather than a shape this navigator resolves.
-    Range {
-        start: Option<i64>,
-        end: Option<i64>,
-    },
-}
 
 /// The structural container a validator frame is tracking.
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -108,6 +94,213 @@ struct VFrame {
     start: usize,
     /// Whether the exact-path locator pushed a scan frame for this container.
     scanning: bool,
+    role: FrameRole,
+    /// Direct children of a [`FrameRole::LocatedArray`], incremented on attach.
+    child_count: u64,
+    /// Collect-filter hits on a [`FrameRole::LocatedArray`].
+    filter_hits: u64,
+    /// A member the closed filter law cannot rank: do not cache filter hits.
+    filter_declined: bool,
+    /// Last-wins start of the tested member inside a [`FrameRole::FilterElement`].
+    filter_member: Option<usize>,
+    filter_key_matches: bool,
+    /// Pending capture-oracle match for the current object member.
+    capture: CapturePending,
+}
+
+/// What a validator frame records for the Exact count oracle.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FrameRole {
+    Walk,
+    /// Last-step located array: last-wins child cardinality (and filter hits when armed).
+    LocatedArray,
+    /// Last-step located object: last-wins unique member cardinality (and has/keys).
+    LocatedObject,
+    /// Last-step located value that is not a counted container: clears a stale cache.
+    LocatedOther,
+    /// Object element of a [`Self::LocatedArray`] under collect-filter.
+    FilterElement,
+    /// Object element of a [`Self::LocatedArray`] whose probe, construct, or `min_by` fields are recorded on locate.
+    /// Nested objects on an `ObjectKey` chain reuse this role; only the array-element frame finishes the capture.
+    CaptureElement,
+}
+
+/// Pending member match while a [`FrameRole::CaptureElement`] is open.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CapturePending {
+    None,
+    /// Last `ObjectKey` step: capture the member value into this field slot.
+    Last(usize),
+    /// Intermediate `ObjectKey`: the member value must be a nested object (or `null`).
+    Nest,
+}
+
+/// What `on_container_open` decided for the container that just opened.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LocateOpen {
+    Skip,
+    Scan,
+    /// This container is the last-step Exact hit (the located value).
+    Hit,
+}
+
+/// Oracle facts the validate walk records on the last-wins located array.
+enum OraclePlan {
+    Off,
+    ArrayLen,
+    CollectProbe,
+    CollectFilter { key: String, test: CountTest },
+}
+
+impl OraclePlan {
+    fn from_demand(demand: Option<&CountDemand>) -> Self {
+        let Some(demand) = demand else {
+            return Self::Off;
+        };
+        if let Some(filter) = demand.filter.as_ref() {
+            if demand.row != CountRow::Collect || demand.range.is_some() {
+                return Self::Off;
+            }
+            return match filter.path.as_slice() {
+                [CountStep::ObjectKey(key)] => Self::CollectFilter {
+                    key: key.clone(),
+                    test: filter.test.clone(),
+                },
+                _ => Self::Off,
+            };
+        }
+        if demand.probe.is_empty() {
+            return Self::ArrayLen;
+        }
+        if demand.row == CountRow::Collect && demand.range.is_none() {
+            return match demand.probe.as_slice() {
+                [CountStep::ObjectKey(_)] => Self::CollectProbe,
+                _ => Self::Off,
+            };
+        }
+        Self::Off
+    }
+
+    fn records_array_len(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    fn records_object_len(&self) -> bool {
+        matches!(self, Self::ArrayLen)
+    }
+
+    fn collect_probe(&self) -> bool {
+        matches!(self, Self::CollectProbe)
+    }
+
+    fn filter_key(&self) -> Option<(&str, &CountTest)> {
+        match self {
+            Self::CollectFilter { key, test } => Some((key.as_str(), test)),
+            Self::Off | Self::ArrayLen | Self::CollectProbe => None,
+        }
+    }
+}
+
+/// `FanOut` probe/construct the validate walk records on the last-wins located array.
+/// A probe or construct field is a non-empty `ObjectKey` chain; `ArrayIndex` declines the pack.
+enum ElementOracle {
+    Off,
+    PathKey(alloc::vec::Vec<String>),
+    Construct(alloc::vec::Vec<(String, alloc::vec::Vec<String>)>),
+}
+
+fn object_key_chain(path: &[CountStep]) -> Option<alloc::vec::Vec<String>> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut keys = alloc::vec::Vec::new();
+    for step in path {
+        match step {
+            CountStep::ObjectKey(key) => keys.push(key.clone()),
+            CountStep::ArrayIndex(_) => return None,
+        }
+    }
+    Some(keys)
+}
+
+fn key_at_depth(keys: &[String], depth: usize, bytes: &[u8], start: usize, end: usize) -> bool {
+    keys.get(depth)
+        .is_some_and(|key| key_equals_inner(bytes, start, end, key))
+}
+
+impl ElementOracle {
+    fn from_demand(demand: Option<&ElementDemand>, construct: Option<&[(String, alloc::vec::Vec<CountStep>)]>) -> Self {
+        let Some(demand) = demand else {
+            return Self::Off;
+        };
+        if demand.row != ElementRow::FanOut || demand.range.is_some() || demand.filter.is_some() {
+            return Self::Off;
+        }
+        if let Some(fields) = construct {
+            if fields.is_empty() {
+                return Self::Off;
+            }
+            let mut captured = alloc::vec::Vec::new();
+            for (name, path) in fields {
+                let Some(keys) = object_key_chain(path) else {
+                    return Self::Off;
+                };
+                captured.push((name.clone(), keys));
+            }
+            return Self::Construct(captured);
+        }
+        match &demand.probe {
+            ElementProbe::Path(path) => match object_key_chain(path) {
+                Some(keys) => Self::PathKey(keys),
+                None => Self::Off,
+            },
+            ElementProbe::Length => Self::Off,
+        }
+    }
+
+    fn captures_objects(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    fn field_count(&self) -> usize {
+        match self {
+            Self::Off => 0,
+            Self::PathKey(_) => 1,
+            Self::Construct(fields) => fields.len(),
+        }
+    }
+}
+
+/// Bare `min`/`max` or `min_by`/`max_by` recorded on the last-wins located array.
+enum MinMaxOracle {
+    Off,
+    Bare(MinMaxOp),
+    By { op: MinMaxOp, key: String },
+}
+
+impl MinMaxOracle {
+    fn from_hint(hint: Option<&MinMaxHint>) -> Self {
+        let Some(hint) = hint else {
+            return Self::Off;
+        };
+        match hint.probe.as_deref() {
+            None => Self::Bare(hint.op),
+            Some(key) => Self::By {
+                op: hint.op,
+                key: alloc::string::String::from(key),
+            },
+        }
+    }
+
+    fn captures_objects(&self) -> bool {
+        matches!(self, Self::By { .. })
+    }
+}
+
+/// Packed `has(LITERAL)` the validate walk can answer without rematerializing.
+enum HasOracle {
+    Member(String),
+    Index(i64),
 }
 
 /// Whether the string currently being validated is an object key or a value, which determines the frame transition on
@@ -377,7 +570,7 @@ fn string_fault(source: ResolvedSource<'_>, at: usize, code: &'static str, messa
               distinct validator states — grouping them would hide the gate"
 )]
 pub(crate) struct ScopedSession {
-    steps: Vec<ScopedStep>,
+    steps: Vec<OwnedStep>,
     origin: SelectionOrigin,
     diagnostics: DiagnosticCoverage,
     coverage: BuilderCoverage,
@@ -387,6 +580,46 @@ pub(crate) struct ScopedSession {
     /// Kind-only materialize: after locate, emit an empty-of-children node from the first payload byte. Validation is
     /// unchanged.
     type_demand: bool,
+    /// Count or element: publish the last-wins span as a lazy container root.
+    skeleton: bool,
+    /// What the count oracle needs from the last-wins located array.
+    oracle: OraclePlan,
+    /// Last-wins array cardinality recorded on the located hit. Replaced when a later duplicate key wins.
+    located_child_count: Option<u64>,
+    /// Last-wins collect-filter hits on the located hit. `None` if the walk declined a member.
+    located_filter_count: Option<u64>,
+    /// Last-wins collect-probe tally. `None` if the walk declined an item.
+    located_probe_count: Option<u64>,
+    /// Last-wins unique object key names when Keys is packed.
+    located_keys: Vec<String>,
+    /// Packed `has` the walk records on the last-wins hit.
+    has: Option<HasOracle>,
+    /// Packed `keys`: record last-wins unique member names.
+    keys: bool,
+    /// Last-wins `has` presence. `None` until the hit closes (or a matching key is seen).
+    located_has: Option<bool>,
+    /// `FanOut` probe/construct recorded on the last-wins located array.
+    element: ElementOracle,
+    /// Bare `min`/`max` or `min_by` recorded on the last-wins located array.
+    minmax: MinMaxOracle,
+    /// Last-wins `FanOut` values. Replaced when a later duplicate key wins.
+    located_values: Vec<Value>,
+    element_declined: bool,
+    located_element_ready: bool,
+    /// Last-wins min/max winner (including `null` for an empty array).
+    located_minmax: Option<Value>,
+    minmax_declined: bool,
+    minmax_winner_key: Option<Value>,
+    /// Winner object range relative to the located array start, for `min_by`/`max_by`.
+    minmax_winner_rel: Option<(usize, usize)>,
+    /// Per-element captured field values while a [`FrameRole::CaptureElement`] is open.
+    capture_fields: Vec<Option<Value>>,
+    /// `ObjectKey` steps entered under the open capture (0 at the array element).
+    capture_depth: usize,
+    /// Inner key spans already counted on the last-wins located object (duplicate keys do not increment).
+    object_key_spans: Vec<(usize, usize)>,
+    /// Scratch for classifying a collect-filter member on the validate walk.
+    filter_scratch: String,
     phase: SessionPhase,
     // Validate-phase state.
     validate: ValidatePhase,
@@ -456,9 +689,8 @@ pub(crate) struct CommentedScope {
     pub recipe: fn(&'static str) -> Result<DocumentSchemaRecipe<'static>, DataError>,
     /// Dialect text the recipe binds.
     pub dialect: &'static str,
-    /// Bound onto the Exact re-parse as unreachable insurance: the scoped
-    /// materializer never commits a `ContainerSpan` child, so this reader is
-    /// not invoked on this route.
+    /// Installed on a skeleton Exact root so count and element visit the
+    /// last-wins span. Print rematerialize binds it as unreachable insurance.
     pub span_materializer: &'static dyn LazySpanMaterializer,
     /// JSONC consumes a leading BOM as a source prefix; JSON5 treats U+FEFF as whitespace instead.
     pub consume_bom: bool,
@@ -531,31 +763,7 @@ impl ScopedSession {
         schema_prototype: Option<DocumentSchemaPrototype>,
         resources: &ResourceContext<'_>,
     ) -> Result<Self, CodecError> {
-        let mut owned = {
-            let mut steps_vec = Vec::new();
-            steps_vec
-                .try_reserve_exact(steps.len())
-                .map_err(jqf_resource::ResourceError::from)?;
-            steps_vec
-        };
-        for step in steps {
-            let owned_step = match step {
-                PortableStep::SemanticMember(key) => {
-                    let mut stored = String::new();
-                    stored
-                        .try_reserve_exact(key.as_str().len())
-                        .map_err(jqf_resource::ResourceError::from)?;
-                    stored.push_str(key.as_str());
-                    ScopedStep::Member(stored)
-                }
-                PortableStep::SemanticIndex(index) => ScopedStep::Index(*index),
-                PortableStep::SemanticRange { start, end } => ScopedStep::Range {
-                    start: *start,
-                    end: *end,
-                },
-            };
-            owned.push(owned_step);
-        }
+        let owned = own_steps(steps)?;
         Ok(Self {
             steps: owned,
             origin,
@@ -563,6 +771,28 @@ impl ScopedSession {
             coverage,
             prune: None,
             type_demand: false,
+            skeleton: false,
+            oracle: OraclePlan::Off,
+            located_child_count: None,
+            located_filter_count: None,
+            located_probe_count: None,
+            located_keys: Vec::new(),
+            has: None,
+            keys: false,
+            located_has: None,
+            element: ElementOracle::Off,
+            minmax: MinMaxOracle::Off,
+            located_values: Vec::new(),
+            element_declined: false,
+            located_element_ready: false,
+            located_minmax: None,
+            minmax_declined: false,
+            minmax_winner_key: None,
+            minmax_winner_rel: None,
+            capture_fields: Vec::new(),
+            capture_depth: 0,
+            object_key_spans: Vec::new(),
+            filter_scratch: String::new(),
             phase: SessionPhase::Validate,
             validate: if allow_adjacent_values {
                 ValidatePhase::Value
@@ -604,14 +834,310 @@ impl ScopedSession {
     }
 
     /// Arms the kept-subtree prune on the materialize pass. Validation is
-    /// unchanged. The provider copies the requirement's hint here at open.
+    /// unchanged. The provider copies the requirement's hint here at open and
+    /// after recycle; an existing materializer must take the new tree now, or a
+    /// reused shell would keep the previous requirement's omissions.
     pub(crate) fn arm_prune(&mut self, tree: PruneTree) {
+        if let Some(materializer) = &mut self.materializer {
+            materializer.enable_prune(&tree);
+        }
         self.prune = Some(tree);
     }
 
     /// Arms kind-only materialize from the bound requirement's type hint.
     pub(crate) fn set_type_demand(&mut self, demand: bool) {
         self.type_demand = demand;
+    }
+
+    /// Arms last-wins span-pointer Exact: count and cached oracles visit the
+    /// validated span. Last-wins replaces the pointer during validate; this flag only
+    /// chooses the publish shape.
+    pub(crate) fn set_skeleton_demand(&mut self, demand: bool) {
+        self.skeleton = demand;
+    }
+
+    /// Arms last-wins count recording on the validate walk: array cardinality and, for collect-filter, per-element
+    /// hits. Last-wins replaces the cached counts with the winner's. `FanOut` and min/max arm their own oracles.
+    pub(crate) fn arm_count_oracle(&mut self, demand: Option<&CountDemand>) {
+        self.oracle = OraclePlan::from_demand(demand);
+        self.located_child_count = None;
+        self.located_filter_count = None;
+        self.located_probe_count = None;
+        self.filter_scratch.clear();
+    }
+
+    /// Arms last-wins `has(LITERAL)` recording on the validate walk.
+    pub(crate) fn arm_has_oracle(&mut self, key: Option<&jqf_data::Value>) {
+        self.has = key.and_then(|value| match value.untagged() {
+            jqf_data::Value::String(text) => Some(HasOracle::Member(alloc::string::String::from(text.as_str()))),
+            jqf_data::Value::Number(number) => number
+                .as_integer()
+                .and_then(|integer| integer.to_i64().map(HasOracle::Index)),
+            _ => None,
+        });
+        self.located_has = None;
+    }
+
+    /// Arms last-wins key-name recording on the validate walk.
+    pub(crate) fn arm_keys_oracle(&mut self, on: bool) {
+        self.keys = on;
+        self.located_keys.clear();
+    }
+
+    /// Arms last-wins `FanOut` probe/construct recording on the validate walk.
+    pub(crate) fn arm_element_oracle(
+        &mut self,
+        demand: Option<&ElementDemand>,
+        construct: Option<&[(String, alloc::vec::Vec<CountStep>)]>,
+    ) {
+        self.element = ElementOracle::from_demand(demand, construct);
+        self.located_values.clear();
+        self.element_declined = false;
+        self.located_element_ready = false;
+        self.capture_fields.clear();
+        self.capture_depth = 0;
+    }
+
+    /// Arms last-wins min/max recording on the validate walk.
+    pub(crate) fn arm_minmax_oracle(&mut self, hint: Option<&MinMaxHint>) {
+        self.minmax = MinMaxOracle::from_hint(hint);
+        self.located_minmax = None;
+        self.minmax_declined = false;
+        self.minmax_winner_key = None;
+        self.minmax_winner_rel = None;
+    }
+
+    /// Arms prune, type, last-wins skeleton, and locate-walk oracles from the bound requirement.
+    pub(crate) fn arm_requirement(
+        &mut self,
+        requirement: &AccessRequirement,
+        resources: &ResourceContext<'_>,
+    ) -> Result<(), CodecError> {
+        if let Some(tree) = requirement.prune() {
+            self.arm_prune(tree.try_clone_in(resources).map_err(|_| data_contract())?);
+        }
+        self.set_type_demand(requirement.type_demand());
+        self.set_skeleton_demand(requirement.located_skeleton());
+        self.arm_count_oracle(requirement.count());
+        self.arm_has_oracle(requirement.has_key());
+        self.arm_keys_oracle(requirement.keys_demand());
+        self.arm_element_oracle(requirement.element(), requirement.element_construct());
+        self.arm_minmax_oracle(requirement.minmax());
+        Ok(())
+    }
+
+    fn take_located_minmax(&mut self, bytes: &[u8], resources: &mut ResourceContext<'_>) -> Option<Value> {
+        if self.minmax_declined {
+            self.minmax_winner_rel = None;
+            return None;
+        }
+        if let Some(winner) = self.located_minmax.take() {
+            return Some(winner);
+        }
+        let (start, end) = self.minmax_winner_rel.take()?;
+        if start > end || end > bytes.len() {
+            return None;
+        }
+        let materializer = self.commented.map_or(
+            &crate::lazy::JSON_SPAN_MATERIALIZER as &dyn LazySpanMaterializer,
+            |scope| scope.span_materializer,
+        );
+        materializer.materialize_span_bytes(&bytes[start..end], resources).ok()
+    }
+
+    fn begin_located_array(&mut self) {
+        self.located_values.clear();
+        self.element_declined = false;
+        self.located_element_ready = false;
+        self.located_minmax = None;
+        self.minmax_declined = false;
+        self.minmax_winner_key = None;
+        self.minmax_winner_rel = None;
+    }
+
+    fn clear_element_minmax(&mut self) {
+        self.located_values.clear();
+        self.element_declined = true;
+        self.located_element_ready = false;
+        self.located_minmax = None;
+        self.minmax_declined = true;
+        self.minmax_winner_key = None;
+        self.minmax_winner_rel = None;
+    }
+
+    fn begin_capture(&mut self) {
+        let n = match &self.element {
+            ElementOracle::Off if self.minmax.captures_objects() => 1,
+            other => other.field_count(),
+        };
+        self.capture_fields.clear();
+        self.capture_fields.resize(n, None);
+        self.capture_depth = 0;
+    }
+
+    fn finish_located_array(&mut self) {
+        if !matches!(&self.element, ElementOracle::Off) && !self.element_declined {
+            self.located_element_ready = true;
+        } else {
+            self.located_values.clear();
+            self.located_element_ready = false;
+        }
+        if matches!(&self.minmax, MinMaxOracle::Off) || self.minmax_declined {
+            self.located_minmax = None;
+            self.minmax_winner_rel = None;
+            return;
+        }
+        if self.located_minmax.is_none() && self.minmax_winner_rel.is_none() {
+            self.located_minmax = Some(Value::Null);
+        }
+    }
+
+    fn finish_capture(&mut self, frame: &VFrame, next: usize) {
+        if !self.element_declined {
+            if matches!(&self.element, ElementOracle::PathKey(_)) {
+                let value = self
+                    .capture_fields
+                    .first_mut()
+                    .and_then(Option::take)
+                    .unwrap_or(Value::Null);
+                self.located_values.push(value);
+            } else if matches!(&self.element, ElementOracle::Construct(_)) {
+                match self.take_construct_object() {
+                    Some(value) => self.located_values.push(value),
+                    None => self.element_declined = true,
+                }
+            }
+        }
+        if let MinMaxOracle::By { op, .. } = &self.minmax
+            && !self.minmax_declined
+        {
+            let op = *op;
+            let Some(key) = self.capture_fields.first_mut().and_then(Option::take) else {
+                self.minmax_declined = true;
+                self.capture_fields.clear();
+                return;
+            };
+            if !finite_number(&key) {
+                self.minmax_declined = true;
+                self.capture_fields.clear();
+                return;
+            }
+            let parent_start = self.frames.last().map_or(frame.start, |parent| parent.start);
+            let rel = (
+                frame.start.saturating_sub(parent_start),
+                next.saturating_sub(parent_start),
+            );
+            self.consider_minmax(op, key, Some(rel));
+        }
+        self.capture_fields.clear();
+    }
+
+    fn take_construct_object(&mut self) -> Option<Value> {
+        let n = match &self.element {
+            ElementOracle::Construct(fields) => fields.len(),
+            ElementOracle::Off | ElementOracle::PathKey(_) => return None,
+        };
+        let mut values = alloc::vec::Vec::new();
+        values.try_reserve_exact(n).ok()?;
+        for index in 0..n {
+            values.push(
+                self.capture_fields
+                    .get_mut(index)
+                    .and_then(Option::take)
+                    .unwrap_or(Value::Null),
+            );
+        }
+        let ElementOracle::Construct(fields) = &self.element else {
+            return None;
+        };
+        let mut builder = ObjectBuilder::try_with_capacity(n).ok()?;
+        for ((name, _), value) in fields.iter().zip(values) {
+            let key = ObjectKey::try_from_str(name).ok()?;
+            builder.try_insert_or_replace(key, value).ok()?;
+        }
+        builder.try_finish().ok().map(Value::Object)
+    }
+
+    fn capture_key_index(&self, bytes: &[u8], start: usize, end: usize) -> Option<usize> {
+        let depth = self.capture_depth;
+        match &self.element {
+            ElementOracle::PathKey(keys) if key_at_depth(keys, depth, bytes, start, end) && depth + 1 == keys.len() => {
+                Some(0)
+            }
+            ElementOracle::Construct(fields) => fields
+                .iter()
+                .position(|(_, keys)| key_at_depth(keys, depth, bytes, start, end) && depth + 1 == keys.len()),
+            ElementOracle::Off | ElementOracle::PathKey(_) => match &self.minmax {
+                MinMaxOracle::By { key, .. } if depth == 0 && key_equals_inner(bytes, start, end, key) => Some(0),
+                _ => None,
+            },
+        }
+    }
+
+    fn capture_nests_key(&self, bytes: &[u8], start: usize, end: usize) -> bool {
+        let depth = self.capture_depth;
+        match &self.element {
+            ElementOracle::PathKey(keys) => key_at_depth(keys, depth, bytes, start, end) && depth + 1 < keys.len(),
+            ElementOracle::Construct(fields) => fields
+                .iter()
+                .any(|(_, keys)| key_at_depth(keys, depth, bytes, start, end) && depth + 1 < keys.len()),
+            ElementOracle::Off => false,
+        }
+    }
+
+    fn capture_pending(&self, bytes: &[u8], start: usize, end: usize) -> CapturePending {
+        if let Some(index) = self.capture_key_index(bytes, start, end) {
+            CapturePending::Last(index)
+        } else if self.capture_nests_key(bytes, start, end) {
+            CapturePending::Nest
+        } else {
+            CapturePending::None
+        }
+    }
+
+    fn note_located_array_scalar(&mut self, bytes: &[u8], kind: ValueKind) {
+        if self.element.captures_objects() {
+            if kind == ValueKind::Null && matches!(&self.element, ElementOracle::PathKey(_)) {
+                self.located_values.push(Value::Null);
+            } else {
+                self.element_declined = true;
+            }
+        }
+        if self.minmax.captures_objects() {
+            self.minmax_declined = true;
+        }
+        if let MinMaxOracle::Bare(op) = &self.minmax
+            && !self.minmax_declined
+        {
+            let op = *op;
+            match json_scalar_value(bytes, self.pending_value_start, &mut self.filter_scratch) {
+                Some(value) if finite_number(&value) => self.consider_minmax(op, value, None),
+                _ => self.minmax_declined = true,
+            }
+        }
+    }
+
+    fn consider_minmax(&mut self, op: MinMaxOp, key: Value, rel: Option<(usize, usize)>) {
+        let replace = match self.minmax_winner_key.as_ref() {
+            None => true,
+            Some(incumbent) => match cmp_numbers(&key, incumbent) {
+                Some(Ordering::Less) if op == MinMaxOp::Min => true,
+                Some(Ordering::Greater | Ordering::Equal) if op == MinMaxOp::Max => true,
+                Some(_) => false,
+                None => {
+                    self.minmax_declined = true;
+                    return;
+                }
+            },
+        };
+        if replace {
+            self.minmax_winner_key = Some(key.clone());
+            if let Some(rel) = rel {
+                self.minmax_winner_rel = Some(rel);
+            } else {
+                self.located_minmax = Some(key);
+            }
+        }
     }
 
     fn new_materializer(
@@ -648,9 +1174,11 @@ impl ScopedSession {
     ///
     /// Declines (returns `false`) when the requested path differs from the one this session owns: rebuilding the step
     /// vector would defeat the reuse and the caller constructs a fresh session instead. Everything else — phase,
-    /// cursor, locator, located record, and the materializer's document-local state — is dropped. The materializer
-    /// shell and immutable schema prototype remain reusable, so a value that failed mid-parse cannot leak document
-    /// state into the next one.
+    /// cursor, locator, located record, the previous requirement's prune hint, and the materializer's document-local
+    /// state — is dropped. The caller re-arms prune from the NEW requirement after a successful reset, the same way
+    /// a fresh open does; leaving the old tree would omit (or keep) members the new hint does not name. The
+    /// materializer shell and immutable schema prototype remain reusable, so a value that failed mid-parse cannot leak
+    /// document state into the next one.
     pub(crate) fn try_reset(
         &mut self,
         steps: &[PortableStep],
@@ -667,6 +1195,28 @@ impl ScopedSession {
         self.coverage = coverage;
         self.phase = SessionPhase::Validate;
         self.type_demand = false;
+        self.skeleton = false;
+        self.oracle = OraclePlan::Off;
+        self.located_child_count = None;
+        self.located_filter_count = None;
+        self.located_probe_count = None;
+        self.located_keys.clear();
+        self.has = None;
+        self.keys = false;
+        self.located_has = None;
+        self.element = ElementOracle::Off;
+        self.minmax = MinMaxOracle::Off;
+        self.located_values.clear();
+        self.element_declined = false;
+        self.located_element_ready = false;
+        self.located_minmax = None;
+        self.minmax_declined = false;
+        self.minmax_winner_key = None;
+        self.minmax_winner_rel = None;
+        self.capture_fields.clear();
+        self.capture_depth = 0;
+        self.object_key_spans.clear();
+        self.filter_scratch.clear();
         self.validate = if allow_adjacent_values {
             ValidatePhase::Value
         } else {
@@ -689,16 +1239,14 @@ impl ScopedSession {
         self.pending_value_start = 0;
         // A range selection re-parses a session-owned wrap buffer, so its materializer runs in copy mode; every other
         // selection materializes a bounded span of the retained input in place.
-        let materializer_mode = if matches!(self.steps.as_slice().last(), Some(ScopedStep::Range { .. })) {
+        let materializer_mode = if matches!(self.steps.as_slice().last(), Some(OwnedStep::Range { .. })) {
             ParseMode::OwnedRun
         } else {
             ParseMode::Document
         };
+        self.prune = None;
         if let Some(materializer) = &mut self.materializer {
             materializer.reset(diagnostics, coverage, materializer_mode);
-            if let Some(tree) = &self.prune {
-                materializer.enable_prune(tree);
-            }
         }
         self.range_buffer = None;
         self.allow_adjacent_values = allow_adjacent_values;
@@ -719,12 +1267,12 @@ impl ScopedSession {
                 .iter()
                 .zip(steps)
                 .all(|(owned, requested)| match (owned, requested) {
-                    (ScopedStep::Member(owned), PortableStep::SemanticMember(requested)) => {
+                    (OwnedStep::Member(owned), PortableStep::SemanticMember(requested)) => {
                         owned.as_str() == requested.as_str()
                     }
-                    (ScopedStep::Index(owned), PortableStep::SemanticIndex(requested)) => owned == requested,
+                    (OwnedStep::Index(owned), PortableStep::SemanticIndex(requested)) => owned == requested,
                     (
-                        ScopedStep::Range { start, end },
+                        OwnedStep::Range { start, end },
                         PortableStep::SemanticRange {
                             start: requested_start,
                             end: requested_end,
@@ -807,6 +1355,33 @@ impl ScopedSession {
         let record = *self.located.as_ref().ok_or_else(data_contract)?;
         if self.type_demand && matches!(record, Located::Node { .. } | Located::Range { .. }) {
             return self.materialize_kind_only(source, record, context.resources());
+        }
+        if self.skeleton
+            && let Located::Node { start, end } = record
+        {
+            match element_kind(source.bytes(), start) {
+                ValueKind::Array => {
+                    return self.publish_located_skeleton(
+                        source,
+                        start,
+                        end,
+                        ContainerSpanKind::Array,
+                        record,
+                        context,
+                    );
+                }
+                ValueKind::Object => {
+                    return self.publish_located_skeleton(
+                        source,
+                        start,
+                        end,
+                        ContainerSpanKind::Object,
+                        record,
+                        context,
+                    );
+                }
+                _ => {}
+            }
         }
         // A RANGE span is `e,e,e` — not standalone JSON — so it materializes through a BRACKET-WRAPPING re-parse
         // out of a session-owned buffer. The buffer cannot be borrowed by the published product, so the range arm
@@ -907,6 +1482,105 @@ impl ScopedSession {
                 OwnedRunPoll::Ready(product) => break product,
             }
         };
+        self.phase = SessionPhase::Finished;
+        self.publish(&product, record)
+    }
+
+    /// Publishes the last-wins span as a lazy container root. Validation already
+    /// proved `[start, end)` one complete container; last-wins replaced the
+    /// pointer and the cached child/filter counts when a later duplicate key
+    /// won. Count reads those caches — no second span lex for length or
+    /// collect-filter.
+    #[allow(
+        unsafe_code,
+        reason = "span admission and source attach are unsafe by jqf-data; the validate walk proved this range on the session-owned source"
+    )]
+    fn publish_located_skeleton<'source>(
+        &mut self,
+        source: ResolvedSource<'source>,
+        start: usize,
+        end: usize,
+        container: ContainerSpanKind,
+        record: Located,
+        context: &mut CodecRunContext<'_, '_>,
+    ) -> Result<AccessResult<'source>, CodecError> {
+        let bytes = &source.bytes()[start..end];
+        let base = source.base_offset().saturating_add(start as u64);
+        let sub = ResolvedSource::new(source.source(), source.label(), bytes, base);
+        let (mut builder, schema) = if let Some(scope) = self.commented {
+            let recipe = (scope.recipe)(scope.dialect).map_err(|_| data_contract())?;
+            AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, self.coverage)
+                .map_err(crate::lex::map_data)?
+        } else {
+            if self.schema_prototype.is_none() {
+                self.schema_prototype = Some(crate::parse::try_schema_prototype(context.resources())?);
+            }
+            let prototype = self.schema_prototype.as_ref().ok_or_else(data_contract)?;
+            prototype
+                .try_new_builder_with_coverage(self.coverage)
+                .map_err(crate::lex::map_data)?
+        };
+        builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+            DocumentCapabilityFamily::Attributes,
+        ));
+        builder.set_diagnostic_coverage(self.diagnostics);
+        let materializer = self.commented.map_or(
+            &crate::lazy::JSON_SPAN_MATERIALIZER as &dyn LazySpanMaterializer,
+            |scope| scope.span_materializer,
+        );
+        builder.bind_span_materializer(materializer);
+        let mut stage = DocumentSourceBindingStage::new(sub).map_err(crate::lex::map_data)?;
+        let binding = loop {
+            // SAFETY: codec-core holds this session's source unchanged; `sub` is
+            // the last-wins range the validate walk recorded on that authority.
+            match unsafe { stage.poll(sub, context.resources()) }.map_err(crate::lex::map_data)? {
+                DocumentSourceBindingPoll::Pending => context.replenish_work()?,
+                DocumentSourceBindingPoll::Ready(binding) => break binding,
+            }
+        };
+        builder.bind_source(binding).map_err(crate::lex::map_data)?;
+        let span = jqf_source::Span::from_usize(0, bytes.len());
+        let kind_slot = match container {
+            ContainerSpanKind::Array => 4,
+            ContainerSpanKind::Object => 5,
+        };
+        let kind = schema.node_kind(kind_slot).ok_or_else(data_contract)?;
+        // SAFETY: the validate walk proved `[start, end)` one complete container
+        // of this session's immutable source; last-wins kept only this range.
+        let root = unsafe {
+            builder.add_prepared_bound_container_span_node(&schema, kind, span, container, context.resources())
+        }
+        .map_err(crate::lex::map_data)?;
+        builder
+            .set_container_span_counts(root, self.located_child_count, self.located_filter_count)
+            .map_err(crate::lex::map_data)?;
+        builder
+            .set_container_span_probe_count(root, self.located_probe_count)
+            .map_err(crate::lex::map_data)?;
+        builder
+            .set_container_span_has(root, self.located_has)
+            .map_err(crate::lex::map_data)?;
+        let keys =
+            (self.keys && container == ContainerSpanKind::Object).then(|| core::mem::take(&mut self.located_keys));
+        builder
+            .set_container_span_keys(root, keys)
+            .map_err(crate::lex::map_data)?;
+        let values = self
+            .located_element_ready
+            .then(|| core::mem::take(&mut self.located_values));
+        builder
+            .set_container_span_values(root, values)
+            .map_err(crate::lex::map_data)?;
+        let minmax = self.take_located_minmax(bytes, context.resources());
+        builder
+            .set_container_span_minmax(root, minmax)
+            .map_err(crate::lex::map_data)?;
+        let document = builder
+            .finish(root, context.resources())
+            .map_err(crate::lex::map_data)?;
+        let document = unsafe { document.with_borrowed_source_from_bound_authority(sub, context.resources()) }
+            .map_err(crate::lex::map_data)?;
+        let product = DocumentProduct::try_new(document, context.resources())?;
         self.phase = SessionPhase::Finished;
         self.publish(&product, record)
     }
@@ -1252,7 +1926,7 @@ impl ScopedSession {
                     }
                     Some(b']') => {
                         self.sync_validate_hoist(cursor, top_state, dirty)?;
-                        let result = self.close_container(cursor + 1, Container::Array);
+                        let result = self.close_container(source, cursor + 1, Container::Array);
                         cursor = self.cursor;
                         dirty = false;
                         break 'batch result;
@@ -1272,7 +1946,7 @@ impl ScopedSession {
                     }
                     Some(b'}') => {
                         self.sync_validate_hoist(cursor, top_state, dirty)?;
-                        let result = self.close_container(cursor + 1, Container::Object);
+                        let result = self.close_container(source, cursor + 1, Container::Object);
                         cursor = self.cursor;
                         dirty = false;
                         break 'batch result;
@@ -1296,7 +1970,7 @@ impl ScopedSession {
                             break 'batch Err(invalid(source, cursor, diag::TRAILING_COMMA, diag::MSG_TRAILING_COMMA));
                         }
                         self.sync_validate_hoist(cursor, top_state, dirty)?;
-                        let result = self.close_container(cursor + 1, Container::Object);
+                        let result = self.close_container(source, cursor + 1, Container::Object);
                         cursor = self.cursor;
                         dirty = false;
                         break 'batch result;
@@ -1321,8 +1995,7 @@ impl ScopedSession {
                         ) {
                             end += 1;
                         }
-                        self.locator
-                            .on_key(bytes, start, end, self.steps.as_slice(), self.frames.len());
+                        self.note_key(bytes, start, end);
                         if self.frontier_active {
                             let raw = bytes.get(start..end).unwrap_or_default();
                             let lossy = alloc::string::String::from_utf8_lossy(raw);
@@ -1363,7 +2036,7 @@ impl ScopedSession {
                         break 'batch Err(invalid(source, cursor, diag::TRAILING_COMMA, diag::MSG_TRAILING_COMMA));
                     }
                     self.sync_validate_hoist(cursor, top_state, dirty)?;
-                    let result = self.close_container(cursor + 1, Container::Array);
+                    let result = self.close_container(source, cursor + 1, Container::Array);
                     cursor = self.cursor;
                     dirty = false;
                     break 'batch result;
@@ -1672,13 +2345,7 @@ impl ScopedSession {
                         state.cursor += 1;
                         self.cursor = state.cursor;
                         if state.target == StrTarget::Key {
-                            self.locator.on_key(
-                                bytes,
-                                state.start.saturating_add(1),
-                                state.cursor.saturating_sub(1),
-                                self.steps.as_slice(),
-                                self.frames.len(),
-                            );
+                            self.note_key(bytes, state.start.saturating_add(1), state.cursor.saturating_sub(1));
                         }
                         if state.target == StrTarget::Key && self.frontier_active {
                             // The key text (raw, escapes included) is the frontier path's object step. The key's length
@@ -1695,7 +2362,7 @@ impl ScopedSession {
                             let depth = self.frame_last()?.path_depth;
                             self.frontier.as_mut_slice()[depth] = PathComponent::Key(text);
                         }
-                        return self.finish_string(state.target);
+                        return self.finish_string(bytes, state.target);
                     }
                     b'\\' => {
                         state.cursor += 1;
@@ -1929,16 +2596,16 @@ impl ScopedSession {
             ));
         }
         self.cursor = state.cursor_usize();
-        self.value_produced(ValueKind::Number)
+        self.value_produced(source.bytes(), ValueKind::Number)
     }
 
-    fn finish_string(&mut self, target: StrTarget) -> Result<bool, CodecError> {
+    fn finish_string(&mut self, bytes: &[u8], target: StrTarget) -> Result<bool, CodecError> {
         match target {
             StrTarget::Key => {
                 self.frame_last()?.state = VState::ObjectColon;
                 Ok(true)
             }
-            StrTarget::Value => self.value_produced(ValueKind::String),
+            StrTarget::Value => self.value_produced(bytes, ValueKind::String),
         }
     }
 
@@ -1976,7 +2643,7 @@ impl ScopedSession {
             b"true" | b"false" => ValueKind::Bool,
             _ => ValueKind::Null,
         };
-        self.value_produced(kind)
+        self.value_produced(source.bytes(), kind)
     }
 
     /// Accepts a complete non-finite spelling ending at `end`. `inf` is a proper prefix of `infinity`, so a spelling
@@ -1987,7 +2654,53 @@ impl ScopedSession {
             self.open_ended = true;
         }
         self.cursor = end;
-        self.value_produced(ValueKind::Number)
+        self.value_produced(source.bytes(), ValueKind::Number)
+    }
+
+    fn note_nested_open(&mut self, container: Container, start: usize) {
+        let Some(parent) = self.frames.last_mut() else {
+            return;
+        };
+        if parent.role == FrameRole::FilterElement && parent.filter_key_matches {
+            parent.filter_member = Some(start);
+            parent.filter_key_matches = false;
+        }
+        if parent.role == FrameRole::LocatedArray
+            && self.oracle.filter_key().is_some()
+            && container != Container::Object
+        {
+            parent.filter_declined = true;
+        }
+        if parent.role == FrameRole::LocatedArray && self.oracle.collect_probe() {
+            if container == Container::Object {
+                parent.filter_hits = parent.filter_hits.saturating_add(1);
+            } else {
+                parent.filter_declined = true;
+            }
+        }
+        if parent.role == FrameRole::LocatedArray {
+            if self.element.captures_objects() && container != Container::Object {
+                self.element_declined = true;
+            }
+            if matches!(&self.minmax, MinMaxOracle::Bare(_)) {
+                self.minmax_declined = true;
+            }
+            if self.minmax.captures_objects() && container != Container::Object {
+                self.minmax_declined = true;
+            }
+        }
+        if parent.role == FrameRole::CaptureElement {
+            match parent.capture {
+                CapturePending::Last(_) => {
+                    self.element_declined = true;
+                    self.minmax_declined = true;
+                }
+                CapturePending::Nest if container != Container::Object => {
+                    self.element_declined = true;
+                }
+                CapturePending::None | CapturePending::Nest => {}
+            }
+        }
     }
 
     fn open_container(
@@ -2017,22 +2730,85 @@ impl ScopedSession {
             });
         }
         let start = next.saturating_sub(1);
-        let scanning = self
+        let locate = self
             .locator
             .on_container_open(start, container, self.steps.as_slice(), self.frames.len());
+        self.note_nested_open(container, start);
+        let parent_role = self.frames.last().map_or(FrameRole::Walk, |frame| frame.role);
+        let records_array = self.oracle.records_array_len()
+            || matches!(self.has, Some(HasOracle::Index(_)))
+            || self.keys
+            || self.element.captures_objects()
+            || !matches!(&self.minmax, MinMaxOracle::Off);
+        let records_object =
+            self.oracle.records_object_len() || matches!(self.has, Some(HasOracle::Member(_))) || self.keys;
+        let role = match (locate, container) {
+            (LocateOpen::Hit, Container::Array) if records_array => {
+                self.located_has = None;
+                self.begin_located_array();
+                FrameRole::LocatedArray
+            }
+            (LocateOpen::Hit, Container::Object) if records_object => {
+                self.object_key_spans.clear();
+                self.located_keys.clear();
+                self.located_has = None;
+                FrameRole::LocatedObject
+            }
+            (LocateOpen::Hit, _) => {
+                self.clear_element_minmax();
+                FrameRole::LocatedOther
+            }
+            _ if parent_role == FrameRole::LocatedArray
+                && container == Container::Object
+                && self.oracle.filter_key().is_some() =>
+            {
+                FrameRole::FilterElement
+            }
+            _ if parent_role == FrameRole::LocatedArray
+                && container == Container::Object
+                && (self.element.captures_objects() || self.minmax.captures_objects()) =>
+            {
+                self.begin_capture();
+                FrameRole::CaptureElement
+            }
+            _ if parent_role == FrameRole::CaptureElement
+                && container == Container::Object
+                && !self.element_declined
+                && self
+                    .frames
+                    .last()
+                    .is_some_and(|frame| frame.capture == CapturePending::Nest) =>
+            {
+                self.capture_depth = self.capture_depth.saturating_add(1);
+                FrameRole::CaptureElement
+            }
+            _ => FrameRole::Walk,
+        };
         self.frames.push(VFrame {
             state,
             _depth: depth,
             path_depth,
             values: 0,
             start,
-            scanning,
+            scanning: locate == LocateOpen::Scan,
+            role,
+            child_count: 0,
+            filter_hits: 0,
+            filter_declined: false,
+            filter_member: None,
+            filter_key_matches: false,
+            capture: CapturePending::None,
         });
         self.cursor = next;
         Ok(true)
     }
 
-    fn close_container(&mut self, next: usize, container: Container) -> Result<bool, CodecError> {
+    fn close_container(
+        &mut self,
+        source: ResolvedSource<'_>,
+        next: usize,
+        container: Container,
+    ) -> Result<bool, CodecError> {
         let frame = self.frames.pop().ok_or_else(data_contract)?;
         while self.frontier.len() > frame.path_depth {
             self.frontier.pop();
@@ -2040,6 +2816,61 @@ impl ScopedSession {
         let is_object = matches!(frame.state, VState::ObjectKeyOrEnd { .. } | VState::ObjectCommaOrEnd);
         if (container == Container::Object) != is_object {
             return Err(data_contract());
+        }
+        match frame.role {
+            FrameRole::LocatedArray => {
+                self.located_child_count = Some(frame.child_count);
+                self.located_filter_count =
+                    (self.oracle.filter_key().is_some() && !frame.filter_declined).then_some(frame.filter_hits);
+                self.located_probe_count =
+                    (self.oracle.collect_probe() && !frame.filter_declined).then_some(frame.filter_hits);
+                if let Some(HasOracle::Index(index)) = self.has {
+                    self.located_has = usize::try_from(frame.child_count)
+                        .ok()
+                        .and_then(|len| jqf_data::resolve_index(len, index))
+                        .map(|_| true);
+                    if self.located_has.is_none() {
+                        self.located_has = Some(false);
+                    }
+                }
+                self.finish_located_array();
+            }
+            FrameRole::LocatedObject => {
+                self.located_child_count = Some(frame.child_count);
+                self.located_filter_count = None;
+                self.located_probe_count = None;
+                if matches!(self.has, Some(HasOracle::Member(_))) && self.located_has.is_none() {
+                    self.located_has = Some(false);
+                }
+            }
+            FrameRole::LocatedOther => {
+                self.located_child_count = None;
+                self.located_filter_count = None;
+                self.located_probe_count = None;
+                self.located_keys.clear();
+                self.located_has = None;
+                self.clear_element_minmax();
+            }
+            FrameRole::FilterElement => match self.filter_element_contribution(source.bytes(), &frame) {
+                Some(hits) => {
+                    if let Some(parent) = self.frames.last_mut() {
+                        parent.filter_hits = parent.filter_hits.saturating_add(hits);
+                    }
+                }
+                None => {
+                    if let Some(parent) = self.frames.last_mut() {
+                        parent.filter_declined = true;
+                    }
+                }
+            },
+            FrameRole::CaptureElement => match self.frames.last().map(|parent| parent.role) {
+                Some(FrameRole::LocatedArray) => self.finish_capture(&frame, next),
+                Some(FrameRole::CaptureElement) => {
+                    self.capture_depth = self.capture_depth.saturating_sub(1);
+                }
+                _ => {}
+            },
+            FrameRole::Walk => {}
         }
         self.locator.finish_container(
             frame.start,
@@ -2055,6 +2886,13 @@ impl ScopedSession {
         Ok(true)
     }
 
+    fn filter_element_contribution(&mut self, bytes: &[u8], frame: &VFrame) -> Option<u64> {
+        match frame.filter_member {
+            None => oracle_filter_answer(&self.oracle, CountMember::Null).map(u64::from),
+            Some(at) => oracle_filter_classify(&self.oracle, bytes, at, &mut self.filter_scratch).map(u64::from),
+        }
+    }
+
     /// Transitions the parent frame to mark that its pending slot is now filled, mirroring `JsonParseState::attach`.
     fn attach_to_parent(&mut self) -> Result<(), CodecError> {
         let Some(index) = self.frames.len().checked_sub(1) else {
@@ -2067,7 +2905,11 @@ impl ScopedSession {
         let state = mem::replace(&mut self.frames.as_mut_slice()[index].state, VState::ArrayCommaOrEnd);
         match state {
             VState::ArrayValueOrEnd { .. } => {
-                self.frames.as_mut_slice()[index].state = VState::ArrayCommaOrEnd;
+                let frame = &mut self.frames.as_mut_slice()[index];
+                frame.state = VState::ArrayCommaOrEnd;
+                if frame.role == FrameRole::LocatedArray {
+                    frame.child_count = frame.child_count.saturating_add(1);
+                }
                 Ok(())
             }
             VState::ObjectValue => {
@@ -2083,8 +2925,70 @@ impl ScopedSession {
 
     /// Handles a completed scalar/string/number value: attach to parent, and move to trailing when the root value is
     /// complete.
-    fn value_produced(&mut self, kind: ValueKind) -> Result<bool, CodecError> {
+    fn value_produced(&mut self, bytes: &[u8], kind: ValueKind) -> Result<bool, CodecError> {
         self.flush_pending_comments();
+        let role = self.frames.last().map(|frame| frame.role);
+        let key_matches = self.frames.last().is_some_and(|frame| frame.filter_key_matches);
+        let capture = self.frames.last().map_or(CapturePending::None, |frame| frame.capture);
+        match role {
+            Some(FrameRole::FilterElement) if key_matches => {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.filter_member = Some(self.pending_value_start);
+                    frame.filter_key_matches = false;
+                }
+            }
+            Some(FrameRole::CaptureElement) => {
+                match capture {
+                    CapturePending::Last(index) => {
+                        match json_scalar_value(bytes, self.pending_value_start, &mut self.filter_scratch) {
+                            Some(value) if index < self.capture_fields.len() => {
+                                self.capture_fields[index] = Some(value);
+                            }
+                            _ => {
+                                self.element_declined = true;
+                                self.minmax_declined = true;
+                            }
+                        }
+                    }
+                    CapturePending::Nest if kind != ValueKind::Null => {
+                        self.element_declined = true;
+                    }
+                    CapturePending::None | CapturePending::Nest => {}
+                }
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.capture = CapturePending::None;
+                }
+            }
+            Some(FrameRole::LocatedArray) => {
+                if self.oracle.filter_key().is_some() {
+                    // Span-leaf law: only `null` items (and objects, handled as FilterElement) are rankable; every
+                    // other scalar is a type mismatch — decline the cache and let the leaf/floor answer.
+                    let answer = if kind == ValueKind::Null {
+                        oracle_filter_answer(&self.oracle, CountMember::Null)
+                    } else {
+                        None
+                    };
+                    if let Some(frame) = self.frames.last_mut() {
+                        match answer {
+                            Some(true) => frame.filter_hits = frame.filter_hits.saturating_add(1),
+                            Some(false) => {}
+                            None => frame.filter_declined = true,
+                        }
+                    }
+                } else if self.oracle.collect_probe()
+                    && let Some(frame) = self.frames.last_mut()
+                {
+                    if kind == ValueKind::Null {
+                        frame.filter_hits = frame.filter_hits.saturating_add(1);
+                    } else {
+                        frame.filter_declined = true;
+                    }
+                }
+                self.note_located_array_scalar(bytes, kind);
+            }
+            Some(FrameRole::Walk | FrameRole::LocatedOther | FrameRole::LocatedObject | FrameRole::FilterElement)
+            | None => {}
+        }
         self.locator.finish_scalar(
             self.pending_value_start,
             self.cursor,
@@ -2097,6 +3001,53 @@ impl ScopedSession {
             self.validate = ValidatePhase::Trailing;
         }
         Ok(true)
+    }
+
+    fn note_key(&mut self, bytes: &[u8], start: usize, end: usize) {
+        self.locator
+            .on_key(bytes, start, end, self.steps.as_slice(), self.frames.len());
+        if let Some((key, _)) = self.oracle.filter_key()
+            && let Some(frame) = self.frames.last_mut()
+            && frame.role == FrameRole::FilterElement
+        {
+            frame.filter_key_matches = key_equals_inner(bytes, start, end, key);
+        }
+        if self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.role == FrameRole::CaptureElement)
+        {
+            let pending = self.capture_pending(bytes, start, end);
+            if let Some(frame) = self.frames.last_mut() {
+                frame.capture = pending;
+            }
+        }
+        let located_object = self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.role == FrameRole::LocatedObject);
+        if located_object {
+            let duplicate = self
+                .object_key_spans
+                .iter()
+                .any(|&(seen_start, seen_end)| key_spans_equal(bytes, seen_start, seen_end, start, end));
+            if !duplicate {
+                self.object_key_spans.push((start, end));
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.child_count = frame.child_count.saturating_add(1);
+                }
+                if self.keys
+                    && let Some(name) = decode_object_key(bytes, start, end)
+                {
+                    self.located_keys.push(name);
+                }
+            }
+            if let Some(HasOracle::Member(key)) = &self.has
+                && key_equals_inner(bytes, start, end, key)
+            {
+                self.located_has = Some(true);
+            }
+        }
     }
 
     fn validate_trailing(
@@ -2166,13 +3117,13 @@ impl ScopedSession {
             return false;
         }
         match self.steps.get(frame.step) {
-            Some(ScopedStep::Member(_)) => frame.key_matches,
-            Some(ScopedStep::Index(index)) if *index >= 0 => {
+            Some(OwnedStep::Member(_)) => frame.key_matches,
+            Some(OwnedStep::Index(index)) if *index >= 0 => {
                 usize::try_from(*index).is_ok_and(|target| frame.count == target)
             }
             // Negative-index and range winners resolve after the array closes.
             // Seeding here would attach the last element's comments.
-            Some(ScopedStep::Index(_) | ScopedStep::Range { .. }) | None => false,
+            Some(OwnedStep::Index(_) | OwnedStep::Range { .. }) | None => false,
         }
     }
 
@@ -2274,11 +3225,19 @@ impl ScopedSession {
     }
 }
 
-fn step_accepts(step: &ScopedStep, container: Container) -> bool {
+fn oracle_filter_answer(plan: &OraclePlan, member: CountMember<'_>) -> Option<bool> {
+    plan.filter_key()?.1.answer(member)
+}
+
+fn oracle_filter_classify(plan: &OraclePlan, bytes: &[u8], at: usize, scratch: &mut String) -> Option<bool> {
+    let member = crate::lazy::classify_member(bytes, at, scratch)?;
+    oracle_filter_answer(plan, member)
+}
+
+fn step_accepts(step: &OwnedStep, container: Container) -> bool {
     matches!(
         (step, container),
-        (ScopedStep::Member(_), Container::Object)
-            | (ScopedStep::Index(_) | ScopedStep::Range { .. }, Container::Array)
+        (OwnedStep::Member(_), Container::Object) | (OwnedStep::Index(_) | OwnedStep::Range { .. }, Container::Array)
     )
 }
 
@@ -2302,14 +3261,14 @@ impl PathLocator {
         self.result.take().ok_or_else(data_contract)
     }
 
-    fn on_key(&mut self, bytes: &[u8], start: usize, end: usize, steps: &[ScopedStep], frame_depth: usize) {
+    fn on_key(&mut self, bytes: &[u8], start: usize, end: usize, steps: &[OwnedStep], frame_depth: usize) {
         if self.result.is_some() || frame_depth != self.stack.len() {
             return;
         }
         let Some(frame) = self.stack.last_mut() else {
             return;
         };
-        let Some(ScopedStep::Member(name)) = steps.get(frame.step) else {
+        let Some(OwnedStep::Member(name)) = steps.get(frame.step) else {
             return;
         };
         frame.key_matches = key_equals_inner(bytes, start, end, name);
@@ -2319,49 +3278,49 @@ impl PathLocator {
         &mut self,
         start: usize,
         container: Container,
-        steps: &[ScopedStep],
+        steps: &[OwnedStep],
         frame_depth: usize,
-    ) -> bool {
+    ) -> LocateOpen {
         if self.result.is_some() {
-            return false;
+            return LocateOpen::Skip;
         }
         let kind = container_kind(container);
         if self.stack.is_empty() {
             if steps.is_empty() {
-                return false;
+                return LocateOpen::Skip;
             }
             if !step_accepts(&steps[0], container) {
                 self.result = Some(Located::TypeMismatch { step: 0, actual: kind });
-                return false;
+                return LocateOpen::Skip;
             }
             self.stack.push(LocateFrame::new(0, start, container, &steps[0]));
-            return true;
+            return LocateOpen::Scan;
         }
         if frame_depth != self.stack.len() {
-            return false;
+            return LocateOpen::Skip;
         }
         let Some(frame) = self.stack.last() else {
-            return false;
+            return LocateOpen::Skip;
         };
-        if matches!(steps.get(frame.step), Some(ScopedStep::Range { .. })) {
-            return false;
+        if matches!(steps.get(frame.step), Some(OwnedStep::Range { .. })) {
+            return LocateOpen::Skip;
         }
         if !Self::child_is_candidate(frame, steps) {
-            return false;
+            return LocateOpen::Skip;
         }
         let next = frame.step + 1;
         if next >= steps.len() {
-            return false;
+            return LocateOpen::Hit;
         }
         if !step_accepts(&steps[next], container) {
             self.pending_mismatch = Some(Located::TypeMismatch {
                 step: next,
                 actual: kind,
             });
-            return false;
+            return LocateOpen::Skip;
         }
         self.stack.push(LocateFrame::new(next, start, container, &steps[next]));
-        true
+        LocateOpen::Scan
     }
 
     fn finish_container(
@@ -2369,7 +3328,7 @@ impl PathLocator {
         start: usize,
         end: usize,
         scanning: bool,
-        steps: &[ScopedStep],
+        steps: &[OwnedStep],
         frame_depth: usize,
     ) -> Result<(), CodecError> {
         if scanning {
@@ -2397,7 +3356,7 @@ impl PathLocator {
         Ok(())
     }
 
-    fn finish_scalar(&mut self, start: usize, end: usize, kind: ValueKind, steps: &[ScopedStep], frame_depth: usize) {
+    fn finish_scalar(&mut self, start: usize, end: usize, kind: ValueKind, steps: &[OwnedStep], frame_depth: usize) {
         if self.result.is_some() {
             return;
         }
@@ -2436,18 +3395,18 @@ impl PathLocator {
         self.record_child(start, end, nested, steps);
     }
 
-    fn child_is_candidate(frame: &LocateFrame, steps: &[ScopedStep]) -> bool {
+    fn child_is_candidate(frame: &LocateFrame, steps: &[OwnedStep]) -> bool {
         match steps.get(frame.step) {
-            Some(ScopedStep::Member(_)) => frame.key_matches,
-            Some(ScopedStep::Index(index)) if *index >= 0 => {
+            Some(OwnedStep::Member(_)) => frame.key_matches,
+            Some(OwnedStep::Index(index)) if *index >= 0 => {
                 usize::try_from(*index).is_ok_and(|target| frame.count == target)
             }
-            Some(ScopedStep::Index(_) | ScopedStep::Range { .. }) => true,
+            Some(OwnedStep::Index(_) | OwnedStep::Range { .. }) => true,
             None => false,
         }
     }
 
-    fn record_child(&mut self, start: usize, end: usize, nested: Option<Located>, steps: &[ScopedStep]) {
+    fn record_child(&mut self, start: usize, end: usize, nested: Option<Located>, steps: &[OwnedStep]) {
         let Some(frame) = self.stack.last_mut() else {
             return;
         };
@@ -2455,19 +3414,19 @@ impl PathLocator {
         if candidate {
             let span = (start, end);
             match steps.get(frame.step) {
-                Some(ScopedStep::Index(index)) if *index < 0 => {
+                Some(OwnedStep::Index(index)) if *index < 0 => {
                     // The ring is the ONLY thing a negative-index pop reads (`pop_and_resolve`); winner/nested stores
                     // for this arm would be dead.
                     if let Some(ring) = frame.ring.as_mut() {
                         ring.push(span, nested);
                     }
                 }
-                Some(ScopedStep::Range { .. }) => {
+                Some(OwnedStep::Range { .. }) => {
                     if let Some(range) = frame.range.as_mut() {
                         range.observe(frame.count, start, end);
                     }
                 }
-                Some(ScopedStep::Member(_) | ScopedStep::Index(_)) => {
+                Some(OwnedStep::Member(_) | OwnedStep::Index(_)) => {
                     frame.winner = Some(span);
                     frame.nested = nested;
                 }
@@ -2478,12 +3437,12 @@ impl PathLocator {
         frame.key_matches = false;
     }
 
-    fn pop_and_resolve(&mut self, steps: &[ScopedStep]) -> Result<Located, CodecError> {
+    fn pop_and_resolve(&mut self, steps: &[OwnedStep]) -> Result<Located, CodecError> {
         let frame = self.stack.pop().ok_or_else(data_contract)?;
         if let Some(range) = frame.range {
             return Ok(range.finish(frame.count));
         }
-        if matches!(steps.get(frame.step), Some(ScopedStep::Index(index)) if *index < 0) {
+        if matches!(steps.get(frame.step), Some(OwnedStep::Index(index)) if *index < 0) {
             if let Some(nested) = frame.ring.as_ref().and_then(Ring::winner_nested) {
                 return Ok(nested);
             }
@@ -2503,15 +3462,15 @@ impl PathLocator {
 }
 
 impl LocateFrame {
-    fn new(step: usize, _start: usize, _container: Container, spec: &ScopedStep) -> Self {
+    fn new(step: usize, _start: usize, _container: Container, spec: &OwnedStep) -> Self {
         let ring = match spec {
-            ScopedStep::Index(index) if *index < 0 => {
+            OwnedStep::Index(index) if *index < 0 => {
                 Some(Ring::new(usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX)))
             }
             _ => None,
         };
         let range = match spec {
-            ScopedStep::Range { start, end } => Some(RangeTrack::try_new(*start, *end)),
+            OwnedStep::Range { start, end } => Some(RangeTrack::try_new(*start, *end)),
             _ => None,
         };
         Self {
@@ -2803,6 +3762,196 @@ fn classify(bytes: &[u8], pos: usize) -> ValueKind {
     element_kind(bytes, pos)
 }
 
+fn json_scalar_value(bytes: &[u8], at: usize, scratch: &mut String) -> Option<Value> {
+    match bytes.get(at).copied()? {
+        b'n' if bytes[at..].starts_with(b"null") => Some(Value::Null),
+        b't' => Some(Value::Bool(true)),
+        b'f' => Some(Value::Bool(false)),
+        b'"' => match crate::lazy::classify_member(bytes, at, scratch)? {
+            CountMember::Text(text) => jqf_data::Shared::<str>::try_from_str(text).ok().map(Value::String),
+            _ => None,
+        },
+        b'-' | b'0'..=b'9' => {
+            let run = jqf_codec_core::byte_scan::prefix_len::<jqf_codec_core::byte_scan::Delimiter>(&bytes[at..]);
+            let literal = core::str::from_utf8(&bytes[at..at + run]).ok()?;
+            Number::try_json_literal(literal).ok().map(Value::Number)
+        }
+        _ => None,
+    }
+}
+
+fn finite_number(value: &Value) -> bool {
+    match value.untagged() {
+        Value::Number(number) => match number.as_float() {
+            Some(float) => float.get().is_finite(),
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+fn cmp_numbers(left: &Value, right: &Value) -> Option<Ordering> {
+    let Value::Number(left) = left.untagged() else {
+        return None;
+    };
+    let Value::Number(right) = right.untagged() else {
+        return None;
+    };
+    if let (Some(a), Some(b)) = (left.as_machine(), right.as_machine()) {
+        return Some(a.cmp(&b));
+    }
+    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
+        let (a, b) = (a.get(), b.get());
+        return if a.is_finite() && b.is_finite() {
+            a.partial_cmp(&b)
+        } else {
+            None
+        };
+    }
+    let mut buf_a = [0u8; 20];
+    let mut buf_b = [0u8; 20];
+    let (neg_a, digits_a, scale_a) = number_parts(left, &mut buf_a)?;
+    let (neg_b, digits_b, scale_b) = number_parts(right, &mut buf_b)?;
+    Some(cmp_decimal_parts(neg_a, digits_a, scale_a, neg_b, digits_b, scale_b))
+}
+
+fn number_parts<'a>(number: &'a Number, buf: &'a mut [u8; 20]) -> Option<(bool, &'a str, i64)> {
+    if let Some(machine) = number.as_machine() {
+        let negative = machine < 0;
+        return Some((negative, render_u64_digits(machine.unsigned_abs(), buf), 0));
+    }
+    if let Some(integer) = number.as_integer() {
+        let text = integer.as_str();
+        let negative = text.starts_with('-');
+        return Some((negative, text.trim_start_matches('-'), 0));
+    }
+    let decimal = number.as_decimal()?;
+    let text = decimal.coefficient().as_str();
+    Some((text.starts_with('-'), text.trim_start_matches('-'), decimal.scale()))
+}
+
+fn render_u64_digits(magnitude: u64, buf: &mut [u8; 20]) -> &str {
+    if magnitude == 0 {
+        buf[19] = b'0';
+        return core::str::from_utf8(&buf[19..]).unwrap_or("0");
+    }
+    let mut index = 20;
+    let mut rest = magnitude;
+    while rest > 0 {
+        index -= 1;
+        buf[index] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+    }
+    core::str::from_utf8(&buf[index..]).unwrap_or("0")
+}
+
+fn cmp_decimal_parts(
+    negative_a: bool,
+    digits_a: &str,
+    scale_a: i64,
+    negative_b: bool,
+    digits_b: &str,
+    scale_b: i64,
+) -> Ordering {
+    let zero_a = digits_a.bytes().all(|byte| byte == b'0');
+    let zero_b = digits_b.bytes().all(|byte| byte == b'0');
+    match (zero_a, zero_b) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return if negative_b { Ordering::Greater } else { Ordering::Less },
+        (false, true) => return if negative_a { Ordering::Less } else { Ordering::Greater },
+        (false, false) => {}
+    }
+    match (negative_a, negative_b) {
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        _ => {}
+    }
+    let magnitude = |digits: &str, scale: i64| i128::from(digits.len() as u64) - i128::from(scale);
+    let (adj_a, adj_b) = (magnitude(digits_a, scale_a), magnitude(digits_b, scale_b));
+    let flip = |ordering: Ordering| {
+        if negative_a { ordering.reverse() } else { ordering }
+    };
+    if adj_a != adj_b {
+        return flip(adj_a.cmp(&adj_b));
+    }
+    let len = digits_a.len().max(digits_b.len());
+    let digit_at = |digits: &str, index: usize| digits.as_bytes().get(index).copied().unwrap_or(b'0');
+    let mut ordering = Ordering::Equal;
+    for index in 0..len {
+        ordering = digit_at(digits_a, index).cmp(&digit_at(digits_b, index));
+        if ordering != Ordering::Equal {
+            break;
+        }
+    }
+    flip(ordering)
+}
+
+fn key_spans_equal(bytes: &[u8], a0: usize, a1: usize, b0: usize, b1: usize) -> bool {
+    if a0 == b0 && a1 == b1 {
+        return true;
+    }
+    if a0 > a1 || a1 > bytes.len() || b0 > b1 || b1 > bytes.len() {
+        return false;
+    }
+    let left = &bytes[a0..a1];
+    let right = &bytes[b0..b1];
+    if !left.contains(&b'\\') && !right.contains(&b'\\') {
+        return left == right;
+    }
+    decode_object_key(bytes, a0, a1).is_some_and(|name| key_equals_inner(bytes, b0, b1, &name))
+}
+
+fn decode_object_key(bytes: &[u8], start: usize, end: usize) -> Option<alloc::string::String> {
+    if start > end || end > bytes.len() {
+        return None;
+    }
+    let key = &bytes[start..end];
+    if !key.contains(&b'\\') {
+        return alloc::string::String::from_utf8(key.to_vec()).ok();
+    }
+    let mut out = alloc::vec::Vec::new();
+    let mut i = 0;
+    let mut buf = [0u8; 4];
+    while i < key.len() {
+        let byte = key[i];
+        if byte != b'\\' {
+            out.push(byte);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= key.len() {
+            return None;
+        }
+        let escape = key[i];
+        i += 1;
+        let ch = match escape {
+            b'u' if i + 4 <= key.len() => {
+                let high = hex4(key, i);
+                i += 4;
+                if (0xd800..=0xdbff).contains(&high) {
+                    if i + 6 <= key.len() && key[i] == b'\\' && key[i + 1] == b'u' {
+                        i += 2;
+                        let low = hex4(key, i);
+                        i += 4;
+                        let scalar = 0x1_0000 + ((u32::from(high) - 0xd800) << 10) + (u32::from(low) - 0xdc00);
+                        char::from_u32(scalar)?
+                    } else {
+                        return None;
+                    }
+                } else if (0xdc00..=0xdfff).contains(&high) {
+                    '\u{fffd}'
+                } else {
+                    char::from_u32(u32::from(high))?
+                }
+            }
+            other => crate::json_simple_unescape(other)?,
+        };
+        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+    }
+    alloc::string::String::from_utf8(out).ok()
+}
+
 /// Compares the object-key content `bytes[a..b]` (between the quotes, possibly escaped) against `member`, decoding
 /// escapes and surrogate pairs identically to the full parser so the winner matches `ObjectView::get`.
 ///
@@ -2839,14 +3988,6 @@ pub(crate) fn key_equals_inner(bytes: &[u8], a: usize, b: usize, member: &str) -
             let escape = key[i];
             i += 1;
             let ch = match escape {
-                b'"' => '"',
-                b'\\' => '\\',
-                b'/' => '/',
-                b'b' => '\u{8}',
-                b'f' => '\u{c}',
-                b'n' => '\n',
-                b'r' => '\r',
-                b't' => '\t',
                 b'u' => {
                     let high = hex4(key, i);
                     i += 4;
@@ -2883,7 +4024,10 @@ pub(crate) fn key_equals_inner(bytes: &[u8], a: usize, b: usize, member: &str) -
                         }
                     }
                 }
-                _ => return false,
+                other => match crate::json_simple_unescape(other) {
+                    Some(ch) => ch,
+                    None => return false,
+                },
             };
             let encoded = ch.encode_utf8(&mut buf).as_bytes();
             if mbytes.len() < mi + encoded.len() || &mbytes[mi..mi + encoded.len()] != encoded {
@@ -3203,7 +4347,10 @@ mod tests {
     use super::skip_oracle::ValueSkip;
     use super::{Ring, ScopedSession, classify, element_kind, key_equals_inner};
     use crate::lex::is_delimiter;
-    use jqf_codec_core::{AccessOutcome, AccessSession, ExactPath, ExactSelectionRecord, SelectionOrigin};
+    use jqf_codec_core::{
+        AccessInput, AccessOutcome, AccessSession, CodecRunContext, ExactPath, ExactSelectionRecord, PruneTree,
+        SelectionOrigin,
+    };
     use jqf_data::{BuilderCoverage, DiagnosticCoverage, ValueKind};
 
     use crate::test_support;
@@ -3702,6 +4849,92 @@ mod tests {
         assert!(
             !reset(&mut session, &path(&[], Some(0))),
             "a different step kind must decline"
+        );
+    }
+
+    fn keep_members(resources: &jqf_resource::ResourceContext<'_>, names: &[&str]) -> PruneTree {
+        let mut tree = PruneTree::try_new(resources).expect("tree");
+        for name in names {
+            let keep = tree.try_push_node(true).expect("keep");
+            tree.try_push_key(PruneTree::ROOT, name, keep).expect("key");
+        }
+        tree
+    }
+
+    fn located_object(
+        result: &jqf_codec_core::AccessResult<'_>,
+        resources: &mut jqf_resource::ResourceContext<'_>,
+    ) -> jqf_data::Value {
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("expected located")
+        };
+        located
+            .product()
+            .document()
+            .materialize_root(resources)
+            .expect("materialize")
+    }
+
+    /// `try_reset` drops the previous prune; `arm_prune` after reset must install the new tree on the reused
+    /// materializer. Re-enabling the old tree, or updating only `self.prune`, would keep `b` on the second product.
+    #[test]
+    fn try_reset_then_arm_prune_applies_the_new_tree_to_the_existing_materializer() {
+        let mut resources = test_support::resources();
+        let mut path = ExactPath::try_new(&resources);
+        path.try_push_semantic_member("n", &resources).expect("member");
+        let schema = crate::parse::try_schema_prototype(&resources).expect("schema");
+        let mut session = ScopedSession::try_new_with_schema_prototype(
+            path.steps(),
+            SelectionOrigin::new(0),
+            DiagnosticCoverage::NotRequested,
+            BuilderCoverage::minimal_semantic(),
+            true,
+            schema,
+            &resources,
+        )
+        .expect("session");
+        session.arm_prune(keep_members(&resources, &["a", "b"]));
+
+        let source = |bytes: &'static [u8]| {
+            jqf_source::ResolvedSource::new(
+                jqf_source::SourceRef::new(jqf_source::SourceId::new(1), jqf_source::SourceKind::Input),
+                "<test>",
+                bytes,
+                0,
+            )
+        };
+        let decode =
+            |session: &mut ScopedSession, resources: &mut jqf_resource::ResourceContext<'_>, bytes: &'static [u8]| {
+                let mut run = CodecRunContext::new(resources);
+                run.set_cooperative_credits(4_096);
+                session
+                    .decode(AccessInput::Source(source(bytes)), &mut run)
+                    .expect("decode")
+            };
+
+        {
+            let first = decode(&mut session, &mut resources, br#"{"n":{"a":1,"b":2}}"#);
+            let jqf_data::Value::Object(first_object) = located_object(&first, &mut resources) else {
+                panic!("object")
+            };
+            assert!(first_object.get("a").is_some() && first_object.get("b").is_some());
+        }
+
+        assert!(session.try_reset(
+            path.steps(),
+            SelectionOrigin::new(0),
+            DiagnosticCoverage::NotRequested,
+            BuilderCoverage::minimal_semantic(),
+            true,
+        ));
+        session.arm_prune(keep_members(&resources, &["a"]));
+        let second = decode(&mut session, &mut resources, br#"{"n":{"a":1,"b":2}}"#);
+        let jqf_data::Value::Object(second_object) = located_object(&second, &mut resources) else {
+            panic!("object")
+        };
+        assert!(
+            second_object.get("a").is_some() && second_object.get("b").is_none(),
+            "the new prune must omit b on the reused materializer"
         );
     }
 

@@ -1,10 +1,10 @@
 //! Flat-config codec receipt battery.
 //!
-//! The route-slot duty: ONE advertised slot, Whole/`CompleteDocument`, for
-//! each of the three formats — the same inventory `jqf-sdk-smoke` pins. The
-//! battery drives the registration's own decoder and encoder factories:
-//! every value is a String, comments attach as the grammar's comment fact,
-//! and the decode∘encode fixpoint holds on normalized documents.
+//! The route-slot duty: two advertised slots, Whole/`CompleteDocument` and
+//! Exact/`Located`, for each of the three formats. The battery drives the
+//! registration's own decoder and encoder factories: every value is a
+//! String, comments attach as the grammar's comment fact, and the
+//! decode∘encode fixpoint holds on normalized documents.
 
 use jqf_codec_core::{
     AccessFootprintKind, AccessOutcome, AccessResultKind, CodecRunContext, DecodeRequest, DiagnosticPolicy, EncodeItem,
@@ -126,7 +126,43 @@ fn member_text<'a>(object: &'a Value, key: &str) -> Result<&'a str, String> {
     Ok(text.as_str())
 }
 
-/// The flat-config smoke battery: registration validity, the single-slot
+fn assert_two_slot_inventory(
+    registration: &jqf_codec_core::CodecRegistration<'static>,
+    case: &Case,
+) -> Result<(), String> {
+    let mut resources = resources();
+    let provider = registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(b"a=1\n"),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(case.input_dialect).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )
+        .map_err(|e| format!("{} provider: {:?}", case.format, e.kind()))?;
+    let kinds: Vec<(u32, AccessFootprintKind, AccessResultKind)> = provider
+        .route_descriptions()
+        .iter()
+        .map(|route| (route.slot().get(), route.bundle().footprint(), route.bundle().result()))
+        .collect();
+    let expected = [
+        (0, AccessFootprintKind::Whole, AccessResultKind::CompleteDocument),
+        (1, AccessFootprintKind::Exact, AccessResultKind::Located),
+    ];
+    if kinds != expected {
+        return Err(format!("{} route inventory drifted: {kinds:?}", case.format));
+    }
+    Ok(())
+}
+
+/// The flat-config smoke battery: registration validity, the two-slot
 /// route inventory, strings-only projection with comment facts, the
 /// decode∘encode fixpoint, and the terminal-failure law.
 pub fn run() -> Result<(), String> {
@@ -143,34 +179,7 @@ pub fn run() -> Result<(), String> {
                 case.format
             ));
         }
-        {
-            let mut resources = resources();
-            let provider = registration
-                .decoder()
-                .expect("decoder")
-                .create_provider(
-                    source(b"a=1\n"),
-                    DecodeRequest {
-                        validation: ValidationMode::Strict,
-                        diagnostics: DiagnosticPolicy::ErrorsOnly,
-                        dialect: &DialectId::try_new(case.input_dialect).expect("dialect"),
-                        options: None,
-                        allow_adjacent_values: false,
-                        value_separator: &[],
-                    },
-                    &mut resources,
-                )
-                .map_err(|e| format!("{} provider: {:?}", case.format, e.kind()))?;
-            let kinds: Vec<(u32, AccessFootprintKind, AccessResultKind)> = provider
-                .route_descriptions()
-                .iter()
-                .map(|route| (route.slot().get(), route.bundle().footprint(), route.bundle().result()))
-                .collect();
-            let expected = [(0, AccessFootprintKind::Whole, AccessResultKind::CompleteDocument)];
-            if kinds != expected {
-                return Err(format!("{} route inventory drifted: {kinds:?}", case.format));
-            }
-        }
+        assert_two_slot_inventory(&registration, case)?;
         if !descriptor
             .dialects()
             .iter()
@@ -233,7 +242,7 @@ pub fn run() -> Result<(), String> {
             return Err(format!("member {:?} is not a string", entry.key()));
         }
     }
-    println!("flat-config-smoke: formats=3 routes=1 fixpoint=true strings_only=true terminal=true");
+    println!("flat-config-smoke: formats=3 routes=2 fixpoint=true strings_only=true terminal=true");
     Ok(())
 }
 

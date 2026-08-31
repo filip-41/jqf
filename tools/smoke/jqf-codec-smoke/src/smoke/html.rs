@@ -25,7 +25,7 @@
 
 use crate::drive::{resources, resume, source, whole_requirement};
 use jqf_codec_core::{
-    AccessFootprintKind, AccessOutcome, AccessResultKind, CodecRunContext, DecodeRequest, DiagnosticPolicy,
+    AccessFootprintKind, AccessOutcome, AccessResultKind, CodecRunContext, DecodeRequest, DiagnosticPolicy, FactIntent,
     ValidationMode,
 };
 use jqf_data::{DialectId, FactPayloadView, LocalOwnerRef, ReaderPoll, Value};
@@ -258,7 +258,8 @@ fn css_corpus() -> Result<(), String> {
             &mut resources,
         )
         .map_err(|error| format!("html provider: {error:?}"))?;
-    let requirement = whole_requirement(&resources);
+    // CSS walks occurrence topology and attribute facts; identity coverage omits both.
+    let requirement = whole_requirement(&resources).with_fact_intent(FactIntent::Preserve);
     let handle = provider
         .bind(&requirement)
         .map_err(|error| format!("bind: {error:?}"))?;

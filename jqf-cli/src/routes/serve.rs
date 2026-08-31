@@ -629,24 +629,11 @@ impl ItemSink for SessionSink {
     }
 }
 
-/// Writes `text` as one JSON string literal (quotes included) into `out`: quotes, backslashes and C0 controls escaped,
-/// everything else copied verbatim. The error-frame texts are diagnostic renderings, so this only needs to be correct,
-/// never fast.
+/// Writes `text` as one JSON string literal (quotes included) into `out`. The body is
+/// [`jqf_codec_json::push_json_escaped`]: quote, backslash, C0, and DEL `0x7F`.
 fn write_json_string(out: &mut Vec<u8>, text: &str) {
     out.push(b'"');
-    for character in text.chars() {
-        match character {
-            '"' => out.extend_from_slice(b"\\\""),
-            '\\' => out.extend_from_slice(b"\\\\"),
-            '\n' => out.extend_from_slice(b"\\n"),
-            '\r' => out.extend_from_slice(b"\\r"),
-            '\t' => out.extend_from_slice(b"\\t"),
-            control if (control as u32) < 0x20 => {
-                out.extend_from_slice(format!("\\u{:04x}", control as u32).as_bytes());
-            }
-            other => out.extend_from_slice(other.encode_utf8(&mut [0u8; 4]).as_bytes()),
-        }
-    }
+    jqf_codec_json::push_json_escaped(out, text.as_bytes());
     out.push(b'"');
 }
 
@@ -1130,5 +1117,23 @@ pub(crate) fn run_daemon(args: ServeArguments) -> Result<u8, CliFailure> {
             eprint_line_buffered(&format!("jqf: serve: cannot start a session thread: {error}"));
             flush_stderr();
         }
+    }
+}
+
+#[cfg(test)]
+mod json_escape_tests {
+    use super::write_json_string;
+
+    /// Error-frame string literals use the JSON encoder law, including DEL `0x7F`.
+    #[test]
+    fn write_json_string_matches_encoder_law_on_quote_c0_and_del() {
+        let input = std::str::from_utf8(b"\"\\\x00\x08\x0c\n\r\t\x1f\x7fok").expect("utf-8");
+        let mut expected = b"\"".to_vec();
+        jqf_codec_json::push_json_escaped(&mut expected, input.as_bytes());
+        expected.push(b'"');
+        let mut got = Vec::new();
+        write_json_string(&mut got, input);
+        assert_eq!(got, expected);
+        assert!(got.windows(6).any(|w| w == b"\\u007f"), "DEL must be \\u007f");
     }
 }

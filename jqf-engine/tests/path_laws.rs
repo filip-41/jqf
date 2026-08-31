@@ -261,3 +261,43 @@ fn frozen_subexpression_builtin_argument_is_frozen() {
         r"[[0]]"
     );
 }
+
+#[test]
+fn three_arm_comma_compiles_to_exact_of_the_shared_stem() {
+    // `.a.b, .a.c, .a.d` is Exact of the shared stem, same footprint as the
+    // piped spelling. The N-arm join is the prefix-lattice of every arm.
+    use jqf_codec_core::PortableStep;
+    let resources = resources();
+    let hoisted = try_compile_program(
+        ".a.b, .a.c, .a.d",
+        CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
+        &resources,
+    )
+    .expect("compile");
+    let piped = try_compile_program(
+        ".a | (.b, .c, .d)",
+        CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
+        &resources,
+    )
+    .expect("compile");
+    let hoisted_req = hoisted.try_requirement(&resources).expect("requirement");
+    let piped_req = piped.try_requirement(&resources).expect("requirement");
+    assert!(
+        !hoisted_req.footprint().is_whole(),
+        "three-arm comma must be Exact of the shared stem, not Whole"
+    );
+    let path = hoisted_req.footprint().exact_path().expect("Exact path");
+    assert_eq!(path.steps(), &[PortableStep::SemanticMember("a".into())]);
+    assert_eq!(hoisted_req.footprint(), piped_req.footprint());
+}
+
+#[test]
+fn three_arm_comma_execute_matches_the_piped_spelling() {
+    let input = r#"{"a":{"b":1,"c":2,"d":3}}"#;
+    let hoisted = run_to_json(".a.b, .a.c, .a.d", input);
+    let piped = run_to_json(".a | (.b, .c, .d)", input);
+    assert_eq!(hoisted, "1\n2\n3\n");
+    assert_eq!(hoisted, piped);
+}

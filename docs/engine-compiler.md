@@ -3,10 +3,12 @@
 Compile is how jq source becomes a plan the rest of the request can trust. There
 is no bytecode and no stack VM. The compiler lowers the program to a
 [generator graph](engine-ir.md), fuses it into path-normal form, walks the
-closed [recognizer tables](recognizers.md), and caches the facts a drive will
-consult. This page is the pipeline under
+closed [recognizer tables](recognizers.md), and finish-packs the job a drive
+will run. This page is the pipeline under
 [Architecture § Engine IR](architecture.md#engine-ir). Execution, codec access,
-and the recognizers themselves live on their own pages.
+and the recognizers themselves live on their own pages. Compile owns finish,
+charge, shortcut commit, and `host_io`. The graph interpreter and document
+answers live in [Engine executor](engine-exec.md).
 
 A form is not in the language until this pipeline accepts it. Syntax may parse a
 construct compile still rejects.
@@ -16,16 +18,22 @@ construct compile still rejects.
 Embedders and the CLI call one entry,
 [`try_compile_program`](embedding.md#compile). The result is an opaque
 `CompiledProgram`: the arena, the
-[pushdown split](engine-ir.md#the-pushdown-split), and the route facts
-`--explain` prints. `try_requirement` and `try_run` are the observations a
-drive makes; it does not re-walk the arena per record.
+[pushdown split](engine-ir.md#the-pushdown-split), the committed
+[shortcut](engine-exec.md), and the route facts `--explain` prints.
+`try_requirement` charges the packed access plan (`Err` aborts; it does not
+fall back to Whole); `execute` runs the job; `host_io` is whether the host
+may echo retained bytes or cut a span.
+`consumes_whole_document` and `pushdown_path` read packed plan facts.
+`projection_class` still walks: the class borrows interned field names and
+cannot be stored without a second copy. A drive does not re-walk the arena per
+record.
 
 ```console
-$ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name' 2>&1 | grep -E 'program:|class:|demand:|routes:|pushdown:|ladder:|topk:|compile_time:|lazy:|^"'
+$ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name' 2>&1 | grep -E 'program:|class:|demand:|shortcut:|pushdown:|ladder:|topk:|compile_time:|lazy:|^"'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
-jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
+jqf: explain: shortcut: element inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: topk: rows=0
@@ -61,21 +69,20 @@ parse ──► bind ──► lower ──► transform ──► analyze ─�
 program always beats a CLI binding. Later CLI entries shadow earlier ones.
 `CompileOptions::new()` is the ordinary lane; a split-expression compile
 (`CompileOptions::split_exp()`, `$index` pre-bound for `--split-exp` /
-`--split-exp-file`) is the same pipeline with a seeded slot and no CLI
-bindings.
+`--split-exp-file`) is the same pipeline with a seeded slot and no CLI bindings.
 
 ## Preludes
 
 `any/2` is an ordinary `def` in the stdlib prelude (`isempty`, `all`, `any`,
 `first`, `last`, `values`, `nulls`), not a second namespace. `map/1` is a
-builtin — `[.[] | f]` — not a prelude name. Before parse, compile scans the
-user source once:
+builtin — `[.[] | f]` — not a prelude name. Before parse, compile scans the user
+source once:
 
 - `import` / `include` / `module` pull in both the stdlib and extension
   preludes.
 - Otherwise, identifier tokens are matched against the prelude name lists.
-  `\(…)` interpolation holes are code and are scanned; only string text and
-  `#` comments are skipped.
+  `\(…)` interpolation holes are code and are scanned; only string text and `#`
+  comments are skipped.
 
 A false *hit* only wastes a prelude parse. A false *miss* is unsound: a real
 prelude call would report "not defined". When a prelude is needed it is parsed
@@ -83,29 +90,28 @@ and bound once per process and reused. Those definitions sit on the `def` stack
 before the user unit lowers, so a prelude name resolves like any other call.
 
 ```console
-$ echo '[]' | jqf --explain 'map(.+1)' 2>&1 | grep -E 'program:|demand:|routes:|pushdown:'
+$ echo '[]' | jqf --explain 'map(.+1)' 2>&1 | grep -E 'program:|demand:|shortcut:|pushdown:'
 jqf: explain: program: map(.+1)
 jqf: explain: demand: class=Subtree boundary=collect
-jqf: explain: routes: count=no element=no keys=no type=no inputs_cursor=no
+jqf: explain: shortcut: none inputs_cursor=no
 jqf: explain: pushdown: .
 ```
 
-`map/1` is a builtin. The user source never spelled the body; lowering
-expands it to `[.[] | f]`.
+`map/1` is a builtin. The user source never spelled the body; lowering expands
+it to `[.[] | f]`.
 
 ## Parse, bind, modules
 
-Parse is `jqf-syntax`. Recoverable debris is rejected before bind — no
-lowering on a broken tree. Bind attaches span text for diagnostics,
-`$__loc__`, and module paths.
+Parse is `jqf-syntax`. Recoverable debris is rejected before bind — no lowering
+on a broken tree. Bind attaches span text for diagnostics, `$__loc__`, and
+module paths.
 
-`include` / `import` resolve at compile through the host module loader
-(CLI search path, authored `{search: …}` metadata, or
-`JQF_LIBRARY_PATH`). A missing loader or an unresolved path is "module
-not found". An empty search list is not a silent skip. Circular imports
-fail at compile. Filter-parameter defs (`def f(map):
-…`) re-lower at each call site so a parameter name can shadow a builtin
-spelling without changing call-by-name at runtime.
+`include` / `import` resolve at compile through the host module loader (CLI
+search path, authored `{search: …}` metadata, or `JQF_LIBRARY_PATH`). A missing
+loader or an unresolved path is "module not found". An empty search list is not
+a silent skip. Circular imports fail at compile. Filter-parameter defs
+(`def f(map): …`) re-lower at each call site so a parameter name can shadow a
+builtin spelling without changing call-by-name at runtime.
 
 ## Lowering
 
@@ -121,11 +127,11 @@ split-expression lane is on.
 
 ## Transform
 
-The pre-fusion arena is rewritten in a fixed order. One structural rewrite
-rides alongside fusion: `[stream] | add` at the program root (and inside
-deduped callable bodies) becomes
-`reduce stream as $x (null; . + $x)`. Marks (tail calls, keyed collects, static
-object keys) run after fusion, because topology has to be final.
+The pre-fusion arena is rewritten in a fixed order. One structural rewrite rides
+alongside fusion: `[stream] | add` at the program root (and inside deduped
+callable bodies) becomes `reduce stream as $x (null; . + $x)`. Marks (tail
+calls, keyed collects, static object keys) run after fusion, because topology
+has to be final.
 
 The arena at rest is in **path-normal form**. That law, and the pushdown split
 taken from it, live on [Engine IR](engine-ir.md#fusion-and-path-normal-form).
@@ -136,9 +142,11 @@ Analysis walks the fused arena once and takes the
 [pushdown split](engine-ir.md#the-pushdown-split) and the projection class
 ([Demand and pushdown](demand.md), [Shape recognizers](recognizers.md)).
 `finish` then caches everything a per-record drive will ask: prune and
-pulled-record hints, count, element / construct / collect, `keys`, and
-`type`. The projection class is computed once there and shared with the
-count table. A drive that re-derived those facts per record would be a
+pulled-record hints, one packed access plan (Whole / Exact, prune,
+count/element/type/has/keys/minmax hints), and one [shortcut](engine-exec.md)
+(count, element, keys, type, has, any/all, min/max, range-locate, or identity —
+otherwise the graph). The projection class is computed once there and shared
+with the count table. A drive that re-derived those facts per record would be a
 contract break.
 
 Dead nodes in the arena do not force a scan pass. A shape the closed tables
@@ -166,6 +174,7 @@ tree outline before the ordinary compile line.
 | Topic                                     | Page                                  |
 | ----------------------------------------- | ------------------------------------- |
 | Node kinds, fusion, pushdown              | [Engine IR](engine-ir.md)             |
+| Execute: packed job, then graph           | [Engine executor](engine-exec.md)     |
 | Closed tables and `--explain` shape lines | [Shape recognizers](recognizers.md)   |
 | Access requirements and routes            | [Demand and pushdown](demand.md)      |
 | Plan output                               | [Explain and diagnostics](explain.md) |

@@ -1158,8 +1158,8 @@ mod tests {
     #[test]
     fn a_wide_field_set_still_classifies_fields() {
         // A PUBLISHED construct projecting between 9 and 64 top-level members
-        // keeps the Fields class (and therefore the projected route) instead of
-        // joining up to Subtree on the ninth.
+        // keeps the Fields class (prune/construct omit of unread siblings)
+        // instead of joining up to Subtree on the ninth.
         assert_eq!(
             class_of("[.catalog[] | {a:.a, b:.b, c:.c, d:.d, e:.e, f:.f, g:.g, h:.h, i:.i}]"),
             "Fields[a,b,c,d,e,f,g,h,i]"

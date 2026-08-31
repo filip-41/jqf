@@ -810,7 +810,7 @@ fn container_path_and_range(steps: &[StageStep], boundary: usize) -> Option<(Vec
 mod tests {
     use super::*;
     use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::{CompileOptions, try_compile_program};
+    use crate::compile::{CompileOptions, Shortcut, try_compile_program};
     use alloc::vec;
     use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -831,16 +831,20 @@ mod tests {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
         let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
-        program.element_demand().cloned()
+        match program.shortcut() {
+            Shortcut::Element { demand, .. } => Some(demand.clone()),
+            _ => None,
+        }
     }
 
     fn compiled_fields(source: &str) -> Option<Vec<(alloc::string::String, Vec<CountStep>)>> {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
         let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
-        program
-            .element_construct_fields()
-            .map(<[(alloc::string::String, alloc::vec::Vec<jqf_data::CountStep>)]>::to_vec)
+        match program.shortcut() {
+            Shortcut::Element { construct, .. } => construct.clone(),
+            _ => None,
+        }
     }
 
     fn key(name: &str) -> CountStep {
@@ -917,7 +921,10 @@ mod tests {
         let resources = resources();
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
         let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
-        program.element_collect()
+        match program.shortcut() {
+            Shortcut::Element { collect, .. } => *collect,
+            _ => false,
+        }
     }
 
     #[test]

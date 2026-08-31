@@ -1,11 +1,12 @@
 use super::{
     EngineError, EngineRun, EngineRunError, EngineRunStream, GraphMachine, JoinEntry, RunInput, RunPoll, RunStep,
-    StageMachine, StepOutcome, equal_key_run, try_run,
+    StageMachine, StepOutcome, equal_key_run, try_run_program, try_run_with_table,
 };
 
 use crate::analysis::{CorrelatedScan, PartialSort, correlated_scans};
 use crate::program::{
-    BinaryKind, LogicalOp, ObjectMemberNode, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess, VarSlot,
+    BinaryKind, LogicalOp, ObjectMemberNode, Program, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess,
+    VarSlot,
 };
 use alloc::format;
 use alloc::string::String;
@@ -23,13 +24,23 @@ fn steps(flags: &[bool]) -> Vec<StageStep> {
         .collect()
 }
 
-/// A single-`Stage` arena over `steps` — the shape [`try_run`]'s fast path
-/// and the requirement/flag lookups run against for a pure-path program.
-fn stage_arena(steps: Vec<StageStep>) -> Vec<ProgramNode> {
-    vec![ProgramNode::Stage {
+/// A single-`Stage` program over `steps` — the shape production
+/// [`try_run_program`] runs for a pure-path residual.
+fn stage_program(steps: Vec<StageStep>) -> Program {
+    let nodes = vec![ProgramNode::Stage {
         start: StageStart::Current,
         steps,
-    }]
+    }];
+    let root = ProgramNodeId::ROOT;
+    let split = crate::analysis::analyze(&nodes, root);
+    Program::new(nodes, root, split, 0)
+}
+
+fn run_stage<'p, 's>(
+    program: &'p Program,
+    outcome: CodecInputOutcome<'s>,
+) -> Result<EngineRun<'p, 's>, jqf_codec_core::CodecError> {
+    try_run_program(program, program.split().prefix_len(), outcome, None)
 }
 
 /// The root id of a freshly built arena.
@@ -72,14 +83,8 @@ fn resources() -> ResourceContext<'static> {
 /// and every Reduce node in the arena is checked.
 #[test]
 fn the_index_lowering_is_recognized_as_a_keyed_collect() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::{CompileOptions, try_compile_program};
-    use crate::exec::GraphMachine;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let res = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled =
-        try_compile_program("INDEX(.[]; .id) | length", policy, CompileOptions::new(), &res).expect("program compiles");
+    let compiled = compiled_for_execute("INDEX(.[]; .id) | length", &res);
     let arena = compiled.arena();
     let mut reduces = 0usize;
     let mut recognized = 0usize;
@@ -93,18 +98,15 @@ fn the_index_lowering_is_recognized_as_a_keyed_collect() {
         } = node
         {
             reduces += 1;
-            if keyed_collect.is_some() || GraphMachine::keyed_collect_keys(arena, *update, *slot, *init).is_some() {
+            if keyed_collect.is_some() || crate::compile::keyed_collect_keys(arena, *update, *slot, *init).is_some() {
                 recognized += 1;
             }
         }
     }
-    let user = try_compile_program(
+    let user = compiled_for_execute(
         "def INDEX(s; i): reduce s as $r ({}; .[$r|i|tostring] = $r); INDEX(.[]; .id) | length",
-        policy,
-        CompileOptions::new(),
         &res,
-    )
-    .expect("user-def compiles");
+    );
     assert!(
         user.arena().iter().any(|node| {
             matches!(
@@ -116,7 +118,7 @@ fn the_index_lowering_is_recognized_as_a_keyed_collect() {
                     update,
                     keyed_collect,
                 } if keyed_collect.is_some()
-                    || GraphMachine::keyed_collect_keys(user.arena(), *update, *slot, *init)
+                    || crate::compile::keyed_collect_keys(user.arena(), *update, *slot, *init)
                         .is_some()
             )
         }),
@@ -154,14 +156,10 @@ fn the_index_lowering_is_recognized_as_a_keyed_collect() {
 /// root is recognized exactly, and its near-twins decline to the floor.
 #[test]
 fn the_streamed_aggregate_recognizer_matches_group_and_selection_pipes() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use crate::exec::GraphMachine;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let res = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let recognizes = |source: &str| {
-        let compiled = try_compile_program(source, policy, CompileOptions::new(), &res).expect("program compiles");
+        let compiled = compiled_for_execute(source, &res);
         GraphMachine::streamed_aggregate(compiled.arena(), compiled.root())
     };
     for source in [
@@ -170,7 +168,7 @@ fn the_streamed_aggregate_recognizer_matches_group_and_selection_pipes() {
         "[inputs] | max_by(.k)",
     ] {
         if recognizes(source).is_none() {
-            let compiled = try_compile_program(source, policy, CompileOptions::new(), &res).expect("program compiles");
+            let compiled = compiled_for_execute(source, &res);
             let dump = compiled
                 .arena()
                 .iter()
@@ -419,13 +417,9 @@ fn located_identity_plus_literal_matches_the_owned_arm() {
 /// exit does not re-walk the arena per evaluation.
 #[test]
 fn plus_literal_is_the_identity_literal_binary_shape() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use crate::program::BinaryShape;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(". + 1", policy, CompileOptions::new(), &ledger).expect("compiles");
+    let compiled = compiled_for_execute(". + 1", &ledger);
     let found = compiled.arena().iter().any(|node| {
         matches!(
             node,
@@ -441,12 +435,8 @@ fn plus_literal_is_the_identity_literal_binary_shape() {
 /// `{id: .id}` is a step-less string-literal key. `{(.k): 1}` is not.
 #[test]
 fn static_object_key_is_marked_only_for_literal_keys() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let static_prog = try_compile_program("{id: .id}", policy, CompileOptions::new(), &ledger).expect("compiles");
+    let static_prog = compiled_for_execute("{id: .id}", &ledger);
     let marked = static_prog.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => {
             members.len() == 1 && members[0].static_key.as_deref() == Some("id")
@@ -455,7 +445,7 @@ fn static_object_key_is_marked_only_for_literal_keys() {
     });
     assert!(marked, "`{{id: .id}}` must mark static_key");
 
-    let dynamic = try_compile_program("{(.k): 1}", policy, CompileOptions::new(), &ledger).expect("compiles");
+    let dynamic = compiled_for_execute("{(.k): 1}", &ledger);
     let unmarked = dynamic.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => {
             members.len() == 1 && members[0].static_key.is_none()
@@ -468,13 +458,9 @@ fn static_object_key_is_marked_only_for_literal_keys() {
 /// `{id, name}` is a proven single combination; `{id: .[]}` is not.
 #[test]
 fn single_combination_object_is_conservative() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use crate::exec::graph_at_most_one;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let ledger = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let single = try_compile_program("{id, name}", policy, CompileOptions::new(), &ledger).expect("compiles");
+    let single = compiled_for_execute("{id, name}", &ledger);
     let proven = single.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => members.iter().all(|member| {
             graph_at_most_one(single.arena(), member.key) && graph_at_most_one(single.arena(), member.value)
@@ -483,7 +469,7 @@ fn single_combination_object_is_conservative() {
     });
     assert!(proven, "`{{id, name}}` must prove a single combination");
 
-    let many = try_compile_program("{id: .[]}", policy, CompileOptions::new(), &ledger).expect("compiles");
+    let many = compiled_for_execute("{id: .[]}", &ledger);
     let unproven = many.arena().iter().any(|node| match node {
         crate::program::ProgramNode::ConstructObject { members } => members
             .iter()
@@ -890,30 +876,12 @@ fn emitted_prefix_is_published_before_a_trailing_failure_surfaces() {
     assert!(matches!(error, EngineRunError::Codec(_)));
 }
 
-/// The entry stage's steps of a single-`Stage` arena — the slice
-/// [`try_run`]'s pushed-down `?` flag lookup indexes.
-fn stage_entry(nodes: &[ProgramNode]) -> &[StageStep] {
-    match &nodes[ROOT.index()] {
-        ProgramNode::Stage { steps, .. } => steps,
-        other => panic!("expected a stage arena, got {other:?}"),
-    }
-}
-
 #[test]
 fn try_run_streams_a_resolved_value() {
-    let nodes = stage_arena(Vec::new());
-    let run = try_run(
-        &nodes,
-        ROOT,
-        ROOT,
-        0,
-        stage_entry(&nodes),
-        0,
-        &[],
-        &[],
-        &[],
+    let program = stage_program(Vec::new());
+    let run = run_stage(
+        &program,
         CodecInputOutcome::Result(EngineResult::owned(Value::Bool(true))),
-        None,
     )
     .expect("run");
     assert!(matches!(
@@ -930,21 +898,8 @@ fn try_run_maps_missing_to_a_missing_tagged_null_stream() {
     let resources = resources();
     let outcome = missing_outcome(&resources);
     // A `?` on the step is irrelevant to a missing path: still a null stream.
-    let nodes = stage_arena(steps(&[true]));
-    let run = try_run(
-        &nodes,
-        ROOT,
-        ROOT,
-        1,
-        stage_entry(&nodes),
-        0,
-        &[],
-        &[],
-        &[],
-        outcome,
-        None,
-    )
-    .expect("run");
+    let program = stage_program(steps(&[true]));
+    let run = run_stage(&program, outcome).expect("run");
     assert!(matches!(
         run,
         EngineRun::Stream {
@@ -970,21 +925,8 @@ fn try_run_maps_null_mismatch_to_a_missing_tagged_stream_under_either_flag() {
             actual_type: ValueKind::Null,
             hint: None,
         };
-        let nodes = stage_arena(steps(&[false, false, flagged]));
-        let run = try_run(
-            &nodes,
-            ROOT,
-            ROOT,
-            3,
-            stage_entry(&nodes),
-            0,
-            &[],
-            &[],
-            &[],
-            outcome,
-            None,
-        )
-        .expect("run");
+        let program = stage_program(steps(&[false, false, flagged]));
+        let run = run_stage(&program, outcome).expect("run");
         assert!(
             matches!(
                 run,
@@ -1007,21 +949,8 @@ fn try_run_maps_non_null_mismatch_to_the_typed_abort_arm() {
         actual_type: ValueKind::Number,
         hint: None,
     };
-    let nodes = stage_arena(steps(&[false, false, false, false]));
-    let run = try_run(
-        &nodes,
-        ROOT,
-        ROOT,
-        4,
-        stage_entry(&nodes),
-        0,
-        &[],
-        &[],
-        &[],
-        outcome,
-        None,
-    )
-    .expect("run");
+    let program = stage_program(steps(&[false, false, false, false]));
+    let run = run_stage(&program, outcome).expect("run");
     let EngineRun::Pushdown(EngineRunError::TypeMismatch {
         step_index,
         actual_type,
@@ -1047,21 +976,8 @@ fn try_run_suppresses_a_non_null_mismatch_at_a_flagged_step() {
         hint: None,
     };
     // The `?` sits on the failing step itself (`{"a":5} | .a.b?`): suppressed.
-    let nodes = stage_arena(steps(&[false, true]));
-    let run = try_run(
-        &nodes,
-        ROOT,
-        ROOT,
-        2,
-        stage_entry(&nodes),
-        0,
-        &[],
-        &[],
-        &[],
-        outcome,
-        None,
-    )
-    .expect("run");
+    let program = stage_program(steps(&[false, true]));
+    let run = run_stage(&program, outcome).expect("run");
     assert!(matches!(run, EngineRun::Suppressed));
 }
 
@@ -1078,23 +994,8 @@ fn try_run_declines_a_pushed_down_mismatch_at_a_non_static_step() {
         actual_type: ValueKind::Number,
         hint: None,
     };
-    let nodes = stage_arena(vec![each(false)]);
-    assert!(
-        try_run(
-            &nodes,
-            ROOT,
-            ROOT,
-            1,
-            stage_entry(&nodes),
-            0,
-            &[],
-            &[],
-            &[],
-            outcome,
-            None
-        )
-        .is_err()
-    );
+    let program = stage_program(vec![each(false)]);
+    assert!(run_stage(&program, outcome).is_err());
 
     // A flagged `.[]?` over the same scalar still suppresses to zero items:
     // suppression is decided before the class is rendered.
@@ -1104,21 +1005,8 @@ fn try_run_declines_a_pushed_down_mismatch_at_a_non_static_step() {
         actual_type: ValueKind::Number,
         hint: None,
     };
-    let flagged = stage_arena(vec![each(true)]);
-    let run = try_run(
-        &flagged,
-        ROOT,
-        ROOT,
-        1,
-        stage_entry(&flagged),
-        0,
-        &[],
-        &[],
-        &[],
-        outcome,
-        None,
-    )
-    .expect("run");
+    let flagged = stage_program(vec![each(true)]);
+    let run = run_stage(&flagged, outcome).expect("run");
     assert!(matches!(run, EngineRun::Suppressed));
 }
 
@@ -1133,21 +1021,8 @@ fn try_run_exact_step_does_not_suppress_an_earlier_mismatch() {
     };
     // `5 | .a.b?`: the mismatch is at step 0, but only step 1 is flagged, so
     // the exact-step law aborts rather than suppressing.
-    let nodes = stage_arena(steps(&[false, true]));
-    let run = try_run(
-        &nodes,
-        ROOT,
-        ROOT,
-        2,
-        stage_entry(&nodes),
-        0,
-        &[],
-        &[],
-        &[],
-        outcome,
-        None,
-    )
-    .expect("run");
+    let program = stage_program(steps(&[false, true]));
+    let run = run_stage(&program, outcome).expect("run");
     assert!(matches!(
         run,
         EngineRun::Pushdown(EngineRunError::TypeMismatch {
@@ -1160,10 +1035,11 @@ fn try_run_exact_step_does_not_suppress_an_earlier_mismatch() {
 
 // --- Graph machine (Choice / FlatMap arms) ---------------------------------
 
-/// A small located-document spec for the graph tests: an integer leaf, an
-/// array of specs, or a keyed object of nested specs.
+/// A small located-document spec for the graph tests: an integer leaf, a
+/// bool leaf, an array of specs, or a keyed object of nested specs.
 enum TestValue {
     Int(&'static str),
+    Bool(bool),
     Arr(&'static [TestValue]),
     Obj(&'static [(&'static str, TestValue)]),
 }
@@ -1179,6 +1055,9 @@ fn build_value(
         TestValue::Int(text) => builder
             .add_node("test.int", AccountedSemanticNode::Integer(text), None, resources)
             .expect("int node"),
+        TestValue::Bool(value) => builder
+            .add_node("test.bool", AccountedSemanticNode::Bool(*value), None, resources)
+            .expect("bool node"),
         TestValue::Arr(items) => {
             let children: Vec<NodeId> = items.iter().map(|item| build_value(builder, item, resources)).collect();
             let node = builder
@@ -1306,10 +1185,7 @@ fn catchless_try_swallows_a_body_error_and_completes() {
 /// barrier and its body frames on the stack, so `caught` must be ≥ 1.
 #[test]
 fn a_caught_raise_records_the_barrier_depth() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use core::cell::RefCell;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::diag::{DiagnosticRecord, DiagnosticSink};
 
     // The narrowest sink: retain every record's `caught` depth.
@@ -1331,8 +1207,7 @@ fn a_caught_raise_records_the_barrier_depth() {
     .expect("resources")
     .with_diagnostics(&sink);
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("try .a catch .", policy, CompileOptions::new(), &resources).expect("compiles");
+    let compiled = compiled_for_execute("try .a catch .", &resources);
     let mut stream = match compiled
         .try_run_whole_value(
             CodecInputOutcome::Result(EngineResult::owned(Value::Number(jqf_data::Number::integer(
@@ -1668,11 +1543,7 @@ fn try_body_error_escapes_a_downstream_pipeline() {
 /// is exactly the shape the fuzzer's forced floor (`[.][0] | (P)`) would
 /// reach through the ordinary SDK.
 fn drive_null(program: &str, resources: &mut ResourceContext<'_>) -> Result<usize, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), resources)
         .expect("run seeds")
@@ -1680,6 +1551,7 @@ fn drive_null(program: &str, resources: &mut ResourceContext<'_>) -> Result<usiz
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(0),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut items = 0;
     loop {
@@ -1699,11 +1571,7 @@ fn drive_null_values(
     program: &str,
     resources: &mut ResourceContext<'_>,
 ) -> Result<alloc::vec::Vec<alloc::string::String>, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), resources)
         .expect("run seeds")
@@ -1711,6 +1579,7 @@ fn drive_null_values(
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(alloc::vec::Vec::new()),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = alloc::vec::Vec::new();
     loop {
@@ -1758,14 +1627,9 @@ fn an_empty_operand_cancels_a_sibling_raise() {
 /// enclosing `del`/`path`/`pick` answer.
 #[test]
 fn a_no_match_regex_iterator_raises_inside_path_mode() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut drive = |program: &str| -> Result<Vec<String>, EngineRunError> {
-        let compiled =
-            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+        let compiled = compiled_for_execute(program, &resources);
         let input = Value::try_string("hello").expect("hello");
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), &resources)
@@ -1774,6 +1638,7 @@ fn a_no_match_regex_iterator_raises_inside_path_mode() {
             EngineRun::Stream { stream, .. } => stream,
             EngineRun::Suppressed => return Ok(Vec::new()),
             EngineRun::Pushdown(error) => return Err(error),
+            EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
         };
         let mut out = Vec::new();
         loop {
@@ -1847,14 +1712,9 @@ fn the_path_mode_try_catches_a_break_marker() {
 /// `Cannot index string with number (1)`.
 #[test]
 fn the_array_pattern_frame_binds_right_to_left() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut caught = |program: &str| -> String {
-        let compiled =
-            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+        let compiled = compiled_for_execute(program, &resources);
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -1878,13 +1738,7 @@ fn the_array_pattern_frame_binds_right_to_left() {
         "\"Cannot index string with number (2)\""
     );
     // A successful multi-binder still binds every name.
-    let compiled = try_compile_program(
-        "[1,2] as [$v0, $v1] | [$v0, $v1]",
-        policy,
-        CompileOptions::new(),
-        &resources,
-    )
-    .expect("program compiles");
+    let compiled = compiled_for_execute("[1,2] as [$v0, $v1] | [$v0, $v1]", &resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
         .expect("run seeds")
@@ -1954,9 +1808,6 @@ fn a_generator_body_barrier_does_not_catch_the_binary_sibling() {
 /// precedes the recursive branch); these pin the n>=2 cut.
 #[test]
 fn limit_truncates_a_recursive_callable() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let cases: [(&str, &[&str]); 3] = [
         ("def nat: 1, (nat|.+1); [limit(2; nat)]", &["1", "2"]),
         ("def nat: 1, (nat|.+1); [limit(3; nat)]", &["1", "2", "3"]),
@@ -1964,9 +1815,7 @@ fn limit_truncates_a_recursive_callable() {
     ];
     for (program, expected) in cases {
         let mut resources = resources();
-        let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled =
-            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+        let compiled = compiled_for_execute(program, &resources);
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -1974,6 +1823,7 @@ fn limit_truncates_a_recursive_callable() {
             EngineRun::Stream { stream, .. } => stream,
             EngineRun::Suppressed => panic!("a limit over a generator is not suppressed"),
             EngineRun::Pushdown(error) => panic!("no pushdown over null: {error:?}"),
+            EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
         };
         let mut arrays = Vec::new();
         loop {
@@ -2002,9 +1852,6 @@ fn limit_truncates_a_recursive_callable() {
 /// recursive calls answer byte-identically under reuse.
 #[test]
 fn pooled_callable_body_machines_keep_output_order_and_cuts() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let cases: [(&str, &[&str]); 5] = [
         // multi-output body: every extra item rides the one-deep queue
         ("def f: 1, 2; [f, f]", &["1", "2", "1", "2"]),
@@ -2023,9 +1870,7 @@ fn pooled_callable_body_machines_keep_output_order_and_cuts() {
     ];
     for (program, expected) in cases {
         let mut resources = resources();
-        let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled =
-            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+        let compiled = compiled_for_execute(program, &resources);
         let input = if program.contains("fib: if") {
             CodecInputOutcome::Result(EngineResult::owned(int_value("10")))
         } else {
@@ -2035,6 +1880,7 @@ fn pooled_callable_body_machines_keep_output_order_and_cuts() {
             EngineRun::Stream { stream, .. } => stream,
             EngineRun::Suppressed => panic!("a generator run is not suppressed: {program}"),
             EngineRun::Pushdown(error) => panic!("no pushdown expected: {error:?}"),
+            EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
         };
         let mut texts = Vec::new();
         loop {
@@ -2060,9 +1906,6 @@ fn limit_truncates_a_recursive_callable_past_the_depth_ceiling() {
     // The residual: a consumed output must not hold a recursion level
     // open, so `limit` over a recursive user def runs for n well past the
     // callable-depth ceiling instead of raising the depth-ceiling error.
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let cases: [(&str, &str); 3] = [
         // The comma-last-member shape: the self-call is the Choice's final
         // member, so each round trampolines instead of nesting.
@@ -2080,9 +1923,7 @@ fn limit_truncates_a_recursive_callable_past_the_depth_ceiling() {
         // (one per resumption), far past one 4096-credit entry; the poll
         // loop below resumes fresh cooperative entries on each Pending.
         let mut resources = resources();
-        let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        let compiled =
-            try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+        let compiled = compiled_for_execute(program, &resources);
         let mut stream = match compiled
             .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
             .expect("run seeds")
@@ -2212,13 +2053,9 @@ fn a_tail_marked_call_answers_every_argument_combination() {
     // the first: `f(4)` runs the body once per argument OUTPUT, and the
     // tail-marked self-call `f($a - 1, $a - 2)` must answer per
     // combination (`2 1 2`), never bind only the first combo (`2 2`).
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     let program = "def f($a): if $a < 3 then $a else f($a - 1, $a - 2) end; f(4)";
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), &resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, &resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
         .expect("run seeds")
@@ -2258,11 +2095,7 @@ fn nested_a(depth: usize, _resources: &ResourceContext<'_>) -> Value {
 /// Compiles `program` and renders every published item as one line of
 /// JSON, stopping at the first raise.
 fn run_render(program: &str, input: &Value, resources: &mut ResourceContext<'_>) -> Result<String, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input.clone())), resources)
         .expect("run seeds")
@@ -2270,6 +2103,7 @@ fn run_render(program: &str, input: &Value, resources: &mut ResourceContext<'_>)
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(String::from("<suppressed>")),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = String::new();
     loop {
@@ -2338,13 +2172,7 @@ fn path_over_a_recursive_def_carries_the_register() {
     // the raise must not lose the prefix.
     let emit_then_raise = "path(def f: if type == \"object\" then .a | f \
              else (., error(\"x\")) end; f)";
-    let compiled = {
-        use crate::codec_requirement::CodecRequirementPolicy;
-        use crate::compile::try_compile_program;
-        use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-        let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-        try_compile_program(emit_then_raise, policy, CompileOptions::new(), &resources).expect("program compiles")
-    };
+    let compiled = compiled_for_execute(emit_then_raise, &resources);
     let EngineRun::Stream { stream, .. } = compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(doc.clone())), &resources)
         .expect("run seeds")
@@ -4021,11 +3849,7 @@ fn a_multi_output_reduce_init_runs_the_whole_fold_once_per_init_value() {
 /// Compiles one program and runs it over an OWNED input, returning the
 /// published items' compact JSON lines, or the first raised error.
 fn drive_source(program: &str, input: Value, resources: &mut ResourceContext<'_>) -> Result<String, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -4033,6 +3857,7 @@ fn drive_source(program: &str, input: Value, resources: &mut ResourceContext<'_>
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(String::new()),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = String::new();
     loop {
@@ -4997,11 +4822,7 @@ fn a_refused_memory_grant_declines_to_the_naive_scan() {
 #[test]
 fn topk_recognizer_routed_vs_forced_floor_is_byte_identical() {
     use crate::analysis::partial_sorts;
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut res = resources();
 
     let programs = [
@@ -5119,7 +4940,7 @@ fn topk_recognizer_routed_vs_forced_floor_is_byte_identical() {
     fixture_objects.append(&mut fixtures);
 
     for program in programs {
-        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
+        let compiled = compiled_for_execute(program, &res);
         let arena = compiled.arena();
         let table = partial_sorts(arena);
         assert!(
@@ -5128,9 +4949,9 @@ fn topk_recognizer_routed_vs_forced_floor_is_byte_identical() {
         );
         for (name, fixture) in &fixture_objects {
             let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture.clone()));
-            let routed = run_to_items(&compiled, &table, outcome, &mut res).expect("routed run");
+            let routed = run_to_items(&compiled, None, outcome, &mut res).expect("routed run");
             let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture.clone()));
-            let floor = run_to_items(&compiled, &[], outcome, &mut res).expect("floor run");
+            let floor = run_to_items(&compiled, Some(&[]), outcome, &mut res).expect("floor run");
             assert_eq!(
                 routed, floor,
                 "routed != floor for {program} over {name}: a recognizer or top_k bug"
@@ -5148,12 +4969,8 @@ fn topk_recognizer_routed_vs_forced_floor_is_byte_identical() {
 #[test]
 fn the_partial_sort_route_engages_direct_and_inside_an_argument() {
     use crate::analysis::partial_sorts;
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use core::sync::atomic::Ordering;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut res = resources();
     for program in [
         "sort_by(.x) | .[0:2]",
@@ -5163,13 +4980,13 @@ fn the_partial_sort_route_engages_direct_and_inside_an_argument() {
         // this counter notices.
         "limit(3; sort_by(.x) | .[0:2])",
     ] {
-        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
+        let compiled = compiled_for_execute(program, &res);
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must name a row");
         let before = super::PARTIAL_SORT_ENGAGEMENTS.load(Ordering::Relaxed);
         let fixture = make_objects_all_equal();
         let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture));
-        let _ = run_to_items(&compiled, &table, outcome, &mut res).expect("routed run");
+        let _ = run_to_items(&compiled, None, outcome, &mut res).expect("routed run");
         let after = super::PARTIAL_SORT_ENGAGEMENTS.load(Ordering::Relaxed);
         assert!(
             after > before,
@@ -5188,21 +5005,17 @@ fn the_partial_sort_route_engages_direct_and_inside_an_argument() {
 #[test]
 fn the_reversed_row_emits_ties_in_reversed_source_order() {
     use crate::analysis::partial_sorts;
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut res = resources();
     let all_equal = make_objects_all_equal();
     for program in ["sort_by(.x) | reverse | .[0:2]", "sort_by(.x) | reverse | .[0:10]"] {
-        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
+        let compiled = compiled_for_execute(program, &res);
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must engage a row");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(all_equal.clone()));
-        let routed = run_to_items(&compiled, &table, outcome, &mut res).expect("routed");
+        let routed = run_to_items(&compiled, None, outcome, &mut res).expect("routed");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(all_equal.clone()));
-        let floor = run_to_items(&compiled, &[], outcome, &mut res).expect("floor");
+        let floor = run_to_items(&compiled, Some(&[]), outcome, &mut res).expect("floor");
         assert_eq!(routed, floor, "routed != floor for {program} over all-equal ties");
         // The reversed-stable order, pinned by index: the two LARGEST
         // elements are the last two SOURCE elements, published descending.
@@ -5222,21 +5035,17 @@ fn the_reversed_row_emits_ties_in_reversed_source_order() {
 #[test]
 fn an_index_row_over_an_empty_array_publishes_null() {
     use crate::analysis::partial_sorts;
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut res = resources();
     let empty = Value::Array(Array::try_new().expect("array"));
     for program in ["sort | .[0]", "sort | .[-1]", "sort | first", "sort | last"] {
-        let compiled = try_compile_program(program, policy, CompileOptions::new(), &res).expect("program compiles");
+        let compiled = compiled_for_execute(program, &res);
         let table = partial_sorts(compiled.arena());
         assert!(!table.is_empty(), "{program} must engage a row");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(empty.clone()));
-        let routed = run_to_items(&compiled, &table, outcome, &mut res).expect("routed");
+        let routed = run_to_items(&compiled, None, outcome, &mut res).expect("routed");
         let outcome = CodecInputOutcome::Result(EngineResult::owned(empty.clone()));
-        let floor = run_to_items(&compiled, &[], outcome, &mut res).expect("floor");
+        let floor = run_to_items(&compiled, Some(&[]), outcome, &mut res).expect("floor");
         assert_eq!(routed, floor, "routed != floor for {program} over []");
         assert_eq!(routed, "null\n", "{program} over [] must publish null, not []");
     }
@@ -5276,11 +5085,7 @@ fn slice_const_fold_routed_vs_floor_is_byte_identical() {
     // shape that cannot fold (an input read). The two must agree byte for
     // byte over arrays (empty and not), strings, null, objects, and the
     // negative-fold case.
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
     let mut res = resources();
 
     let twins = [
@@ -5313,14 +5118,13 @@ fn slice_const_fold_routed_vs_floor_is_byte_identical() {
     ];
 
     for (folded, authored) in twins {
-        let folded_program = try_compile_program(folded, policy, CompileOptions::new(), &res).expect("folded compiles");
-        let authored_program =
-            try_compile_program(authored, policy, CompileOptions::new(), &res).expect("authored compiles");
+        let folded_program = compiled_for_execute(folded, &res);
+        let authored_program = compiled_for_execute(authored, &res);
         for (name, fixture) in &fixtures {
             let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture.clone()));
-            let folded_run = run_to_items(&folded_program, &[], outcome, &mut res).expect("folded run");
+            let folded_run = run_to_items(&folded_program, None, outcome, &mut res).expect("folded run");
             let outcome = CodecInputOutcome::Result(EngineResult::owned(fixture.clone()));
-            let authored_run = run_to_items(&authored_program, &[], outcome, &mut res).expect("authored run");
+            let authored_run = run_to_items(&authored_program, None, outcome, &mut res).expect("authored run");
             assert_eq!(folded_run, authored_run, "folded != authored for {folded} over {name}");
         }
     }
@@ -5339,17 +5143,19 @@ fn array_of(spellings: &[&str]) -> Array {
 
 /// Runs one compiled program over one input through the engine and records
 /// every published item's compact JSON plus the completion, as a comparable
-/// string. `topk` selects the partial-sort table: the real one for the routed
-/// arm, `&[]` for the forced floor.
+/// string. `None` is the production table on [`Program`]. `Some(&[])` is the
+/// forced floor: the same program with an empty partial-sort table.
 fn run_to_items(
     compiled: &crate::compile::CompiledProgram,
-    topk: &[PartialSort],
+    topk: Option<&[PartialSort]>,
     outcome: CodecInputOutcome<'_>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<String, EngineRunError> {
-    let run = compiled
-        .try_run_with_table(outcome, topk)
-        .map_err(EngineRunError::Codec)?;
+    let run = match topk {
+        None => try_run_program(&compiled.program, compiled.program.split().prefix_len(), outcome, None),
+        Some(topk) => try_run_with_table(&compiled.program, outcome, topk),
+    }
+    .map_err(EngineRunError::Codec)?;
     let EngineRun::Stream { mut stream, .. } = run else {
         return Ok(String::from("<non-stream>"));
     };
@@ -5384,26 +5190,19 @@ fn the_correlated_join_engages_on_the_real_spelling() {
     // compiled corpus spelling must engage: the warm-up first element takes
     // the naive path, the SECOND sight of the container builds the index and
     // every later element is answered from it.
-    use crate::compile::try_compile_program;
     let mut resources = resources();
     let before = super::JOIN_ENGAGEMENTS.load(core::sync::atomic::Ordering::Relaxed);
-    let program = try_compile_program(
+    let program = compiled_for_execute(
         ".o as $o | [.u[0:3][] | . as $x | [$o[] | select(.k == $x.k)] | length]",
-        crate::CodecRequirementPolicy::new(
-            jqf_codec_core::ValidationMode::Strict,
-            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
-        ),
-        CompileOptions::new(),
         &resources,
-    )
-    .expect("compiles");
+    );
     let fixture = JoinFixture {
         rows: &[("1", "0"), ("2", "1"), ("3", "2"), ("1", "3")],
         keys: &["1", "4", "1", "9", "2"],
     };
     let input = build_join_input(&fixture, &resources).expect("input");
     let run = program
-        .try_run(CodecInputOutcome::Result(input), &resources)
+        .execute(CodecInputOutcome::Result(input), &mut resources)
         .expect("run");
     let mut emitted = 0u64;
     match run {
@@ -5437,26 +5236,16 @@ fn the_correlated_join_engages_on_the_real_spelling() {
 
 #[test]
 fn the_user_declared_index_engages_on_the_pipe_spelling() {
-    use crate::compile::try_compile_program;
     let mut resources = resources();
     let before = super::USER_INDEX_PROBES.load(core::sync::atomic::Ordering::Relaxed);
-    let program = try_compile_program(
-        "declare_index(.o; .k) | [.o[] | select(.k == 1)]",
-        crate::CodecRequirementPolicy::new(
-            jqf_codec_core::ValidationMode::Strict,
-            jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
-        ),
-        CompileOptions::new(),
-        &resources,
-    )
-    .expect("compiles");
+    let program = compiled_for_execute("declare_index(.o; .k) | [.o[] | select(.k == 1)]", &resources);
     let fixture = JoinFixture {
         rows: &[("1", "0"), ("2", "1"), ("3", "2"), ("1", "3")],
         keys: &[],
     };
     let input = build_join_input(&fixture, &resources).expect("input");
     let run = program
-        .try_run(CodecInputOutcome::Result(input), &resources)
+        .execute(CodecInputOutcome::Result(input), &mut resources)
         .expect("run");
     match run {
         EngineRun::Stream { mut stream, .. } => loop {
@@ -5477,40 +5266,23 @@ fn the_user_declared_index_engages_on_the_pipe_spelling() {
 
 #[test]
 fn the_user_declared_index_is_byte_identical_to_the_forced_floor() {
-    use crate::compile::try_compile_program;
     let mut resources = resources();
-    let policy = crate::CodecRequirementPolicy::new(
-        jqf_codec_core::ValidationMode::Strict,
-        jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
-    );
-    let authored = try_compile_program(
-        "declare_index(.o; .k) | [.o[] | select(.k == 1)]",
-        policy,
-        CompileOptions::new(),
-        &resources,
-    )
-    .expect("compiles");
-    let floor = try_compile_program(
-        "[.][0] | declare_index(.o; .k) | [.o[] | select(.k == 1)]",
-        policy,
-        CompileOptions::new(),
-        &resources,
-    )
-    .expect("compiles");
+    let authored = compiled_for_execute("declare_index(.o; .k) | [.o[] | select(.k == 1)]", &resources);
+    let floor = compiled_for_execute("[.][0] | declare_index(.o; .k) | [.o[] | select(.k == 1)]", &resources);
     let fixture = JoinFixture {
         rows: &[("1", "0"), ("2", "1"), ("3", "2"), ("1", "3")],
         keys: &[],
     };
     let authored_out = run_to_items(
         &authored,
-        &[],
+        None,
         CodecInputOutcome::Result(build_join_input(&fixture, &resources).expect("input")),
         &mut resources,
     )
     .expect("authored run");
     let floor_out = run_to_items(
         &floor,
-        &[],
+        None,
         CodecInputOutcome::Result(build_join_input(&fixture, &resources).expect("input")),
         &mut resources,
     )
@@ -5522,14 +5294,8 @@ fn the_user_declared_index_is_byte_identical_to_the_forced_floor() {
 }
 
 #[test]
-
 fn the_user_declared_index_drops_after_an_edit() {
-    use crate::compile::try_compile_program;
     let mut resources = resources();
-    let policy = crate::CodecRequirementPolicy::new(
-        jqf_codec_core::ValidationMode::Strict,
-        jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
-    );
     // The assignment between the declaration and the probe materializes
     // the document as an OWNED value, so the probe's container has no
     // node handle: the declared index is never consulted — dropped by
@@ -5542,34 +5308,28 @@ fn the_user_declared_index_drops_after_an_edit() {
     // static and Rust tests run in parallel, so an exact-equality
     // assertion on it would be a flake; the positive engagement test
     // asserts the monotone `moved` direction instead.)
-    let program = try_compile_program(
+    let program = compiled_for_execute(
         "declare_index(.o; .k) | (.o[0].k = 9) | [.o[] | select(.k == 9)]",
-        policy,
-        CompileOptions::new(),
         &resources,
-    )
-    .expect("compiles");
-    let floor = try_compile_program(
+    );
+    let floor = compiled_for_execute(
         "[.][0] | declare_index(.o; .k) | (.o[0].k = 9) | [.o[] | select(.k == 9)]",
-        policy,
-        CompileOptions::new(),
         &resources,
-    )
-    .expect("compiles");
+    );
     let fixture = JoinFixture {
         rows: &[("1", "0"), ("2", "1"), ("3", "2"), ("1", "3")],
         keys: &[],
     };
     let authored_out = run_to_items(
         &program,
-        &[],
+        None,
         CodecInputOutcome::Result(build_join_input(&fixture, &resources).expect("input")),
         &mut resources,
     )
     .expect("authored run");
     let floor_out = run_to_items(
         &floor,
-        &[],
+        None,
         CodecInputOutcome::Result(build_join_input(&fixture, &resources).expect("input")),
         &mut resources,
     )
@@ -5643,11 +5403,7 @@ fn drive_located(
     input: EngineResult<'_>,
     resources: &mut ResourceContext<'_>,
 ) -> Result<String, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(input), resources)
         .expect("run seeds")
@@ -5655,6 +5411,7 @@ fn drive_located(
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(String::new()),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = String::new();
     loop {
@@ -6061,11 +5818,7 @@ fn drive_source_value(
     input: Value,
     resources: &mut ResourceContext<'_>,
 ) -> Result<Value, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -6075,6 +5828,7 @@ fn drive_source_value(
             return Err(super::internal_contract("drive_source_value produced no stream"));
         }
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = None;
     loop {
@@ -6102,11 +5856,7 @@ fn drive_replenished(
     input: Value,
     resources: &mut ResourceContext<'_>,
 ) -> Result<String, EngineRunError> {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program(program, policy, CompileOptions::new(), resources).expect("program compiles");
+    let compiled = compiled_for_execute(program, resources);
     let mut stream = match compiled
         .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(input)), resources)
         .expect("run seeds")
@@ -6114,6 +5864,7 @@ fn drive_replenished(
         EngineRun::Stream { stream, .. } => stream,
         EngineRun::Suppressed => return Ok(String::new()),
         EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("whole-value run must not rebound"),
     };
     let mut out = String::new();
     loop {
@@ -6139,14 +5890,10 @@ fn drive_replenished(
 /// iterate and reduce spellings answer.
 #[test]
 fn any_all_expansion_answers_like_the_reduce_spelling() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
     use crate::program::ProgramNode;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
 
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let expanded = try_compile_program("all(. > 0)", policy, CompileOptions::new(), &resources).expect("all compiles");
+    let expanded = compiled_for_execute("all(. > 0)", &resources);
     let mut labels = 0usize;
     let mut breaks = 0usize;
     let mut logicals = 0usize;
@@ -6232,15 +5979,10 @@ fn graph_frame_variant_sizes() {
 /// resource family (the depth limits' channel) instead of running forever.
 #[test]
 fn iteration_cap_refuses_an_unbounded_repeat() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
     use jqf_resource::ResourceError;
 
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled =
-        try_compile_program("[repeat(1)] | length", policy, CompileOptions::new(), &resources).expect("compiles");
+    let compiled = compiled_for_execute("[repeat(1)] | length", &resources);
     let outcome = CodecInputOutcome::Result(EngineResult::owned(Value::Null));
     let EngineRun::Stream { mut stream, .. } = compiled
         .try_run_whole_value(outcome, &resources)
@@ -6278,13 +6020,8 @@ fn iteration_cap_refuses_an_unbounded_repeat() {
 /// ticks beside the admissions and nothing else changes.
 #[test]
 fn iteration_cap_leaves_a_bounded_run_untouched() {
-    use crate::codec_requirement::CodecRequirementPolicy;
-    use crate::compile::try_compile_program;
-    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
-
     let mut resources = resources();
-    let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
-    let compiled = try_compile_program("[.[]] | length", policy, CompileOptions::new(), &resources).expect("compiles");
+    let compiled = compiled_for_execute("[.[]] | length", &resources);
     let mut array = jqf_data::Array::try_new().expect("array");
     for text in ["1", "2", "3"] {
         array
@@ -6475,4 +6212,414 @@ fn equal_key_run_bisects_a_clean_window() {
         text_key("z", 3),
     ];
     assert_eq!(equal_key_run(&entries, &probe), Some((1, 3)));
+}
+
+#[test]
+fn json_exact_collect_count_miss_rebounds_whole() {
+    // JSON Exact republishes PATH as the document root. Collect probe decline
+    // must not try_run_whole_value on that node: skip is 0, demand.path is
+    // `.users`. ReboundWhole is the host's rebind.
+    let mut resources = resources();
+    let program = compiled_for_execute("[.users[].name] | length", &resources);
+    assert!(
+        matches!(program.shortcut(), crate::compile::Shortcut::Count(_)),
+        "collect-count must be a count row"
+    );
+    let located = located_value(
+        &TestValue::Arr(&[TestValue::Obj(&[("name", TestValue::Int("1"))]), TestValue::Int("5")]),
+        &resources,
+    );
+    let run = program
+        .execute(CodecInputOutcome::Result(located), &mut resources)
+        .expect("execute");
+    assert!(
+        matches!(run, EngineRun::ReboundWhole),
+        "JSON Exact collect miss must rebound, got {run:?}"
+    );
+}
+
+fn compiled_for_execute(source: &str, resources: &ResourceContext<'_>) -> crate::compile::CompiledProgram {
+    use crate::codec_requirement::CodecRequirementPolicy;
+    use crate::compile::try_compile_program;
+    use jqf_codec_core::{DiagnosticPolicy, ValidationMode};
+    try_compile_program(
+        source,
+        CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly),
+        CompileOptions::new(),
+        resources,
+    )
+    .expect("compiles")
+}
+
+fn drive_execute(
+    source: &str,
+    outcome: CodecInputOutcome<'_>,
+    resources: &mut ResourceContext<'_>,
+) -> Result<String, EngineRunError> {
+    let compiled = compiled_for_execute(source, resources);
+    collect_execute(&compiled, outcome, resources)
+}
+
+fn collect_execute(
+    compiled: &crate::compile::CompiledProgram,
+    outcome: CodecInputOutcome<'_>,
+    resources: &mut ResourceContext<'_>,
+) -> Result<String, EngineRunError> {
+    collect_from_run(compiled.execute(outcome, resources).expect("execute seeds"), resources)
+}
+
+fn collect_graph(
+    compiled: &crate::compile::CompiledProgram,
+    outcome: CodecInputOutcome<'_>,
+    resources: &mut ResourceContext<'_>,
+) -> Result<String, EngineRunError> {
+    collect_from_run(
+        compiled.try_run_whole_value(outcome, resources).expect("graph seeds"),
+        resources,
+    )
+}
+
+fn collect_from_run(run: EngineRun<'_, '_>, resources: &mut ResourceContext<'_>) -> Result<String, EngineRunError> {
+    let mut stream = match run {
+        EngineRun::Stream { stream, .. } => stream,
+        EngineRun::Suppressed => return Ok(String::new()),
+        EngineRun::Pushdown(error) => return Err(error),
+        EngineRun::ReboundWhole => panic!("execute rebounded Whole"),
+    };
+    let mut out = String::new();
+    loop {
+        match stream.poll(resources) {
+            Ok(RunPoll::Item(EngineResult::Owned(value))) => {
+                out.push_str(&jqf_builtins::semantics::render::to_json(&value)?);
+                out.push('\n');
+            }
+            Ok(RunPoll::Item(EngineResult::Located(located))) => {
+                let owned = located
+                    .product()
+                    .document()
+                    .materialize_node(located.node(), resources)
+                    .expect("located item materializes");
+                out.push_str(&jqf_builtins::semantics::render::to_json(&owned)?);
+                out.push('\n');
+            }
+            Ok(RunPoll::Complete) => return Ok(out),
+            Ok(RunPoll::Pending) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn owned_object(pairs: &[(&str, Value)]) -> Value {
+    let mut builder = ObjectBuilder::try_with_capacity(pairs.len()).expect("builder");
+    for (key, value) in pairs {
+        builder
+            .try_insert_or_replace(ObjectKey::try_from_str(key).expect("key"), value.clone())
+            .expect("insert");
+    }
+    Value::Object(builder.try_finish().expect("object"))
+}
+
+fn located_child(value: &TestValue, keys: &[&str], resources: &ResourceContext<'_>) -> EngineResult<'static> {
+    let EngineResult::Located(located) = located_value(value, resources) else {
+        panic!("located_value builds a Located product");
+    };
+    let document = located.product().document();
+    let mut view = document.value_view(located.node()).expect("root view");
+    for key in keys {
+        let object = view.object().ok().flatten().expect("object");
+        view = object.get(key).expect("named child");
+    }
+    let handle = document.node_handle(view.node()).expect("child handle");
+    EngineResult::Located(LocatedProduct::try_new(located.product(), handle).expect("named child"))
+}
+
+#[test]
+fn alternative_hoist_is_byte_identical_to_the_piped_and_floor_spellings() {
+    let mut resources = resources();
+    let compiled_hoisted = compiled_for_execute(".a.b // .a.c", &resources);
+    let compiled_piped = compiled_for_execute(".a | (.b // .c)", &resources);
+    let compiled_floor = compiled_for_execute(". as $z | .a.b // .a.c", &resources);
+    let input = owned_object(&[("a", owned_object(&[("b", int_value("1")), ("c", int_value("2"))]))]);
+    let outcome = || CodecInputOutcome::Result(EngineResult::owned(input.clone()));
+    let hoisted = collect_graph(&compiled_hoisted, outcome(), &mut resources).expect("hoisted");
+    let piped = collect_graph(&compiled_piped, outcome(), &mut resources).expect("piped");
+    let floor = collect_graph(&compiled_floor, outcome(), &mut resources).expect("floor");
+    assert_eq!(hoisted, "1\n");
+    assert_eq!(hoisted, piped);
+    assert_eq!(hoisted, floor);
+}
+
+#[test]
+fn json_exact_element_iterates_the_located_container() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".users[] | .id", &resources);
+    assert_eq!(compiled.access(), Access::Exact);
+    let located = located_value(
+        &TestValue::Arr(&[
+            TestValue::Obj(&[("id", TestValue::Int("1"))]),
+            TestValue::Obj(&[("id", TestValue::Int("2"))]),
+        ]),
+        &resources,
+    );
+    let out = collect_execute(&compiled, CodecInputOutcome::Result(located), &mut resources).expect("hit");
+    assert_eq!(out, "1\n2\n");
+}
+
+#[test]
+fn yaml_exact_element_names_the_child_in_the_full_graph() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".users[] | .id", &resources);
+    assert_eq!(compiled.access(), Access::Exact);
+    let full = TestValue::Obj(&[
+        ("pad", TestValue::Obj(&[("id", TestValue::Int("99"))])),
+        (
+            "users",
+            TestValue::Arr(&[
+                TestValue::Obj(&[("id", TestValue::Int("1"))]),
+                TestValue::Obj(&[("id", TestValue::Int("2"))]),
+            ]),
+        ),
+    ]);
+    let located = located_child(&full, &["users"], &resources);
+    let EngineResult::Located(product) = &located else {
+        panic!("named child is Located");
+    };
+    assert_ne!(
+        product.node(),
+        product.product().document().root_handle(),
+        "YAML/HTML Exact keeps the full graph and names the child"
+    );
+    let out = collect_execute(&compiled, CodecInputOutcome::Result(located), &mut resources).expect("hit");
+    assert_eq!(out, "1\n2\n");
+}
+
+#[test]
+fn json_exact_element_miss_rebounds_whole() {
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".users[] | .id", &resources);
+    assert!(compiled.may_rebind_whole(), "element Exact miss uses the packed job");
+    let located = located_value(&TestValue::Arr(&[TestValue::Int("1"), TestValue::Int("2")]), &resources);
+    let run = compiled
+        .execute(CodecInputOutcome::Result(located), &mut resources)
+        .expect("execute");
+    assert!(
+        matches!(run, EngineRun::ReboundWhole),
+        "JSON Exact element miss must rebound, got {run:?}"
+    );
+}
+
+#[test]
+fn empty_prefix_element_stays_whole() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".[] | .id", &resources);
+    assert_eq!(compiled.access(), Access::Whole);
+    assert!(!compiled.may_rebind_whole());
+    let located = located_value(
+        &TestValue::Arr(&[TestValue::Obj(&[("id", TestValue::Int("7"))])]),
+        &resources,
+    );
+    let out = collect_execute(&compiled, CodecInputOutcome::Result(located), &mut resources).expect("hit");
+    assert_eq!(out, "7\n");
+}
+
+#[test]
+fn element_oracle_decline_matches_the_graph() {
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".[] | .id", &resources);
+    let spec = TestValue::Arr(&[TestValue::Int("1"), TestValue::Int("2")]);
+    let oracle = collect_execute(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&spec, &resources)),
+        &mut resources,
+    );
+    let graph = collect_graph(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&spec, &resources)),
+        &mut resources,
+    );
+    assert!(oracle.is_err(), "probe over numbers declines");
+    match (oracle, graph) {
+        (Err(left), Err(right)) => assert_eq!(alloc::format!("{left:?}"), alloc::format!("{right:?}")),
+        (left, right) => panic!("decline must match the graph, oracle={left:?} graph={right:?}"),
+    }
+}
+
+#[test]
+fn alternative_optional_prefix_fence_still_tries_the_right_arm() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".a?.x // 1", &resources);
+    assert_eq!(compiled.access(), Access::Whole);
+    assert!(compiled.program.split().is_whole_document());
+    let out = drive_execute(
+        ".a?.x // 1",
+        CodecInputOutcome::Result(EngineResult::owned(int_value("5"))),
+        &mut resources,
+    )
+    .expect("right arm");
+    let floor = drive_execute(
+        ". as $z | .a?.x // 1",
+        CodecInputOutcome::Result(EngineResult::owned(int_value("5"))),
+        &mut resources,
+    )
+    .expect("floor");
+    assert_eq!(out, "1\n");
+    assert_eq!(out, floor);
+}
+
+#[test]
+fn json_exact_alternative_hoist_uses_the_located_node() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".a.b // .a.c", &resources);
+    assert_eq!(compiled.access(), Access::Exact);
+    let located = located_value(
+        &TestValue::Obj(&[("b", TestValue::Int("1")), ("c", TestValue::Int("2"))]),
+        &resources,
+    );
+    let out = collect_execute(&compiled, CodecInputOutcome::Result(located), &mut resources).expect("hit");
+    assert_eq!(out, "1\n");
+}
+
+#[test]
+fn yaml_exact_alternative_hoist_names_the_child() {
+    use crate::compile::Access;
+    let mut resources = resources();
+    let compiled = compiled_for_execute(".a.b // .a.c", &resources);
+    assert_eq!(compiled.access(), Access::Exact);
+    let full = TestValue::Obj(&[
+        (
+            "a",
+            TestValue::Obj(&[("b", TestValue::Int("1")), ("c", TestValue::Int("2"))]),
+        ),
+        ("pad", TestValue::Int("9")),
+    ]);
+    let located = located_child(&full, &["a"], &resources);
+    let EngineResult::Located(product) = &located else {
+        panic!("named child is Located");
+    };
+    assert_ne!(product.node(), product.product().document().root_handle());
+    let out = collect_execute(&compiled, CodecInputOutcome::Result(located), &mut resources).expect("hit");
+    assert_eq!(out, "1\n");
+}
+
+#[test]
+fn any_short_circuits_on_the_first_truthy_and_declines_a_raise_before_it() {
+    use crate::compile::Shortcut;
+    let mut resources = resources();
+    let compiled = compiled_for_execute("any(.ok)", &resources);
+    assert!(matches!(compiled.shortcut(), Shortcut::AnyAll(_)));
+    let hit = TestValue::Arr(&[TestValue::Obj(&[("ok", TestValue::Bool(true))]), TestValue::Int("1")]);
+    let out = collect_execute(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&hit, &resources)),
+        &mut resources,
+    )
+    .expect("short-circuit skips the later raise");
+    assert_eq!(out, "true\n");
+
+    let raise_first = TestValue::Arr(&[TestValue::Int("1"), TestValue::Obj(&[("ok", TestValue::Bool(true))])]);
+    let oracle = collect_execute(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&raise_first, &resources)),
+        &mut resources,
+    );
+    let graph = collect_graph(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&raise_first, &resources)),
+        &mut resources,
+    );
+    assert!(oracle.is_err(), "raise before the first truthy is the graph's");
+    match (oracle, graph) {
+        (Err(left), Err(right)) => assert_eq!(alloc::format!("{left:?}"), alloc::format!("{right:?}")),
+        (left, right) => panic!("raise-before-hit must match the graph, oracle={left:?} graph={right:?}"),
+    }
+}
+
+#[test]
+fn all_short_circuits_on_the_first_falsey_and_declines_a_raise_before_it() {
+    use crate::compile::Shortcut;
+    let mut resources = resources();
+    let compiled = compiled_for_execute("all(.ok)", &resources);
+    assert!(matches!(compiled.shortcut(), Shortcut::AnyAll(_)));
+    let hit = TestValue::Arr(&[TestValue::Obj(&[("ok", TestValue::Bool(false))]), TestValue::Int("1")]);
+    let out = collect_execute(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&hit, &resources)),
+        &mut resources,
+    )
+    .expect("short-circuit skips the later raise");
+    assert_eq!(out, "false\n");
+
+    let raise_first = TestValue::Arr(&[TestValue::Int("1"), TestValue::Obj(&[("ok", TestValue::Bool(false))])]);
+    let oracle = collect_execute(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&raise_first, &resources)),
+        &mut resources,
+    );
+    let graph = collect_graph(
+        &compiled,
+        CodecInputOutcome::Result(located_value(&raise_first, &resources)),
+        &mut resources,
+    );
+    assert!(oracle.is_err(), "raise before the first falsey is the graph's");
+    match (oracle, graph) {
+        (Err(left), Err(right)) => assert_eq!(alloc::format!("{left:?}"), alloc::format!("{right:?}")),
+        (left, right) => panic!("raise-before-miss must match the graph, oracle={left:?} graph={right:?}"),
+    }
+}
+
+#[test]
+fn seed_nested_drops_join_tables_and_keeps_topk() {
+    let resources = resources();
+    let compiled = compiled_for_execute("limit(2; sort)", &resources);
+    let input = EngineResult::owned(Value::Null);
+    let parent = GraphMachine::from_program(
+        &compiled.program,
+        compiled.program.root(),
+        compiled.program.split().entry(),
+        0,
+        input.try_clone().expect("clone"),
+        true,
+    )
+    .expect("parent seed");
+    assert!(parent.program.is_some());
+    let nested = parent
+        .seed_nested(compiled.program.root(), input, false)
+        .expect("nested seed");
+    assert!(nested.scans.is_empty(), "argument machines do not take join tables");
+    assert!(nested.anti.is_empty(), "argument machines do not take anti tables");
+    assert_eq!(
+        parent.scans.len(),
+        compiled.program.scans().len(),
+        "parent join tables travel when requested"
+    );
+    assert_eq!(
+        parent.anti.len(),
+        compiled.program.anti_joins().len(),
+        "parent anti tables travel when requested"
+    );
+    assert_eq!(nested.topk.len(), parent.topk.len(), "top-k is stateless and travels");
+}
+
+#[test]
+fn production_graph_seed_holds_program() {
+    // Residual production seed is &Program plus skip. A Choice root takes the
+    // graph machine, which must hold Program so nested seeds inherit tables.
+    let resources = resources();
+    let compiled = compiled_for_execute("1, 2", &resources);
+    let run = compiled
+        .try_run_whole_value(CodecInputOutcome::Result(EngineResult::owned(Value::Null)), &resources)
+        .expect("run");
+    let EngineRun::Stream { stream, .. } = run else {
+        panic!("comma residual is a stream, got {run:?}");
+    };
+    assert_eq!(
+        stream.graph_holds_program(),
+        Some(true),
+        "production graph seed must hold Program"
+    );
 }

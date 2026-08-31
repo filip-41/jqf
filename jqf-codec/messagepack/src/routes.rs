@@ -23,6 +23,8 @@ pub(crate) struct NativeLocatedSession {
     prune: Option<materialize::PruneLookup>,
     /// Kind-only span: empty container or dummy scalar from the first payload byte.
     type_demand: bool,
+    /// Count/element Exact: publish the walk's container span instead of re-decoding the hit.
+    skeleton: bool,
     finished: bool,
 }
 
@@ -33,6 +35,7 @@ impl NativeLocatedSession {
         dialect: Dialect,
         prune: Option<materialize::PruneLookup>,
         type_demand: bool,
+        skeleton: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: own_steps(steps)?,
@@ -40,6 +43,7 @@ impl NativeLocatedSession {
             dialect,
             prune,
             type_demand,
+            skeleton,
             finished: false,
         })
     }
@@ -47,19 +51,40 @@ impl NativeLocatedSession {
     fn decode_located<'source>(
         &mut self,
         source: ResolvedSource<'source>,
-        resources: &mut ResourceContext<'_>,
+        context: &mut CodecRunContext<'_, '_>,
     ) -> Result<AccessResult<'source>, CodecError> {
         if self.finished {
             return Err(data_contract());
         }
         self.finished = true;
-        let (located, _item_end) = walk::locate(source, self.dialect, self.steps.as_slice(), resources)?;
+        let (located, _item_end) = walk::locate(source, self.dialect, self.steps.as_slice(), context.resources())?;
         let (product, selection) = match located {
-            Located::Value { start, end, .. } => {
+            Located::Value { start, end, container } => {
                 let product = if self.type_demand {
-                    kind_only_span(source, start, self.dialect, resources)?
+                    kind_only_span(source, start, self.dialect, context.resources())?
+                } else if self.skeleton && self.prune.is_none() {
+                    if let Some((kind, child_count)) = container {
+                        materialize::publish_located_skeleton(
+                            source,
+                            start,
+                            end,
+                            self.dialect,
+                            kind,
+                            Some(child_count),
+                            context,
+                        )?
+                    } else {
+                        decode_span(source, start, end, self.dialect, None, context.resources())?
+                    }
                 } else {
-                    decode_span(source, start, end, self.dialect, self.prune.as_ref(), resources)?
+                    decode_span(
+                        source,
+                        start,
+                        end,
+                        self.dialect,
+                        self.prune.as_ref(),
+                        context.resources(),
+                    )?
                 };
                 let selection = ExactSelectionRecord::Node {
                     node: product
@@ -71,7 +96,7 @@ impl NativeLocatedSession {
                 (product, selection)
             }
             negative @ (Located::Missing { .. } | Located::TypeMismatch { .. }) => {
-                negative_outcome(&negative, self.origin, self.dialect.id(), resources)?
+                negative_outcome(&negative, self.origin, self.dialect.id(), context.resources())?
             }
         };
         let outcome = LocatedOutcome::try_new(&product, selection)?;
@@ -94,7 +119,7 @@ impl AccessSession for NativeLocatedSession {
                 return Err(CodecError::new(CodecFailureKind::ProviderRouteMismatch));
             }
         };
-        self.decode_located(source, context.resources())
+        self.decode_located(source, context)
     }
 }
 

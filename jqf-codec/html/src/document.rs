@@ -4,12 +4,14 @@
 //! is an ARRAY of its recovered children (text runs and child elements; comments are ATTACHED FACTS, never child values
 //! — the HTML comment model), its normalized expanded name and recovered semantic attribute map are facts, and the
 //! document carries its recovered mode, pragma-set default language, and doctype as document-level facts.
+//!
+//! Exact prune is after recover, at subtree materialize — see [`build_subtree_document`]. Whole keeps every child.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use alloc::vec;
-use jqf_codec_core::{CodecError, CodecFailureKind};
+use jqf_codec_core::{CodecError, CodecFailureKind, PRUNE_ALL, PruneLookup, PruneRef, PruneTree};
 
 use jqf_data::{
     AccountedDocumentBuilder, AccountedSemanticNode, BuilderCoverage, DataError, DocumentCapacity,
@@ -304,7 +306,7 @@ fn build_document_element(
     let Some(html) = tree.document_element() else {
         return build_synthetic_empty_document(builder, tree, resources, attach_attrs);
     };
-    let id = build_node(builder, tree, html, resources, attach_attrs).map(|(id, _)| id)?;
+    let id = build_node(builder, tree, html, resources, attach_attrs, None, PRUNE_ALL).map(|(id, _)| id)?;
     if attach_attrs {
         attach_document_edge_comments(builder, tree, id, resources)?;
     }
@@ -404,13 +406,16 @@ fn attach_document_edge_comments(
     Ok(())
 }
 
-/// Builds one element (an array of its children) with its facts.
+/// Builds one element (an array of its children) with its facts. See [`build_subtree_document`] for the Exact prune
+/// law; Whole passes keep-all.
 fn build_node(
     builder: &mut AccountedDocumentBuilder<'static>,
     tree: &Tree,
     index: HtmlNodeId,
     resources: &mut ResourceContext<'_>,
     attach_attrs: bool,
+    prune: Option<&PruneLookup>,
+    prune_id: u32,
 ) -> Result<(NodeId, String), CodecError> {
     let _depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
     let element = &tree.nodes[index.0];
@@ -538,7 +543,11 @@ fn build_node(
         let child_node = &tree.nodes[child.0];
         let built = match child_node.kind {
             NodeKind::Element => {
-                let (built, child_content) = build_node(builder, tree, *child, resources, attach_attrs)?;
+                let Some(child_prune) = PruneRef::root(prune).at(prune_id).member(child_node.name.as_bytes()) else {
+                    continue;
+                };
+                let (built, child_content) =
+                    build_node(builder, tree, *child, resources, attach_attrs, prune, child_prune)?;
                 content.push_str(&child_content);
                 built
             }
@@ -610,15 +619,36 @@ pub(crate) fn fresh_builder(
 
 /// Builds a fresh route document (no source binding) rooted at the located value: an element subtree or a text leaf. A
 /// range is a stream of matches, not one Located document.
+///
+/// Exact prune is AFTER recover: `prune` is re-anchored at [`PruneTree::ROOT`] on the located element. Named child
+/// elements are prune keys (the same tag names `.div` / `.span` locate with); [`PruneRef::member`] returning `None`
+/// omits that child — it is not built, not added as an occurrence, and its text is not folded into `.@content`. An
+/// element spine ([`PruneRef::element`]) keeps children the way a sequence does. Text leaves and comment facts stay.
+/// `None` / keep-all is the full subtree.
 pub(crate) fn build_subtree_document(
     tree: &Tree,
     located: &crate::locate::Located,
+    prune: Option<&PruneLookup>,
+    coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let mut builder = fresh_builder(BuilderCoverage::complete(), resources)?;
+    // Same split as [`build_document`]: NAME_FACT needs attached_facts;
+    // attrs/comments skip when the demand named neither.
+    let attach_attrs = coverage.attached_facts();
+    let mut builder = fresh_builder(coverage.with_attached_facts(true), resources)?;
+    let prune_id = prune.map_or(PRUNE_ALL, |_| PruneTree::ROOT);
     let root = match located {
         crate::locate::Located::Element(element) => {
-            build_node(&mut builder, tree, HtmlNodeId(*element), resources, true)?.0
+            build_node(
+                &mut builder,
+                tree,
+                HtmlNodeId(*element),
+                resources,
+                attach_attrs,
+                prune,
+                prune_id,
+            )?
+            .0
         }
         crate::locate::Located::Leaf { parent, position } => {
             let child = tree.nodes[*parent].children[*position];
@@ -690,8 +720,9 @@ mod measure_build_tests {
 mod coverage_tests {
     use super::{ATTRIBUTE_FACT, NAME_FACT};
     use jqf_codec_core::{
-        AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext, DecodeRequest, DemandClause,
-        DiagnosticPolicy, FactIntent, TopologyDemand, ValidationMode,
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext,
+        DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ExactSelectionRecord, FactIntent, TopologyDemand,
+        ValidationMode,
     };
     use jqf_data::{
         CountDemand, CountRow, DialectId, DocumentCapability, ElementDemand, ElementProbe, ElementRow, ExpandedName,
@@ -824,6 +855,60 @@ mod coverage_tests {
         })
     }
 
+    fn exact_anchor_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        path.try_push_semantic_member("body", resources).expect("body");
+        path.try_push_semantic_member("a", resources).expect("a");
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn decode_exact<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> jqf_codec_core::DocumentProduct<'bytes> {
+        let dialect = DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect");
+        let mut provider = crate::registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &dialect,
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                resources,
+            )
+            .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources).expect("open");
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run).expect("decode");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("expected Located, got {:?}", result.outcome());
+        };
+        let ExactSelectionRecord::Node { .. } = located.result() else {
+            panic!(
+                "Exact must republish the located element as root, got {:?}",
+                located.result()
+            );
+        };
+        located.product().try_clone().expect("clone")
+    }
+
     #[test]
     fn identity_skips_attribute_facts_and_keeps_names() {
         let mut resources = resources();
@@ -838,6 +923,18 @@ mod coverage_tests {
             !product.document().coverage().contains(DocumentCapability::Topology),
             "identity JSON projection omits occurrence topology"
         );
+    }
+
+    #[test]
+    fn exact_identity_skips_attribute_facts_and_keeps_names() {
+        let mut resources = resources();
+        let requirement = exact_anchor_requirement(CodecDemand::try_new(&resources), &resources);
+        let product = decode_exact(INPUT, &requirement, &mut resources);
+        assert!(
+            attribute_pairs(&product).is_empty(),
+            "Exact identity must skip attribute facts the same way Whole does"
+        );
+        assert!(has_name_fact(&product), "NAME_FACT is the HTML value model");
     }
 
     #[test]
@@ -962,6 +1059,253 @@ mod coverage_tests {
                 .iter()
                 .any(|(name, value)| name == "href" && value == "https://ex"),
             ".&href must keep attrs"
+        );
+    }
+}
+
+#[cfg(test)]
+mod exact_prune_tests {
+    use super::{CONTENT_FACT, NAME_FACT};
+    use crate::locate::{self, Located};
+    use crate::tree::NodeKind;
+    use jqf_codec_core::{
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext,
+        DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ExactSelectionRecord, PortableStep, PruneTree,
+        ValidationMode,
+    };
+    use jqf_data::{DialectId, Document, NodeId, Value};
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    static CONTROL: ContinueControl = ContinueControl;
+
+    /// One unique `<section>` with a kept `<span>` and a fat unread `<p>` sibling.
+    const FAT: &[u8] =
+        b"<body><section><span>keep</span><p>unread nested <em>junk</em> filler filler filler filler</p></section></body>";
+    /// The omitted sibling is malformed; recover rewrites it (a `<div>` cannot stay inside `<p>`).
+    const BROKEN_OMITTED: &[u8] = b"<body><section><span>keep</span><p>unread <div>nested junk</section></body>";
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &CONTROL,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.html",
+            bytes,
+            0,
+        )
+    }
+
+    fn demand(resources: &ResourceContext<'_>) -> CodecDemand {
+        let mut demand = CodecDemand::try_new(resources);
+        demand.try_insert(&DemandClause::SemanticRoot).expect("semantic root");
+        demand.try_insert(&DemandClause::ValueShape).expect("value shape");
+        demand
+    }
+
+    fn exact_section_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        path.try_push_semantic_member("body", resources).expect("body");
+        path.try_push_semantic_member("section", resources).expect("section");
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn keep_member_tree(name: &str, resources: &ResourceContext<'_>) -> PruneTree {
+        let mut tree = PruneTree::try_new(resources).expect("tree");
+        let keep = tree.try_push_node(true).expect("keep");
+        tree.try_push_key(PruneTree::ROOT, name, keep).expect("key");
+        tree
+    }
+
+    fn decode_exact<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> jqf_codec_core::DocumentProduct<'bytes> {
+        let dialect = DialectId::try_new(crate::HTML_DOCUMENT_DIALECT_ID).expect("dialect");
+        let mut provider = crate::registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &dialect,
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                resources,
+            )
+            .expect("provider");
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources).expect("open");
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run).expect("decode");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("expected Located, got {:?}", result.outcome());
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!(
+                "Exact must republish the located element as root, got {:?}",
+                located.result()
+            );
+        };
+        assert_eq!(
+            *node,
+            located.product().document().root_handle(),
+            "native Exact republishes the selection as root"
+        );
+        located.product().try_clone().expect("clone")
+    }
+
+    fn named_elements(document: &Document<'_>) -> alloc::vec::Vec<alloc::string::String> {
+        let mut names = alloc::vec::Vec::new();
+        for index in 0..document.node_count() {
+            let Some(node) = NodeId::try_from_index(index) else {
+                break;
+            };
+            for fact_id in document.owner_fact_ids(node) {
+                let fact = document.fact(*fact_id).expect("fact");
+                if fact.role().as_str() != NAME_FACT {
+                    continue;
+                }
+                if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                    names.push(alloc::string::String::from(text));
+                }
+            }
+        }
+        names
+    }
+
+    fn content_of(document: &Document<'_>, node: NodeId) -> alloc::string::String {
+        for fact_id in document.owner_fact_ids(node) {
+            let fact = document.fact(*fact_id).expect("fact");
+            if fact.role().as_str() != CONTENT_FACT {
+                continue;
+            }
+            if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                return alloc::string::String::from(text);
+            }
+        }
+        panic!("missing content fact");
+    }
+
+    fn recovered_section_child_elements(bytes: &[u8]) -> alloc::vec::Vec<alloc::string::String> {
+        let text = core::str::from_utf8(bytes).expect("utf8");
+        let tree = crate::tree::TreeBuilder::build(text);
+        let steps = locate::own_steps(&[
+            PortableStep::SemanticMember(alloc::string::String::from("body")),
+            PortableStep::SemanticMember(alloc::string::String::from("section")),
+        ])
+        .expect("steps");
+        let located = locate::locate(&tree, &steps);
+        let Located::Element(id) = located else {
+            panic!("expected located section, got {located:?}");
+        };
+        tree.nodes[id]
+            .children
+            .iter()
+            .filter(|child| tree.nodes[child.0].kind == NodeKind::Element)
+            .map(|child| tree.nodes[child.0].name.clone())
+            .collect()
+    }
+
+    /// Exact prune omits unread named child elements of the located subtree. Recover still ran: the omitted sibling is
+    /// in the recovered tree before materialize.
+    #[test]
+    fn exact_prune_omits_unread_members_of_the_located_element() {
+        let mut resources = resources();
+        let recovered = recovered_section_child_elements(FAT);
+        assert!(
+            recovered.iter().any(|name| name == "span") && recovered.iter().any(|name| name == "p"),
+            "recover must still produce the omitted sibling before prune: {recovered:?}"
+        );
+
+        let pruned_requirement =
+            exact_section_requirement(demand(&resources), &resources).with_prune(keep_member_tree("span", &resources));
+        let pruned = decode_exact(FAT, &pruned_requirement, &mut resources);
+        let pruned_names = named_elements(pruned.document());
+        assert_eq!(
+            pruned_names,
+            ["section", "span"],
+            "located section republished as root keeps only the span child element"
+        );
+        let Value::Array(items) = pruned.document().materialize_root(&mut resources).expect("materialize") else {
+            panic!("located section is an array");
+        };
+        assert_eq!(items.len(), 1, "omitted p is not an array item: {items:?}");
+        assert!(
+            !content_of(pruned.document(), pruned.document().root()).contains("unread"),
+            "omitted p text must not fold into .@content"
+        );
+
+        let full = decode_exact(
+            FAT,
+            &exact_section_requirement(demand(&resources), &resources),
+            &mut resources,
+        );
+        let full_names = named_elements(full.document());
+        assert!(
+            full_names.iter().any(|name| name == "span") && full_names.iter().any(|name| name == "p"),
+            "unpruned Exact of the same bytes still has both span and p: {full_names:?}"
+        );
+        assert!(
+            pruned.document().node_count() < full.document().node_count(),
+            "pruned node count {} must be smaller than unpruned {}",
+            pruned.document().node_count(),
+            full.document().node_count()
+        );
+
+        let broken_recovered = recovered_section_child_elements(BROKEN_OMITTED);
+        assert!(
+            broken_recovered.iter().any(|name| name == "p"),
+            "WHATWG recover must still produce the omitted sibling, not skip recover: {broken_recovered:?}"
+        );
+        let broken = decode_exact(BROKEN_OMITTED, &pruned_requirement, &mut resources);
+        let broken_names = named_elements(broken.document());
+        assert_eq!(
+            broken_names,
+            ["section", "span"],
+            "prune still omits the recovered unread sibling: {broken_names:?}"
+        );
+    }
+
+    /// No-prune Exact stays the full located subtree (the keep-all / absent-hint regression).
+    #[test]
+    fn no_prune_exact_stays_the_full_subtree() {
+        let mut resources = resources();
+        let requirement = exact_section_requirement(demand(&resources), &resources);
+        let product = decode_exact(FAT, &requirement, &mut resources);
+        let names = named_elements(product.document());
+        assert!(
+            names.iter().any(|name| name == "span")
+                && names.iter().any(|name| name == "p")
+                && names.iter().any(|name| name == "em"),
+            "no-prune Exact must keep the full subtree: {names:?}"
+        );
+        assert_eq!(names.first().map(alloc::string::String::as_str), Some("section"));
+        assert!(
+            content_of(product.document(), product.document().root()).contains("unread"),
+            "no-prune Exact must fold the unread sibling into .@content"
         );
     }
 }

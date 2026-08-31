@@ -340,4 +340,4 @@ revision = 1
 class = "Informational"
 severity = "Info"
 reserved = true
-description = "Reserved: a projected route validated a corrupt byte the program never read."
+description = "Reserved: Exact validate named the path and offset of a corrupt byte the program did not materialize."

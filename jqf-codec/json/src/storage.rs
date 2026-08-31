@@ -8,8 +8,6 @@ use jqf_data::{AccountedDocumentBuilder, AccountedTextStage, NodeId};
 use jqf_resource::OwnedDepthGuard;
 use jqf_source::Span;
 
-use crate::byte_scan::Utf8Carry;
-
 /// The top-of-stack dispatch state of one container frame.
 ///
 /// `Clone` + `Copy` exist so the token-loop batching in `parse::value_step` can hoist the top frame's state into a
@@ -126,9 +124,6 @@ pub(crate) struct StringState {
     /// builder arena at the closing quote — one copy, never through the scratch — which is what makes the plain
     /// string the decode path's zero-copy case.
     pub(crate) had_escape: bool,
-    /// Truncated UTF-8 sequence pending across a work-grant cut.
-    #[allow(dead_code)]
-    pub(crate) utf8_carry: Utf8Carry,
 }
 
 #[derive(Clone, Copy)]

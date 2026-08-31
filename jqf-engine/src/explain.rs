@@ -1,34 +1,90 @@
 //! The explain plan: a compiled program's routing facts in one borrowable view.
 //!
 //! This is `--explain`'s engine side. The plan is a bundle of DERIVED facts —
-//! route-ladder eligibility, the projection demand class, the pushed-down
-//! prefix, and the named element boundary and its consumer — read off the
-//! compiled program through exactly the accessors the route selector reads. It
-//! changes no routing and lowers no requirement; it exists to be rendered by
-//! the CLI and asserted by receipts. A fact that disagrees with the route the
-//! selector actually takes is a classifier bug, which is why the receipts pin
-//! both sides.
+//! the committed [`ShortcutKind`], route-ladder eligibility, the projection
+//! demand class, the pushed-down prefix, and the named element boundary and
+//! its consumer — read off the compiled program through exactly the accessors
+//! the route selector reads. It changes no routing and lowers no requirement;
+//! it exists to be rendered by the CLI and asserted by receipts. A fact that
+//! disagrees with the route the selector actually takes is a classifier bug,
+//! which is why the receipts pin both sides.
 
 use alloc::vec::Vec;
 
 use crate::analysis::{BoundaryConsumer, ProjectionClass};
 use crate::codec_requirement::StaticForwardStep;
-use crate::compile::CompiledProgram;
+use crate::compile::{CompiledProgram, Shortcut};
 
-/// The explain rung row: every rung's eligibility in one struct.
+/// The closed job finish committed, without the demand payload.
 ///
-/// Each boolean is the compiled program's own predicate — nothing here is
-/// derived a second time, so the plan cannot drift from the routing it
-/// documents. The row names no route by itself; it is the receipt surface the
-/// plan serializes and the smoke batteries assert on.
+/// This is the explain/plan snapshot of [`Shortcut`]: a new fast path is a new
+/// arm, not another boolean on the plan. `None` means the residual graph.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "each boolean is one route rung of the explain ladder; grouping them would hide the ladder"
-)]
+pub enum ShortcutKind {
+    /// No document or pass-through job — the residual graph.
+    None,
+    /// `length` / `PATH | length` / collect-count.
+    Count,
+    /// `keys` / `PATH | keys`.
+    Keys,
+    /// `type` / `PATH | type`.
+    Type,
+    /// Fan-out / fold / collected construct answered by element visit.
+    Element,
+    /// Bare slice publish `PATH[a:b]`.
+    RangeLocate,
+    /// Bare identity `.` — output is input.
+    Identity,
+    /// `has(LITERAL)` / `PATH | has(LITERAL)`.
+    Has,
+    /// `any` / `all` over a static element path.
+    AnyAll,
+    /// `min` / `max` / `min_by` / `max_by` of a numeric array (or numeric probe).
+    MinMax,
+}
+
+impl ShortcutKind {
+    /// The `--explain` spelling of this job.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Count => "count",
+            Self::Keys => "keys",
+            Self::Type => "type",
+            Self::Element => "element",
+            Self::RangeLocate => "range_locate",
+            Self::Identity => "identity",
+            Self::Has => "has",
+            Self::AnyAll => "any_all",
+            Self::MinMax => "min_max",
+        }
+    }
+
+    fn from_shortcut(shortcut: &Shortcut) -> Self {
+        match shortcut {
+            Shortcut::None => Self::None,
+            Shortcut::Count(_) => Self::Count,
+            Shortcut::Keys(_) => Self::Keys,
+            Shortcut::Type(_) => Self::Type,
+            Shortcut::Element { .. } => Self::Element,
+            Shortcut::RangeLocate => Self::RangeLocate,
+            Shortcut::Identity => Self::Identity,
+            Shortcut::Has(_) => Self::Has,
+            Shortcut::AnyAll(_) => Self::AnyAll,
+            Shortcut::MinMax(_) => Self::MinMax,
+        }
+    }
+}
+
+/// The explain rung row: morsel-lane eligibility.
+///
+/// The boolean is the compiled program's own predicate — nothing here is
+/// derived a second time, so the plan cannot drift from the routing it
+/// documents. Identity echo and range-locate span cut are the shortcut
+/// (and [`crate::HostIo`]), not rungs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RungEligibility {
-    /// The bare-slice publish `PATH[a:b]`.
-    pub range_locate: bool,
     /// Whether the record morsel / adjacent-value parallel lane may take this
     /// program (every overload is `Effects::Pure`).
     pub morsel: bool,
@@ -36,16 +92,15 @@ pub struct RungEligibility {
 
 /// One borrowable bundle of a compiled program's routing facts.
 ///
-/// Everything here is read-only and derived on demand; constructing it charges
-/// one small allocation (the pushed-down prefix vector) and no arena bytes.
+/// Packed facts (`consumes_whole_document`, `pushdown`) are read off finish.
+/// `projection_class` re-walks because the class borrows interned field
+/// names and cannot be stored without a second copy.
 #[derive(Clone, Debug)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "each boolean is one routing fact of the explain plan; grouping them would hide the facts"
 )]
 pub struct ExplainPlan<'program> {
-    /// Whether the program is the bare identity filter `.`.
-    pub identity: bool,
     /// Whether the program contains any assignment (`=`/`|=` family) node.
     pub modifies: bool,
     /// Whether the root evaluation consumes the entire input document.
@@ -69,14 +124,8 @@ pub struct ExplainPlan<'program> {
     /// on the `sort | .[0:k]` spelling family, which the executor answers
     /// with the bounded-heap partial sort instead of a full sort.
     pub topk_rows: usize,
-    /// Whether finish cached a count-table row for this program.
-    pub count_route: bool,
-    /// Whether finish cached an element-boundary row.
-    pub element_route: bool,
-    /// Whether finish cached a keys-publish row.
-    pub keys_route: bool,
-    /// Whether finish cached a type-class row.
-    pub type_route: bool,
+    /// The one job finish committed. `None` is the residual graph.
+    pub shortcut: ShortcutKind,
     /// Whether the compiled program reads the ~inputs resident cursor.
     pub uses_inputs_cursor: bool,
 }
@@ -85,7 +134,6 @@ pub struct ExplainPlan<'program> {
 #[must_use]
 pub fn plan(compiled: &CompiledProgram) -> ExplainPlan<'_> {
     ExplainPlan {
-        identity: compiled.is_identity(),
         modifies: compiled.modifies(),
         consumes_whole_document: compiled.consumes_whole_document(),
         morsel_static_path: compiled.is_morsel_static_path(),
@@ -93,15 +141,11 @@ pub fn plan(compiled: &CompiledProgram) -> ExplainPlan<'_> {
         projection_class: compiled.projection_class(),
         pushdown: compiled.pushdown_path(),
         rungs: RungEligibility {
-            range_locate: compiled.range_locate_eligible(),
             morsel: compiled.is_morsel_eligible(),
         },
         boundary_consumer: compiled.element_boundary_consumer(),
         topk_rows: compiled.topk_rows(),
-        count_route: compiled.count_demand().is_some(),
-        element_route: compiled.element_demand().is_some(),
-        keys_route: compiled.keys_demand().is_some(),
-        type_route: compiled.type_demand(),
+        shortcut: ShortcutKind::from_shortcut(compiled.shortcut()),
         uses_inputs_cursor: compiled.uses_inputs_cursor(),
     }
 }

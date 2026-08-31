@@ -1227,20 +1227,9 @@ mod tests {
         use crate::locate::LocatedHit;
 
         let bytes = b"<doc><child>a</child><child>b</child></doc>";
-        let range = LocatedHit::Range {
-            children: vec![
-                LocatedHit::Leaf {
-                    kind: "text",
-                    value: "a".to_owned(),
-                },
-                LocatedHit::Leaf {
-                    kind: "text",
-                    value: "b".to_owned(),
-                },
-            ],
-        };
+        let range = LocatedHit::Range;
         let mut resources = resources();
-        let Err(error) = build_from_hit(bytes, &range, &mut resources) else {
+        let Err(error) = build_from_hit(bytes, &range, &mut resources, None) else {
             panic!("a plural member must decline located publication");
         };
         assert_eq!(error.kind(), CodecFailureKind::RequirementMismatch);

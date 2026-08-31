@@ -1,11 +1,15 @@
 //! The encode drive family: publication of encoded items through item sinks.
+//!
+//! Also the Whole-rebind helpers ([`execute_or_rebind_whole`]) the value,
+//! sequence, and record drives use when JSON Exact count misses: Exact
+//! republished the selection as root, so the graph cannot run on that product.
 
 use super::{
-    AccessRequirement, CodecCatalog, CodecError, CodecInputOutcome, CodecInputResult, CodecRunContext, DialectId,
-    EncodeItem, EncodeRequest, EncodedItemReport, EngineResult, EngineRun, EngineRunError, FacadeFraming, FormatId,
-    ItemSink, OrderedEncodingPolicy, OrderedEncodingReport, OrderedResultPoll, OrderedResultProducer, PipelineError,
-    PipelineFailure, PipelinePolicy, Publication, PublicationStatus, ResolvedSource, ResourceContext, ResourceError,
-    ReusableEncoderSession, RunError, RunPoll, RuntimeError, RuntimeMismatch, String, Value, ValueKind, WorkAdmission,
+    AccessRequirement, CodecCatalog, CodecError, CodecInputOutcome, CodecInputResult, CodecRunContext, CompiledProgram,
+    DialectId, EncodeItem, EncodedItemReport, EngineResult, EngineRun, EngineRunError, FacadeFraming, FormatId,
+    ItemSink, OrderedEncodingPolicy, PipelineError, PipelineFailure, PipelinePolicy, Publication, ResolvedSource,
+    ResourceContext, ResourceError, ReusableEncoderSession, RunError, RunPoll, RuntimeError, RuntimeMismatch, String,
+    Value, ValueKind, WorkAdmission,
 };
 use jqf_codec_core::{AccessResultKind, CodecFailureKind};
 
@@ -192,82 +196,6 @@ pub(crate) fn input_cursor_failure<E>(publication: &Publication) -> PipelineErro
             contract: "input-sequence cursor extension",
         },
     )))
-}
-
-/// Encodes and publishes every result from one ordered engine producer.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "ordered publication keeps target, policy, resources, framing, and sink explicit"
-)]
-pub fn encode_ordered<'source, Producer, Sink>(
-    catalog: CodecCatalog<'_, '_>,
-    producer: &mut Producer,
-    output_format: &FormatId,
-    output_dialect: &DialectId,
-    policy: OrderedEncodingPolicy<'_>,
-    framing: FacadeFraming<'_>,
-    resources: &mut ResourceContext<'_>,
-    sink: &mut Sink,
-) -> Result<OrderedEncodingReport, PipelineError<Sink::Error>>
-where
-    Producer: OrderedResultProducer<'source>,
-    Sink: ItemSink,
-{
-    let mut publication = Publication::new();
-    validate_credits(policy.cooperative_credits, &publication)?;
-    let encoder = catalog
-        .encoder(output_format, output_dialect)
-        .map_err(|error| publication.fail(PipelineFailure::Registry(error)))?;
-    let request = EncodeRequest {
-        format: output_format,
-        dialect: output_dialect,
-        diagnostics: policy.diagnostics,
-        preservation: policy.preservation,
-        options: policy.options,
-    };
-    let factory = encoder
-        .create_factory(request, resources)
-        .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?;
-    // One recycled encoder for this run's whole publication: each ordered item
-    // restarts the retained staging buffer and frame stack instead of
-    // allocating and dropping a complete encoder per published item.
-    let mut reused_encoder = ReusableEncoderSession::new();
-    loop {
-        let next = {
-            let mut run = CodecRunContext::new(resources);
-            run.set_cooperative_credits(policy.cooperative_credits);
-            producer
-                .poll_next(&mut run)
-                .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-        };
-        match next {
-            OrderedResultPoll::Pending => {
-                resume(resources, policy.cooperative_credits, &publication)?;
-            }
-            OrderedResultPoll::Item(result) => {
-                let index = publication.completed_items;
-                encode_one(
-                    &factory,
-                    &mut reused_encoder,
-                    &result,
-                    index,
-                    policy,
-                    framing,
-                    resources,
-                    sink,
-                    &mut publication,
-                )?;
-            }
-            OrderedResultPoll::Complete => {
-                return Ok(OrderedEncodingReport {
-                    publication: PublicationStatus::Complete {
-                        items: publication.completed_items,
-                        published_bytes: publication.published_bytes,
-                    },
-                });
-            }
-        }
-    }
 }
 
 #[allow(
@@ -510,6 +438,34 @@ pub(crate) fn access_input<'source, E>(
         ))));
     }
     Ok(engine)
+}
+
+/// Programs whose execute may return [`EngineRun::ReboundWhole`]. Bind the
+/// Whole handle once per drive. Keys off the packed Exact+count plan, not
+/// a second count-demand walk. Skip when the codec bind is already Whole
+/// (non-lenient lowerings rebind Whole at requirement time).
+pub(crate) fn may_rebind_whole(program: &CompiledProgram, requirement: &AccessRequirement) -> bool {
+    program.may_rebind_whole() && !requirement.footprint().is_whole()
+}
+
+/// [`CompiledProgram::execute`], then Whole decode + Whole graph on JSON Exact
+/// count miss. `rebind` must decode the same value under Whole access.
+pub(crate) fn execute_or_rebind_whole<'program, 'source, E>(
+    program: &'program CompiledProgram,
+    outcome: CodecInputOutcome<'source>,
+    resources: &mut ResourceContext<'_>,
+    publication: &Publication,
+    rebind: impl FnOnce(&mut ResourceContext<'_>) -> Result<CodecInputOutcome<'source>, PipelineError<E>>,
+) -> Result<EngineRun<'program, 'source>, PipelineError<E>> {
+    match program
+        .execute(outcome, resources)
+        .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
+    {
+        EngineRun::ReboundWhole => program
+            .try_run_whole_value(rebind(resources)?, resources)
+            .map_err(|error| publication.fail(PipelineFailure::Codec(error))),
+        run => Ok(run),
+    }
 }
 
 /// A Located requirement whose codec declined to pack a multi-match range as

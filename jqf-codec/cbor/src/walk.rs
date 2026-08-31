@@ -45,6 +45,8 @@ pub(crate) enum Located {
         start: usize,
         /// Offset just past the value's last byte.
         end: usize,
+        /// Container span kind and direct-child count, set together. `None` for a scalar.
+        container: Option<(jqf_data::ContainerSpanKind, u64)>,
     },
     /// The step at which navigation stopped: no member or position exists.
     Missing {
@@ -204,7 +206,7 @@ impl<'a> Walker<'a> {
                         // A pending step cannot navigate INTO the payload: the step's domain is violated by the scalar
                         // it wraps.
                         self.note_scalar_mismatch(step, tag_payload_kind(tag));
-                        self.note_value(step, value_start, end);
+                        self.note(step, value_start, end, None);
                         return Ok(());
                     }
                     // An uninterpreted tag (including 55799) is payload- transparent: the value it wraps is walked as
@@ -230,7 +232,7 @@ impl<'a> Walker<'a> {
                 }
             }
             let end = self.pos;
-            self.note_value(step, value_start, end);
+            self.note(step, value_start, end, None);
             return Ok(());
         }
     }
@@ -644,14 +646,37 @@ impl<'a> Walker<'a> {
             // already noted as a mismatch at the container open, which cleared `navigable`.)
             self.note_missing(step_index);
         }
-        self.note_value(step, value_start, end);
+        self.note(
+            step,
+            value_start,
+            end,
+            Some((
+                container,
+                match container {
+                    Container::Array => element_position as u64,
+                    Container::Object => seen,
+                },
+            )),
+        );
         Ok(())
     }
 
-    /// Notes the located value for a scalar (or recognized-tag) item.
-    fn note_value(&mut self, step: StepCtx, start: usize, end: usize) {
+    /// Notes the located value. `container` carries span kind and the child count the walk just proved.
+    fn note(&mut self, step: StepCtx, start: usize, end: usize, container: Option<(Container, u64)>) {
         if self.outcome.is_none() && step == Some(self.steps.len()) {
-            self.outcome = Some(Located::Value { start, end });
+            self.outcome = Some(Located::Value {
+                start,
+                end,
+                container: container.map(|(kind, count)| {
+                    (
+                        match kind {
+                            Container::Array => jqf_data::ContainerSpanKind::Array,
+                            Container::Object => jqf_data::ContainerSpanKind::Object,
+                        },
+                        count,
+                    )
+                }),
+            });
         }
     }
 
@@ -845,7 +870,7 @@ mod tests {
         let resources = ctx();
         let located = locate_whole(bytes, &[step_index(0)], &resources).expect("locate");
         match located {
-            Located::Value { start, end } => {
+            Located::Value { start, end, .. } => {
                 assert_eq!(start, 1);
                 assert_eq!(end, 4);
             }
@@ -868,12 +893,12 @@ mod tests {
         for bytes in [definite, indefinite] {
             // .[2] and .[-1] land on the last element.
             let located = locate_whole(bytes, &[step_index(2)], &resources).expect("index 2");
-            assert!(matches!(located, Located::Value { start: 3, end: 4 }));
+            assert!(matches!(located, Located::Value { start: 3, end: 4, .. }));
             let located = locate_whole(bytes, &[step_index(-1)], &resources).expect("index -1");
-            assert!(matches!(located, Located::Value { start: 3, end: 4 }));
+            assert!(matches!(located, Located::Value { start: 3, end: 4, .. }));
             // .[-3] lands on the first element.
             let located = locate_whole(bytes, &[step_index(-3)], &resources).expect("index -3");
-            assert!(matches!(located, Located::Value { start: 1, end: 2 }));
+            assert!(matches!(located, Located::Value { start: 1, end: 2, .. }));
             // Past either end is Missing, never a wrong answer.
             let located = locate_whole(bytes, &[step_index(3)], &resources).expect("index 3");
             assert!(matches!(located, Located::Missing { step: 0 }));
@@ -885,11 +910,11 @@ mod tests {
         // resolves inside the nested container, exactly as the indefinite encoding does.
         let nested: &[u8] = &[0x83, 0x01, 0x82, 0x02, 0x03, 0x04];
         let located = locate_whole(nested, &[step_index(1), step_index(0)], &resources).expect("nested definite");
-        assert!(matches!(located, Located::Value { start: 3, end: 4 }));
+        assert!(matches!(located, Located::Value { start: 3, end: 4, .. }));
         let nested_indefinite: &[u8] = &[0x9f, 0x01, 0x82, 0x02, 0x03, 0x04, 0xff];
         let located =
             locate_whole(nested_indefinite, &[step_index(1), step_index(0)], &resources).expect("nested indefinite");
-        assert!(matches!(located, Located::Value { start: 3, end: 4 }));
+        assert!(matches!(located, Located::Value { start: 3, end: 4, .. }));
 
         // An eager hit does not stop validation: [1, [2, 3], <truncated>] fails on the truncated THIRD sibling even
         // though .[1] itself resolved during the loop.
@@ -993,7 +1018,7 @@ mod tests {
             &resources,
         )
         .expect("a present member resolves");
-        assert!(matches!(located, Located::Value { start: 4, end: 5 }));
+        assert!(matches!(located, Located::Value { start: 4, end: 5, .. }));
 
         // A member step over an ARRAY is the index-class mismatch, exactly as before the fix.
         let array: &[u8] = &[0x81, 0x01];

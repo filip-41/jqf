@@ -96,6 +96,8 @@ the edit lane's re-render, so an edited `.jsonc` file stays JSONC.
 | `json5` |  ✓  |  ✓  |  ✓   | one document per source                              |
 
 JSON is the codec that defers hardest: counts, element streams, kind-only
-`type`, and `keys` can be answered from the validated span skeleton without
-building nodes the program never reads. Every byte is still validated first. See
+`type`, `keys`, `has`, and numeric `min`/`max` can be answered from the
+validated span skeleton without building nodes the program never reads.
+Direct Exact is that same one-pass skeleton; Fields omit unread members of
+the located object. Every byte is still validated first. See
 [Demand and pushdown](demand.md).

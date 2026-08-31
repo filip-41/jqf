@@ -1,14 +1,23 @@
 //! Post-lower transforms on the pre-fusion arena: fuse, rewrite, and mark
 //! before analysis.
+//!
+//! [`marks`] walks the fused arena. [`rewrites`] owns collect-add. [`slurp`]
+//! rewrites `map(F)|add` into a streaming fold after finish. Analysis and
+//! [`crate::program::Program::new`] assume path-normal shapes with
+//! tail/keyed/binary facts set.
 
 mod marks;
 mod rewrites;
+mod slurp;
 
 use super::error::EngineCompileError;
 use super::prelude::*;
 use crate::program::{CallableDef, ProgramNode, ProgramNodeId};
 
 pub(crate) use rewrites::push_rewrite_node;
+
+#[cfg(test)]
+pub(crate) use marks::keyed_collect_keys;
 
 /// Fuses pipe chains, rewrites collect|add (root and callable bodies), and
 /// marks post-fuse facts.

@@ -113,7 +113,8 @@ impl CsvColumnSession {
     /// Resolves the single step to a column index, or a negative observation.
     ///
     /// The dialect decides which step KIND names a column, and the other kind is the floor's own type mismatch against
-    /// the row's kind — never a second lookup rule.
+    /// the row's kind — never a second lookup rule. A range step names a slice this single-column session cannot serve;
+    /// it declines the located route so the whole-document floor can answer.
     fn resolve_column(&self, field_count: usize) -> Result<Option<usize>, ColumnObservation> {
         let Some(step) = &self.step else {
             // No step: the root selection. A zero-step Located requirement never binds these routes (the root
@@ -134,17 +135,16 @@ impl CsvColumnSession {
                 .map(Some)
                 .ok_or(ColumnObservation::Missing { step: 0 }),
             // A member name against an ARRAY row and an index against an OBJECT row are both the floor's typed index
-            // mismatch, named by the row kind this dialect publishes. A RANGE names a slice, never one column — the
-            // floor would publish the slice, so answering column 0 would be silent wrong bytes — and is rejected as
-            // the same typed mismatch (defensive: the exact-path gate upstream is what keeps range steps out).
-            (OwnedStep::Member(_) | OwnedStep::Range, None) => Err(ColumnObservation::TypeMismatch {
+            // mismatch, named by the row kind this dialect publishes.
+            (OwnedStep::Member(_), None) => Err(ColumnObservation::TypeMismatch {
                 step: 0,
                 actual: jqf_data::ValueKind::Array,
             }),
-            (OwnedStep::Index(_) | OwnedStep::Range, Some(_)) => Err(ColumnObservation::TypeMismatch {
+            (OwnedStep::Index(_), Some(_)) => Err(ColumnObservation::TypeMismatch {
                 step: 0,
                 actual: jqf_data::ValueKind::Object,
             }),
+            (OwnedStep::Range, _) => Err(ColumnObservation::RangeDeclined),
         }
     }
 
@@ -225,6 +225,7 @@ impl CsvColumnSession {
 enum ColumnObservation {
     Missing { step: usize },
     TypeMismatch { step: usize, actual: jqf_data::ValueKind },
+    RangeDeclined,
 }
 
 impl AccessSession for CsvColumnSession {
@@ -328,6 +329,7 @@ impl AccessSession for CsvColumnSession {
                     },
                 )
             }
+            Err(ColumnObservation::RangeDeclined) => Err(CodecError::new(CodecFailureKind::RequirementMismatch)),
             Ok(None) => Err(crate::decode::data_contract()),
         }
     }
@@ -335,4 +337,55 @@ impl AccessSession for CsvColumnSession {
 
 fn map_data(error: DataError) -> CodecError {
     jqf_codec_core::map_data(error, "CSV single-column builder rejected document construction")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::csv_schema_recipe;
+    use jqf_codec_core::{CodecRunContext, SelectionOrigin};
+    use jqf_data::DocumentSchemaPrototype;
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &ContinueControl,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(SourceRef::new(SourceId::new(1), SourceKind::Input), "row.csv", bytes, 0)
+    }
+
+    /// A range step on the single-column session declines the located route so the whole-document floor can serve the
+    /// slice.
+    #[test]
+    fn a_range_step_declines_to_the_floor() {
+        let options = crate::CsvDecodeOptions::try_new_rfc4180(None, None, 1 << 20, false).expect("options");
+        let recipe = csv_schema_recipe(&options).expect("recipe");
+        let schema_prototype = DocumentSchemaPrototype::try_new(&recipe).expect("prototype");
+        let mut session = CsvColumnSession::new(
+            options,
+            None,
+            None,
+            &[PortableStep::SemanticRange {
+                start: Some(0),
+                end: Some(1),
+            }],
+            SelectionOrigin::new(0),
+            schema_prototype,
+        );
+        let mut resources = resources();
+        let mut context = CodecRunContext::new(&mut resources);
+        context.set_cooperative_credits(4_096);
+        let error = session
+            .decode(jqf_codec_core::AccessInput::Source(source(b"a,b,c")), &mut context)
+            .expect_err("range declines the column session");
+        assert_eq!(error.kind(), CodecFailureKind::RequirementMismatch);
+    }
 }

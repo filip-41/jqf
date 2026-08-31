@@ -24,9 +24,10 @@
 //!
 //! [`count`]'s demand table names the count-class rows: the container path and
 //! per-item probe a document-core consumer answers from a lazy document's span
-//! skeleton. Like [`join`] and [`partial`] it selects no route by itself; the
-//! SDK drive reads the demand and publishes the consumer's answer when the
-//! document can prove it, and the ordinary route stands when it cannot.
+//! skeleton. Like [`join`] and [`partial`] it selects no route by itself;
+//! finish commits it as one shortcut arm, execute matches that arm once, and
+//! decline is the residual graph. [`any_all`] and [`min_max`] are the same
+//! shape of closed shortcut table.
 
 // The arena facts.
 mod demand;
@@ -37,6 +38,12 @@ mod projection;
 
 // The executor-strategy facts.
 pub(crate) mod count;
+pub(crate) use count::HasDemand;
+pub(crate) mod any_all;
+pub(crate) use any_all::{AnyAllDemand, AnyAllPolarity};
+pub(crate) mod min_max;
+pub(crate) use jqf_data::MinMaxOp;
+pub(crate) use min_max::MinMaxDemand;
 pub(crate) mod element;
 mod lazy;
 pub(crate) mod path_steps;

@@ -176,6 +176,10 @@ delegate instead of copying them:
   pass `DocumentCapacity` as a reservation hint. yaml scoped
   kind-only/null/empty builders reserve a single node. Reservation is
   a hint, not a completeness claim.
+- `Document::count_children_from` / `visit_elements_from` are count and
+  element visit at a start handle. Exact starts at the located node
+  with an empty path. `node == root` does not tell Exact from Whole.
+  Decline is the graph, never a guessed answer.
 
 ## Source
 

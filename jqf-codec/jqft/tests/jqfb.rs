@@ -10,11 +10,11 @@
 )]
 
 use jqf_codec_core::{
-    AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
-    CodecRunContext, DecodeRequest, DiagnosticPolicy, EncodeItem, EncodeRequest, ExactPath, PreservationRequest,
-    ValidationMode,
+    AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, AccessResult, CodecDemand, CodecError,
+    CodecFailureKind, CodecRunContext, DecodeRequest, DiagnosticPolicy, EncodeItem, EncodeRequest, ExactPath,
+    ExactSelectionRecord, PreservationRequest, ValidationMode,
 };
-use jqf_data::{DialectId, FormatId, Value};
+use jqf_data::{CountDemand, CountRow, CountVerdict, DialectId, FormatId, Value};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -525,8 +525,29 @@ enum PStep {
     Index(i64),
 }
 
-/// Drives one EXACT demand over a jqfb image, returning the materialized located root value (or the failure kind).
-fn exact_value(bytes: &[u8], steps: &[PStep]) -> Result<Value, CodecFailureKind> {
+/// NODE chunk offset/len and the first directory entry's digest slot, from a jqfb footer.
+fn node_chunk(bytes: &[u8]) -> (usize, usize, usize) {
+    let footer_start = u64::from_le_bytes(bytes[bytes.len() - 8..].try_into().unwrap()) as usize;
+    let footer = &bytes[bytes.len() - footer_start..];
+    let count = u64::from_le_bytes(footer[..8].try_into().unwrap()) as usize;
+    let entries = &footer[8..8 + count * 52];
+    assert_eq!(
+        u32::from_le_bytes(entries[..4].try_into().unwrap()),
+        0x0000_0001,
+        "directory entry 0 must be the NODE chunk"
+    );
+    let node_offset = u64::from_le_bytes(entries[4..12].try_into().unwrap()) as usize;
+    let node_len = u64::from_le_bytes(entries[12..20].try_into().unwrap()) as usize;
+    let digest_slot = bytes.len() - footer_start + 8 + 20;
+    (node_offset, node_len, digest_slot)
+}
+
+/// Drives one EXACT demand over a jqfb image, returning the located access result (or the failure kind).
+fn exact_access<'source>(
+    bytes: &'source [u8],
+    steps: &[PStep],
+    count: bool,
+) -> Result<AccessResult<'source>, CodecFailureKind> {
     let registration =
         jqf_codec_jqft::registration_jqfb().map_err(|_e| CodecFailureKind::InternalContractViolation {
             contract: "jqfb registration",
@@ -562,28 +583,41 @@ fn exact_value(bytes: &[u8], steps: &[PStep]) -> Result<Value, CodecFailureKind>
     }
     let footprint = AccessFootprint::try_exact(path, &resources);
     let demand = CodecDemand::try_new(&resources);
-    let requirement = AccessRequirement::try_exact(
+    let mut requirement = AccessRequirement::try_exact(
         footprint,
         demand,
         AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
         &resources,
     )
     .map_err(|_| CodecFailureKind::Overflow)?;
+    if count {
+        requirement = requirement.with_count(empty_path_count());
+    }
     let handle = provider
         .bind(&requirement)
         .map_err(|_| CodecFailureKind::RequirementMismatch)?;
     let mut session = provider.open(&handle, &mut resources).map_err(|error| error.kind())?;
     let mut context = CodecRunContext::new(&mut resources);
     context.set_cooperative_credits(4_096);
-    let access_result = session.decode(&mut context).map_err(|error| error.kind())?;
+    session.decode(&mut context).map_err(|error| error.kind())
+}
+
+/// Drives one EXACT demand over a jqfb image, returning the materialized located root value (or the failure kind).
+fn exact_value(bytes: &[u8], steps: &[PStep]) -> Result<Value, CodecFailureKind> {
+    let access_result = exact_access(bytes, steps, false)?;
     let AccessOutcome::Located(outcome) = access_result.into_parts().0 else {
         return Err(CodecFailureKind::RequirementMismatch);
     };
+    let mut resources = resources();
     outcome
         .product()
         .document()
         .materialize_root(&mut resources)
         .map_err(|_| CodecFailureKind::UnsupportedRepresentation)
+}
+
+fn exact_count<'source>(bytes: &'source [u8], steps: &[PStep]) -> Result<AccessResult<'source>, CodecFailureKind> {
+    exact_access(bytes, steps, true)
 }
 
 /// The native demand routes serve the exact paths with the same semantic answers the whole-document decode gives: the
@@ -616,6 +650,127 @@ fn jqfb_native_demand_routes_serve_the_exact_paths() {
     assert_eq!(rendered(&[PStep::Index(1), PStep::Index(0)]), "null");
 }
 
+/// Duplicate KEYTEXT is last-wins, not unique-key physics. `validate_table` accepts
+/// two KEYTEXT payloads naming the same member; Whole `add_occurrence` keeps the
+/// last, and Exact navigate must land the same value by overwriting a pointer
+/// during the one object scan — not by rematerializing the hit.
+#[test]
+fn jqfb_exact_member_last_wins_matches_whole_on_duplicate_keytext() {
+    const KEYTEXT: u8 = 14;
+    const ENTRY_LEN: usize = 9;
+    let value = whole_value(b"%jqft 1\n{a: 1, b: 2}\n", jqf_codec_jqft::FORMAT_ID).expect("decode");
+    let image = encode_value(
+        &value,
+        jqf_codec_jqft::FORMAT_ID_JQFB,
+        jqf_codec_jqft::JQFB_CANONICAL_DIALECT_ID,
+        false,
+    )
+    .expect("encode");
+    let bytes = image.as_slice();
+    let (node_offset, node_len, digest_slot) = node_chunk(bytes);
+    let mut mutated = image.clone();
+    let mut keytexts = Vec::new();
+    let mut cursor = 0usize;
+    while cursor + ENTRY_LEN <= node_len {
+        if mutated[node_offset + cursor] == KEYTEXT {
+            keytexts.push(cursor);
+        }
+        cursor += ENTRY_LEN;
+    }
+    assert_eq!(keytexts.len(), 2, "the encoded object must have two KEYTEXT entries");
+    let first = node_offset + keytexts[0] + 5;
+    let second = node_offset + keytexts[1] + 5;
+    let first_payload = mutated[first..first + 4].to_vec();
+    mutated[second..second + 4].copy_from_slice(&first_payload);
+    let digest = blake3::hash(&mutated[node_offset..node_offset + node_len]);
+    mutated[digest_slot..digest_slot + 32].copy_from_slice(digest.as_bytes());
+
+    let whole = whole_value(&mutated, jqf_codec_jqft::FORMAT_ID_JQFB).expect("whole last-wins");
+    assert_eq!(render(&object_member(&whole, "a")), "2");
+    assert_eq!(
+        render(&exact_value(&mutated, &[PStep::Member("a")]).expect("exact last-wins")),
+        "2"
+    );
+}
+
+/// Exact + count publishes the node-table subtree as a container span. `validate_table`
+/// already proved the image; count must not scoped-decode the hit a second time.
+#[test]
+fn exact_count_demand_uses_the_locate_span() {
+    let value = whole_value(b"%jqft 1\n{users: [1, 2, 3]}\n", jqf_codec_jqft::FORMAT_ID).expect("decode");
+    let image = encode_value(
+        &value,
+        jqf_codec_jqft::FORMAT_ID_JQFB,
+        jqf_codec_jqft::JQFB_CANONICAL_DIALECT_ID,
+        false,
+    )
+    .expect("encode");
+    let result = exact_count(&image, &[PStep::Member("users")]).expect("count demand");
+    let AccessOutcome::Located(located) = result.outcome() else {
+        panic!("located")
+    };
+    let ExactSelectionRecord::Node { node, .. } = located.result() else {
+        panic!("node")
+    };
+    let document = located.product().document();
+    assert!(
+        document
+            .value_view(*node)
+            .expect("view")
+            .is_container_span()
+            .expect("span"),
+        "count Exact must publish the locate span, not a rematerialized tree"
+    );
+    assert_eq!(document.container_span_count(), 1);
+    assert_eq!(document.node_count(), 1, "skeleton Exact is one container-span node");
+    assert_eq!(
+        document.container_span_child_count(*node).expect("handle"),
+        Some(3),
+        "Exact count records the node-table payload count"
+    );
+    let mut resources = resources();
+    assert_eq!(
+        document
+            .count_children_from(*node, &empty_path_count(), &mut resources)
+            .expect("span count"),
+        CountVerdict::Count(3)
+    );
+}
+
+#[test]
+fn exact_count_demand_still_validates_unread_corruption() {
+    let value = whole_value(
+        b"%jqft 1\n[1, {name: \"ada\", nums: [1, 2]}]\n",
+        jqf_codec_jqft::FORMAT_ID,
+    )
+    .expect("decode");
+    let image = encode_value(
+        &value,
+        jqf_codec_jqft::FORMAT_ID_JQFB,
+        jqf_codec_jqft::JQFB_CANONICAL_DIALECT_ID,
+        false,
+    )
+    .expect("encode");
+    let bytes = image.as_slice();
+    let (node_offset, node_len, digest_slot) = node_chunk(bytes);
+    let mut mutated = image.clone();
+    let at = node_offset + 1;
+    mutated[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
+    let digest = blake3::hash(&mutated[node_offset..node_offset + node_len]);
+    mutated[digest_slot..digest_slot + 32].copy_from_slice(digest.as_bytes());
+    exact_count(&mutated, &[PStep::Index(1)]).expect_err("Exact + count must still refuse unread corruption");
+}
+
+fn empty_path_count() -> CountDemand {
+    CountDemand {
+        row: CountRow::Container,
+        path: Vec::new(),
+        range: None,
+        probe: Vec::new(),
+        filter: None,
+    }
+}
+
 /// The demand routes validate the COMPLETE node table to the floor's exact strictness (validate-everything-first): a
 /// corrupt subtree-size word in a subtree the route never materializes fails the shallow and scoped routes exactly as
 /// it fails the whole-document decode. The digest is re-stamped so the corruption is structural, not a digest failure.
@@ -637,22 +792,11 @@ fn jqfb_demand_routes_reject_a_corrupt_subtree_like_the_floor() {
     // 1..5), re-stamping the chunk digest so the corruption is structural rather than a digest mismatch. The root's
     // real size is the whole table.
     let bytes = image.as_slice();
-    let footer_start = u64::from_le_bytes(bytes[bytes.len() - 8..].try_into().unwrap()) as usize;
-    let footer = &bytes[bytes.len() - footer_start..];
-    let count = u64::from_le_bytes(footer[..8].try_into().unwrap()) as usize;
-    let entries = &footer[8..8 + count * 52];
-    assert_eq!(
-        u32::from_le_bytes(entries[..4].try_into().unwrap()),
-        0x0000_0001,
-        "directory entry 0 must be the NODE chunk"
-    );
-    let node_offset = u64::from_le_bytes(entries[4..12].try_into().unwrap()) as usize;
-    let node_len = u64::from_le_bytes(entries[12..20].try_into().unwrap());
+    let (node_offset, node_len, digest_slot) = node_chunk(bytes);
     let mut mutated = image.clone();
     let at = node_offset + 1; // entry 0's subtree-size word
     mutated[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
-    let digest = blake3::hash(&mutated[node_offset..node_offset + node_len as usize]);
-    let digest_slot = bytes.len() - footer_start + 8 + 20;
+    let digest = blake3::hash(&mutated[node_offset..node_offset + node_len]);
     mutated[digest_slot..digest_slot + 32].copy_from_slice(digest.as_bytes());
 
     assert!(
@@ -678,17 +822,7 @@ fn scoped_jqfb_rejects_a_corrupt_bytes_pool_index_like_the_floor() {
     )
     .expect("encode");
     let bytes = image.as_slice();
-    let footer_start = u64::from_le_bytes(bytes[bytes.len() - 8..].try_into().unwrap()) as usize;
-    let footer = &bytes[bytes.len() - footer_start..];
-    let count = u64::from_le_bytes(footer[..8].try_into().unwrap()) as usize;
-    let entries = &footer[8..8 + count * 52];
-    assert_eq!(
-        u32::from_le_bytes(entries[..4].try_into().unwrap()),
-        0x0000_0001,
-        "directory entry 0 must be the NODE chunk"
-    );
-    let node_offset = u64::from_le_bytes(entries[4..12].try_into().unwrap()) as usize;
-    let node_len = u64::from_le_bytes(entries[12..20].try_into().unwrap()) as usize;
+    let (node_offset, node_len, digest_slot) = node_chunk(bytes);
     let node = &bytes[node_offset..node_offset + node_len];
     let mut bytes_at = None;
     let mut cursor = 0usize;
@@ -703,7 +837,6 @@ fn scoped_jqfb_rejects_a_corrupt_bytes_pool_index_like_the_floor() {
     let mut mutated = image.clone();
     mutated[payload_at..payload_at + 4].copy_from_slice(&9999u32.to_le_bytes());
     let digest = blake3::hash(&mutated[node_offset..node_offset + node_len]);
-    let digest_slot = bytes.len() - footer_start + 8 + 20;
     mutated[digest_slot..digest_slot + 32].copy_from_slice(digest.as_bytes());
 
     assert!(

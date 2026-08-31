@@ -21,6 +21,9 @@ What it has:
   scalar (`NumberView` is `Number | Integer(&str) | Decimal | Float`).
   There is no `Atom` type
 - bounded readers (`TopologyReader`, `FactReader`)
+- `Document::count_children_from` / `visit_elements_from` — count and
+  element visit at a start handle. Exact starts at the located node
+  with an empty path; `node == root` is not Exact vs Whole
 - `AccountedDocumentBuilder` — build one document
 - `resolve_index` — signed indexes (`.[-1]` counts from the end)
 - civil-calendar helpers (`days_from_civil`, `civil_from_days`,

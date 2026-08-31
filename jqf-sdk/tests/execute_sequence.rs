@@ -1230,3 +1230,387 @@ fn empty_path_slice_then_type_raises_on_an_object() {
         error.failure()
     );
 }
+
+#[test]
+fn has_literal_answers_presence_without_the_graph() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"k":null}"#, &mut sink, r#"has("k")"#).expect("runs");
+    assert_eq!(sink.bytes, b"true\n");
+
+    let mut missing = CollectingSink::new();
+    run_sequence_with(br"{}", &mut missing, r#"has("k")"#).expect("runs");
+    assert_eq!(missing.bytes, b"false\n");
+
+    let mut nulls = CollectingSink::new();
+    run_sequence_with(b"null", &mut nulls, r#"has("k")"#).expect("runs");
+    assert_eq!(nulls.bytes, b"false\n");
+
+    let mut array = CollectingSink::new();
+    run_sequence_with(br"[1,2]", &mut array, "has(1)").expect("runs");
+    assert_eq!(array.bytes, b"true\n");
+}
+
+#[test]
+fn path_has_reads_the_located_subject() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":{"id":1}}"#, &mut sink, r#".users | has("id")"#).expect("runs");
+    assert_eq!(sink.bytes, b"true\n");
+
+    // Missing PATH is the graph: `{} | .a | has("k")` is false (null | has).
+    let mut miss = CollectingSink::new();
+    run_sequence_with(br"{}", &mut miss, r#".a | has("k")"#).expect("runs");
+    assert_eq!(miss.bytes, b"false\n");
+
+    // Located null subject is false without a miss walk.
+    let mut present_null = CollectingSink::new();
+    run_sequence_with(br#"{"a":null}"#, &mut present_null, r#".a | has("k")"#).expect("runs");
+    assert_eq!(present_null.bytes, b"false\n");
+}
+
+#[test]
+fn has_kind_mismatch_raises() {
+    let mut sink = CollectingSink::new();
+    let error = run_sequence_with(b"1", &mut sink, r#"has("k")"#).expect_err("number | has(string) raises");
+    assert!(
+        matches!(error.failure(), PipelineFailure::Raised(_)),
+        "kind mismatch must raise: {:?}",
+        error.failure()
+    );
+}
+
+#[test]
+fn any_all_answers_admitted_predicates() {
+    let mut all_true = CollectingSink::new();
+    run_sequence_with(br#"[{"ok":true},{"ok":true}]"#, &mut all_true, "all(.ok)").expect("runs");
+    assert_eq!(all_true.bytes, b"true\n");
+
+    let mut any_false = CollectingSink::new();
+    run_sequence_with(br#"[{"ok":false}]"#, &mut any_false, "any(.ok)").expect("runs");
+    assert_eq!(any_false.bytes, b"false\n");
+
+    let mut empty_all = CollectingSink::new();
+    run_sequence_with(b"[]", &mut empty_all, "all(.ok)").expect("runs");
+    assert_eq!(empty_all.bytes, b"true\n");
+
+    let mut empty_any = CollectingSink::new();
+    run_sequence_with(b"[]", &mut empty_any, "any(.ok)").expect("runs");
+    assert_eq!(empty_any.bytes, b"false\n");
+}
+
+#[test]
+fn path_any_all_reads_the_located_container() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":[{"id":1},{"id":2}]}"#, &mut sink, ".users | all(.id)").expect("runs");
+    assert_eq!(sink.bytes, b"true\n");
+
+    // Missing PATH is the graph: cannot iterate null.
+    let mut miss = CollectingSink::new();
+    let error = run_sequence_with(br"{}", &mut miss, ".users | all(.id)").expect_err("null iterate raises");
+    assert!(
+        matches!(
+            error.failure(),
+            PipelineFailure::IterateMismatch { .. } | PipelineFailure::Raised(_)
+        ),
+        "missing container must raise: {:?}",
+        error.failure()
+    );
+}
+
+#[test]
+fn any_all_raise_capable_item_takes_the_graph() {
+    let mut sink = CollectingSink::new();
+    let error = run_sequence_with(br"[1]", &mut sink, "all(.ok)").expect_err("number | .ok raises");
+    assert!(
+        matches!(
+            error.failure(),
+            PipelineFailure::TypeMismatch { .. } | PipelineFailure::Raised(_)
+        ),
+        "raise-capable item must reach the graph: {:?}",
+        error.failure()
+    );
+}
+
+#[test]
+fn nested_generator_any_all_stays_the_graph() {
+    // `.a | all(.b[]; .k)` is not a row: Exact would sit on `.a` while the
+    // demand names `.a.b`. The graph still raises (cannot index array).
+    let mut sink = CollectingSink::new();
+    let error = run_sequence_with(br#"{"a":[{"k":true}]}"#, &mut sink, ".a | all(.b[]; .k)")
+        .expect_err("nested generator must not oracle the outer array");
+    assert!(
+        sink.bytes != b"true\n",
+        "must not answer true for .a | all(.b[]; .k): {}",
+        String::from_utf8_lossy(&sink.bytes)
+    );
+    assert!(
+        matches!(
+            error.failure(),
+            PipelineFailure::TypeMismatch { .. } | PipelineFailure::Raised(_) | PipelineFailure::IterateMismatch { .. }
+        ),
+        "nested generator must raise: {:?}",
+        error.failure()
+    );
+}
+
+#[test]
+fn min_max_answers_a_numeric_array() {
+    let mut min = CollectingSink::new();
+    run_sequence_with(b"[3,1,2]", &mut min, "min").expect("runs");
+    assert_eq!(min.bytes, b"1\n");
+
+    let mut max = CollectingSink::new();
+    run_sequence_with(b"[3,1,2]", &mut max, "max").expect("runs");
+    assert_eq!(max.bytes, b"3\n");
+
+    let mut empty = CollectingSink::new();
+    run_sequence_with(b"[]", &mut empty, "min").expect("runs");
+    assert_eq!(empty.bytes, b"null\n");
+}
+
+#[test]
+fn path_min_reads_the_located_array() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"xs":[3,1,2]}"#, &mut sink, ".xs | min").expect("runs");
+    assert_eq!(sink.bytes, b"1\n");
+
+    let mut by = CollectingSink::new();
+    run_sequence_with(br#"{"xs":[{"n":3},{"n":1},{"n":2}]}"#, &mut by, ".xs | min_by(.n)").expect("runs");
+    assert_eq!(by.bytes, b"{\"n\":1}\n");
+}
+
+#[test]
+fn min_max_mixed_and_nan_take_the_graph() {
+    // Mixed kinds Decline so the graph owns the total order: max of number
+    // and string is the string. A shortcut that answered the first number
+    // would print `1`.
+    let mut mixed = CollectingSink::new();
+    run_sequence_with(br#"[1,"x"]"#, &mut mixed, "max").expect("runs");
+    assert_eq!(mixed.bytes, b"\"x\"\n");
+
+    let mut bools = CollectingSink::new();
+    run_sequence_with(b"[1,true]", &mut bools, "min").expect("runs");
+    assert_eq!(bools.bytes, b"true\n");
+}
+
+#[test]
+fn missing_path_min_raises() {
+    // Missing PATH cannot iterate null. Do not answer null like empty-array null.
+    let mut miss = CollectingSink::new();
+    let error = run_sequence_with(br"{}", &mut miss, ".xs | min").expect_err("null iterate raises");
+    assert_ne!(
+        miss.bytes.as_slice(),
+        b"null\n",
+        "missing PATH must not reuse empty-array null"
+    );
+    assert!(
+        matches!(
+            error.failure(),
+            PipelineFailure::IterateMismatch { .. } | PipelineFailure::Raised(_)
+        ),
+        "missing container must raise: {:?}",
+        error.failure()
+    );
+}
+
+#[test]
+fn json_exact_collect_count_answers_when_the_oracle_hits() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"name":1},{"name":2}]}"#,
+        &mut sink,
+        "[.users[].name] | length",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"2\n");
+}
+
+#[test]
+fn json_exact_path_length_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":[1,2,3]}"#, &mut sink, ".users | length").expect("runs");
+    assert_eq!(sink.bytes, b"3\n");
+}
+
+#[test]
+fn json_exact_path_length_last_wins() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":[1],"users":[1,2,3]}"#, &mut sink, ".users | length").expect("runs");
+    assert_eq!(sink.bytes, b"3\n");
+}
+
+#[test]
+fn json_exact_object_length_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":{"a":1,"b":2}}"#, &mut sink, ".users | length").expect("runs");
+    assert_eq!(sink.bytes, b"2\n");
+}
+
+#[test]
+fn json_exact_has_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":{"id":1,"n":2}}"#, &mut sink, r#".users | has("id")"#).expect("runs");
+    assert_eq!(sink.bytes, b"true\n");
+    let mut missing = CollectingSink::new();
+    run_sequence_with(br#"{"users":{"n":2}}"#, &mut missing, r#".users | has("id")"#).expect("runs");
+    assert_eq!(missing.bytes, b"false\n");
+}
+
+#[test]
+fn json_exact_keys_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":{"b":1,"a":2}}"#, &mut sink, ".users | keys").expect("runs");
+    assert_eq!(sink.bytes, b"[\"a\",\"b\"]\n");
+}
+
+#[test]
+fn json_exact_array_keys_are_numbers() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"items":[10,20]}"#, &mut sink, ".items | keys").expect("runs");
+    assert_eq!(sink.bytes, b"[0,1]\n");
+}
+
+#[test]
+fn json_exact_all_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":[{"id":1},{"id":2}]}"#, &mut sink, ".users | all(.id)").expect("runs");
+    assert_eq!(sink.bytes, b"true\n");
+}
+
+#[test]
+fn json_exact_element_id_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"users":[{"id":1},{"id":2}]}"#, &mut sink, ".users[] | .id").expect("runs");
+    assert_eq!(sink.bytes, b"1\n2\n");
+}
+
+#[test]
+fn json_exact_element_id_last_wins() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"id":1}],"users":[{"id":8},{"id":9}]}"#,
+        &mut sink,
+        ".users[] | .id",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"8\n9\n");
+}
+
+#[test]
+fn json_exact_map_construct_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"id":1,"score":10},{"id":2,"score":20}]}"#,
+        &mut sink,
+        ".users | map({id,score})",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"[{\"id\":1,\"score\":10},{\"id\":2,\"score\":20}]\n");
+}
+
+#[test]
+fn json_exact_min_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"xs":[3,1,2]}"#, &mut sink, ".xs | min").expect("runs");
+    assert_eq!(sink.bytes, b"1\n");
+}
+
+#[test]
+fn json_exact_max_last_wins() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"xs":[0],"xs":[5,2]}"#, &mut sink, ".xs | max").expect("runs");
+    assert_eq!(sink.bytes, b"5\n");
+}
+
+#[test]
+fn json_exact_min_empty_is_null() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"xs":[]}"#, &mut sink, ".xs | min").expect("runs");
+    assert_eq!(sink.bytes, b"null\n");
+}
+
+#[test]
+fn json_exact_min_by_answers_from_the_locate_walk() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"id":"b","score":2},{"id":"a","score":1}]}"#,
+        &mut sink,
+        ".users | min_by(.score)",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"{\"id\":\"a\",\"score\":1}\n");
+}
+
+#[test]
+fn json_exact_filter_collect_count_answers_when_the_oracle_hits() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"score":50},{"score":150},{"score":200}]}"#,
+        &mut sink,
+        ".users | map(select(.score > 100)) | length",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"2\n");
+}
+
+#[test]
+fn json_exact_filter_collect_count_last_wins() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"score":200}],"users":[{"score":50},{"score":150}]}"#,
+        &mut sink,
+        ".users | map(select(.score > 100)) | length",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"1\n");
+}
+
+#[test]
+fn json_exact_collect_count_miss_matches_the_floor() {
+    // JSON Exact republishes `.users` as the document root. Collect probe
+    // decline must rebind Whole, not run `[.users[].name] | length` on the
+    // array (that would index an array with a string).
+    let input = br#"{"users":[{"name":1},5]}"#;
+    let mut scoped = CollectingSink::new();
+    let scoped_run = run_sequence_with(input, &mut scoped, "[.users[].name] | length");
+    let mut floor = CollectingSink::new();
+    let floor_run = run_sequence_with(input, &mut floor, ". as $z | [.users[].name] | length");
+    assert_eq!(
+        scoped.bytes, floor.bytes,
+        "Exact collect miss stdout must match the floor"
+    );
+    match (scoped_run, floor_run) {
+        (Err(scoped), Err(floor)) => assert_eq!(
+            format!("{:?}", scoped.failure()),
+            format!("{:?}", floor.failure()),
+            "Exact collect miss must fail as the floor does"
+        ),
+        (Ok(_), Ok(_)) => {}
+        (scoped, floor) => panic!("Exact collect miss must match the floor: scoped={scoped:?} floor={floor:?}"),
+    }
+}
+
+#[test]
+fn json_fields_construct_publishes_named_members() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"id":1,"score":2,"blob":[1,2,3]}"#, &mut sink, "{id,score}").expect("runs");
+    assert_eq!(sink.bytes, b"{\"id\":1,\"score\":2}\n");
+}
+
+#[test]
+fn json_exact_indexed_construct_publishes_named_members() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(
+        br#"{"users":[{"id":1,"score":2,"blob":[1,2,3]}]}"#,
+        &mut sink,
+        ".users[0] | {id,score}",
+    )
+    .expect("runs");
+    assert_eq!(sink.bytes, b"{\"id\":1,\"score\":2}\n");
+}
+
+#[test]
+fn json_fields_construct_still_rejects_corrupt_unread_member() {
+    let mut sink = CollectingSink::new();
+    run_sequence_with(br#"{"id":1,"score":2,"blob":[}"#, &mut sink, "{id,score}")
+        .expect_err("corrupt omitted member must fail");
+}

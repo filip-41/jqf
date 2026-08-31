@@ -159,13 +159,7 @@ impl InputProvider for JsonProvider {
             schema_prototype,
             resources,
         )?;
-        if let Some(tree) = requirement.prune() {
-            session.arm_prune(
-                tree.try_clone_in(resources)
-                    .map_err(|_| crate::error::data_contract())?,
-            );
-        }
-        session.set_type_demand(requirement.type_demand());
+        session.arm_requirement(requirement, resources)?;
         ErasedAccessSession::try_new_source_with_route(input.source(), crate::SCOPED_PHYSICAL_ROUTE_ID, || Ok(session))
     }
 
@@ -174,7 +168,7 @@ impl InputProvider for JsonProvider {
         state: &mut RecycledSessionState<'_>,
         slot: RouteSlot,
         requirement: &AccessRequirement,
-        _resources: &mut ResourceContext<'_>,
+        resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
         let (diagnostics, coverage) = decode_shape(requirement);
         // Slot 0 decodes a whole document; slot 1 locates one exact path. Both reset in place. Those two slots ARE the
@@ -224,7 +218,7 @@ impl InputProvider for JsonProvider {
         if !scoped.try_reset(path.steps(), origin, diagnostics, coverage, self.allow_adjacent_values) {
             return Ok(false);
         }
-        scoped.set_type_demand(requirement.type_demand());
+        scoped.arm_requirement(requirement, resources)?;
         Ok(true)
     }
 }

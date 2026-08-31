@@ -138,25 +138,35 @@ pub(crate) enum Retention {
     /// Validate everything, build nothing, and record the document element's
     /// direct children.
     Measure(alloc::vec::Vec<MeasureChild>),
-    /// Validate everything, record only the document element's direct
-    /// children (names + extents), then apply the exact path.
+    /// Validate everything, record a stack of child ledgers along the
+    /// remaining path, then apply the exact path over those ledgers.
     Locate(LocateRetention),
 }
 
-/// Locate-mode path and the document element's collected children.
+/// One open locate frame: the children of the element currently being
+/// recorded, plus adjacent-text coalescing for that level.
+#[derive(Debug)]
+struct LocateLevel {
+    children: alloc::vec::Vec<crate::locate::LocateChild>,
+    last_was_text: bool,
+}
+
+/// Locate-mode path and the open child-ledger stack.
+///
+/// Index 0 is the document element's children (always recorded). Further
+/// frames are pushed while more path steps remain, so [`crate::locate::apply_steps`]
+/// can walk a nested unique path without re-parsing the hit.
 #[derive(Debug)]
 pub(crate) struct LocateRetention {
     steps: alloc::vec::Vec<crate::locate::OwnedStep>,
-    children: alloc::vec::Vec<crate::locate::LocateChild>,
+    stack: alloc::vec::Vec<LocateLevel>,
     root_name: Option<crate::value::ExpandedName>,
     root_attrs: alloc::vec::Vec<crate::value::ExpandedName>,
     root_start: usize,
     root_end: usize,
-    last_was_text: bool,
-    /// False when this parse is a child span of a deeper path step, so an
-    /// own-name miss uses the nested-element hint rather than the document
-    /// root's projection-seam hint.
-    is_document_root: bool,
+    /// Adjacent-text coalescing for the count-only depth (one past the last
+    /// recorded frame). Exact count publishes that cardinality.
+    count_last_was_text: bool,
 }
 
 /// One resumable-parse observation.
@@ -320,39 +330,24 @@ impl XmlParseState {
         Ok(state)
     }
 
-    /// Validate-everything locate parse: records the document element's
-    /// direct children and applies `steps` without building the tree.
+    /// Validate-everything locate parse: records child ledgers along the
+    /// remaining path and applies `steps` without building the tree.
     pub(crate) fn try_new_locate(
         bytes: &[u8],
         steps: alloc::vec::Vec<crate::locate::OwnedStep>,
     ) -> Result<Self, CodecError> {
-        Self::locate_state(bytes, steps, true)
-    }
-
-    /// Locate over a child element's source span: own-name misses are nested,
-    /// not the document projection seam.
-    pub(crate) fn try_new_locate_nested(
-        bytes: &[u8],
-        steps: alloc::vec::Vec<crate::locate::OwnedStep>,
-    ) -> Result<Self, CodecError> {
-        Self::locate_state(bytes, steps, false)
-    }
-
-    fn locate_state(
-        bytes: &[u8],
-        steps: alloc::vec::Vec<crate::locate::OwnedStep>,
-        is_document_root: bool,
-    ) -> Result<Self, CodecError> {
         let mut state = Self::try_new(bytes)?.without_spans();
         state.retention = Retention::Locate(LocateRetention {
             steps,
-            children: alloc::vec::Vec::new(),
+            stack: alloc::vec![LocateLevel {
+                children: alloc::vec::Vec::new(),
+                last_was_text: false,
+            }],
             root_name: None,
             root_attrs: alloc::vec::Vec::new(),
             root_start: 0,
             root_end: 0,
-            last_was_text: false,
-            is_document_root,
+            count_last_was_text: false,
         });
         Ok(state)
     }
@@ -424,18 +419,20 @@ impl XmlParseState {
                 let Some(root_name) = locate.root_name else {
                     return Err(syntax_impl("document has no element"));
                 };
+                let children = locate.stack.first().map_or(&[][..], |level| level.children.as_slice());
                 if locate.steps.is_empty() {
                     return Ok(ParseOutput::Located(crate::locate::LocatedHit::Element {
                         start: locate.root_start,
                         end: locate.root_end,
+                        child_count: u64::try_from(children.len()).unwrap_or(u64::MAX),
                     }));
                 }
                 let hit = crate::locate::apply_steps(
                     &self.intern,
                     root_name,
                     locate.root_attrs.as_slice(),
-                    locate.is_document_root,
-                    locate.children.as_slice(),
+                    true,
+                    children,
                     locate.steps.as_slice(),
                     0,
                 );
@@ -452,18 +449,118 @@ impl XmlParseState {
         let Retention::Locate(locate) = &mut self.retention else {
             return;
         };
-        if self.frames.len() != 1 {
+        if self.frames.len() != locate.stack.len() {
             return;
         }
+        let Some(level) = locate.stack.last_mut() else {
+            return;
+        };
         if let crate::locate::LocateChild::Text(text) = &child
-            && locate.last_was_text
-            && let Some(crate::locate::LocateChild::Text(existing)) = locate.children.last_mut()
+            && level.last_was_text
+            && let Some(crate::locate::LocateChild::Text(existing)) = level.children.last_mut()
         {
             existing.push_str(text);
             return;
         }
-        locate.last_was_text = matches!(child, crate::locate::LocateChild::Text(_));
-        locate.children.push(child);
+        level.last_was_text = matches!(child, crate::locate::LocateChild::Text(_));
+        level.children.push(child);
+    }
+
+    /// Direct children of the last recorded element. Exact count publishes
+    /// this cardinality instead of rematerializing the hit.
+    fn note_locate_grandchild(&mut self, is_text: bool) {
+        let Retention::Locate(locate) = &mut self.retention else {
+            return;
+        };
+        if self.frames.len() != locate.stack.len() + 1 {
+            return;
+        }
+        let Some(crate::locate::LocateChild::Element { child_count, .. }) =
+            locate.stack.last_mut().and_then(|level| level.children.last_mut())
+        else {
+            return;
+        };
+        if is_text && locate.count_last_was_text {
+            return;
+        }
+        locate.count_last_was_text = is_text;
+        *child_count = child_count.saturating_add(1);
+    }
+
+    fn open_locate_element(
+        &mut self,
+        element_expanded: ExpandedName,
+        resolved: &[(ExpandedName, String)],
+        element_start: usize,
+    ) {
+        let Retention::Locate(locate) = &mut self.retention else {
+            return;
+        };
+        if self.frames.is_empty() {
+            locate.root_name = Some(element_expanded);
+            locate.root_attrs = resolved.iter().map(|(name, _)| *name).collect();
+            locate.root_start = element_start;
+            return;
+        }
+        let parent_depth = self.frames.len();
+        if parent_depth != locate.stack.len() {
+            return;
+        }
+        let Some(level) = locate.stack.last_mut() else {
+            return;
+        };
+        locate.count_last_was_text = false;
+        level.last_was_text = false;
+        let record_nested = parent_depth < locate.steps.len();
+        let attrs = if record_nested {
+            resolved.iter().map(|(name, _)| *name).collect()
+        } else {
+            alloc::vec::Vec::new()
+        };
+        level.children.push(crate::locate::LocateChild::Element {
+            name: element_expanded,
+            attrs,
+            start: element_start,
+            end: 0,
+            child_count: 0,
+            children: alloc::vec::Vec::new(),
+        });
+        if record_nested {
+            locate.stack.push(LocateLevel {
+                children: alloc::vec::Vec::new(),
+                last_was_text: false,
+            });
+        }
+    }
+
+    fn close_locate_element(&mut self, end: usize) {
+        let Retention::Locate(locate) = &mut self.retention else {
+            return;
+        };
+        if self.frames.is_empty() {
+            locate.root_end = end;
+            return;
+        }
+        if locate.stack.len() > self.frames.len()
+            && let Some(level) = locate.stack.pop()
+            && let Some(crate::locate::LocateChild::Element {
+                children,
+                child_count,
+                end: slot,
+                ..
+            }) = locate.stack.last_mut().and_then(|parent| parent.children.last_mut())
+        {
+            *child_count = u64::try_from(level.children.len()).unwrap_or(u64::MAX);
+            *children = level.children;
+            *slot = end;
+            return;
+        }
+        if locate.stack.len() == self.frames.len()
+            && let Some(crate::locate::LocateChild::Element { end: slot, .. }) =
+                locate.stack.last_mut().and_then(|level| level.children.last_mut())
+        {
+            *slot = end;
+        }
     }
 
     /// Records one direct child of the document element in measure retention.
@@ -602,13 +699,15 @@ impl XmlParseState {
                 head.append(children);
                 *children = head;
             }
-            if let Retention::Locate(locate) = &mut self.retention {
+            if let Retention::Locate(locate) = &mut self.retention
+                && let Some(level) = locate.stack.first_mut()
+            {
                 let mut head = alloc::vec::Vec::new();
                 for comment in prolog {
                     head.push(crate::locate::LocateChild::Comment(comment));
                 }
-                head.append(&mut locate.children);
-                locate.children = head;
+                head.append(&mut level.children);
+                level.children = head;
             }
             return Ok(());
         }
@@ -1532,26 +1631,12 @@ impl XmlParseState {
         }
         // Record this element as a child of its parent BEFORE the frame is
         // pushed (the parent is still the current frame).
+        self.note_locate_grandchild(false);
         self.account_child(false);
         // Measure/locate retention builds no tree: the frame below carries
         // the names the count skeleton and the scoped path need.
         if self.skips_tree() {
-            if self.frames.is_empty()
-                && let Retention::Locate(locate) = &mut self.retention
-            {
-                locate.root_name = Some(element_expanded);
-                locate.root_attrs = resolved.iter().map(|(name, _)| *name).collect();
-                locate.root_start = element_start;
-            } else if self.frames.len() == 1
-                && let Retention::Locate(locate) = &mut self.retention
-            {
-                locate.last_was_text = false;
-                locate.children.push(crate::locate::LocateChild::Element {
-                    name: element_expanded,
-                    start: element_start,
-                    end: 0,
-                });
-            }
+            self.open_locate_element(element_expanded, &resolved, element_start);
             self.frames.push(OpenFrame {
                 element_index: usize::MAX,
                 bindings,
@@ -1622,15 +1707,7 @@ impl XmlParseState {
         {
             *slot = end;
         }
-        if let Retention::Locate(locate) = &mut self.retention {
-            if self.frames.is_empty() {
-                locate.root_end = end;
-            } else if self.frames.len() == 1
-                && let Some(crate::locate::LocateChild::Element { end: slot, .. }) = locate.children.last_mut()
-            {
-                *slot = end;
-            }
-        }
+        self.close_locate_element(end);
         // Build retention: complete the element's authored extent on the tree
         // node itself (`usize::MAX` is the measure-mode placeholder).
         if frame.element_index != usize::MAX {
@@ -1656,13 +1733,13 @@ impl XmlParseState {
             return Ok(());
         }
         if self.skips_tree() {
-            // The measure/locate records the DOCUMENT element's direct
-            // children only: a text run inside a direct child element is the
-            // CHILD's content, not the root's.
+            // Measure records the document element's direct children.
+            // Locate records the open locate frame, or counts one past it.
             if self.frames.len() == 1 {
                 self.record_measure_child(MeasureChild::Text(text.to_owned()));
-                self.record_locate_child(crate::locate::LocateChild::Text(text.to_owned()));
             }
+            self.record_locate_child(crate::locate::LocateChild::Text(text.to_owned()));
+            self.note_locate_grandchild(true);
             return Ok(());
         }
         let index = self
@@ -1695,24 +1772,28 @@ impl XmlParseState {
     /// PI has no span, and the element children bind their own extents).
     fn append_content(&mut self, event: ContentEvent, span: Option<(usize, usize)>) -> Result<(), CodecError> {
         if self.skips_tree() {
-            // The measure/locate records the DOCUMENT element's direct
-            // children only (see [`Self::append_text`]).
-            if self.frames.len() == 1 {
-                match event {
-                    ContentEvent::Comment(text) => {
+            // Measure records the document element's direct children.
+            // Locate records the open locate frame, or counts one past it.
+            match event {
+                ContentEvent::Comment(text) => {
+                    if self.frames.len() == 1 {
                         self.record_measure_child(MeasureChild::Comment(text.clone()));
-                        self.record_locate_child(crate::locate::LocateChild::Comment(text));
                     }
-                    ContentEvent::ProcessingInstruction(payload) => {
-                        let (target, data) = *payload;
+                    self.record_locate_child(crate::locate::LocateChild::Comment(text));
+                    self.note_locate_grandchild(false);
+                }
+                ContentEvent::ProcessingInstruction(payload) => {
+                    let (target, data) = *payload;
+                    if self.frames.len() == 1 {
                         self.record_measure_child(MeasureChild::ProcessingInstruction {
                             target: target.clone(),
                             data: data.clone(),
                         });
-                        self.record_locate_child(crate::locate::LocateChild::ProcessingInstruction { target, data });
                     }
-                    ContentEvent::Element(_) | ContentEvent::Text(_) => {}
+                    self.record_locate_child(crate::locate::LocateChild::ProcessingInstruction { target, data });
+                    self.note_locate_grandchild(false);
                 }
+                ContentEvent::Element(_) | ContentEvent::Text(_) => {}
             }
             return Ok(());
         }

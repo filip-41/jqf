@@ -14,7 +14,7 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use jqf_engine::{BoundaryConsumer, ProjectionClass, StaticForwardStep};
+use jqf_engine::{BoundaryConsumer, ProjectionClass, ShortcutKind, StaticForwardStep};
 use jqf_resource::ResourceContext;
 use jqf_sdk::Diagnostics;
 use jqf_source::{SourceId, SourceKind, SourceRef};
@@ -78,7 +78,7 @@ pub fn render_plan(source: &str, compiled: &jqf_engine::CompiledProgram, compile
     lines.push(format!("jqf: explain: program: {source}"));
     lines.push(format!(
         "jqf: explain: class: identity={} modifies={} whole_document={} input_family={} morsel_static={}",
-        yes(plan.identity),
+        yes(plan.shortcut == ShortcutKind::Identity),
         yes(plan.modifies),
         yes(plan.consumes_whole_document),
         yes(plan.uses_input_family),
@@ -90,18 +90,15 @@ pub fn render_plan(source: &str, compiled: &jqf_engine::CompiledProgram, compile
         plan.boundary_consumer.map_or("none", render_consumer)
     ));
     lines.push(format!(
-        "jqf: explain: routes: count={} element={} keys={} type={} inputs_cursor={}",
-        yes(plan.count_route),
-        yes(plan.element_route),
-        yes(plan.keys_route),
-        yes(plan.type_route),
+        "jqf: explain: shortcut: {} inputs_cursor={}",
+        plan.shortcut.as_str(),
         yes(plan.uses_inputs_cursor),
     ));
     lines.push(format!("jqf: explain: pushdown: {}", render_path(&plan.pushdown)));
     lines.push(format!(
         "jqf: explain: ladder: morsel={} range_locate={}",
         yes(plan.rungs.morsel),
-        yes(plan.rungs.range_locate),
+        yes(plan.shortcut == ShortcutKind::RangeLocate),
     ));
     lines.push(format!("jqf: explain: topk: rows={}", plan.topk_rows));
     lines.push(format!("jqf: explain: compile_time: {}", render_duration(compile_time)));

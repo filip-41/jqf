@@ -1,9 +1,8 @@
 # Explain and diagnostics
 
-`--explain` prints the plan the
-engine derived, `--diagnostics` prints machine-readable run facts, and
-`--plan-out` / `--plan-file` pin the plan so it cannot drift between runs. None
-of them changes stdout bytes.
+`--explain` prints the plan the engine derived, `--diagnostics` prints
+machine-readable run facts, and `--plan-out` / `--plan-file` pin the plan so it
+cannot drift between runs. None of them changes stdout bytes.
 
 ## `--explain`
 
@@ -14,7 +13,7 @@ $ echo '{"users":[{"name":"a"}]}' | jqf --explain '.users[].name'
 jqf: explain: program: .users[].name
 jqf: explain: class: identity=no modifies=no whole_document=yes input_family=no morsel_static=no
 jqf: explain: demand: class=Fields(name) boundary=residual
-jqf: explain: routes: count=no element=yes keys=no type=no inputs_cursor=no
+jqf: explain: shortcut: element inputs_cursor=no
 jqf: explain: pushdown: .users
 jqf: explain: ladder: morsel=yes range_locate=no
 jqf: explain: topk: rows=0
@@ -26,7 +25,7 @@ jqf: explain: cost: peak=174489 input=25 output=4 spill_disk=0
 jqf: explain: lazy: deferred=1 materialized=0
 ```
 
-The shape lines (`class`, `demand`, `routes`, `pushdown`, `ladder`, `topk`)
+The shape lines (`class`, `demand`, `shortcut`, `pushdown`, `ladder`, `topk`)
 are decoded in
 [Shape recognizers § Reading the plan](recognizers.md#reading-the-plan) and the
 route names in [Demand and pushdown](demand.md#routes-and-the-ladder). The run
@@ -36,8 +35,8 @@ the receipt for what the optimizer actually skipped.
 
 ## `--diagnostics`
 
-`--diagnostics` emits one JSON object
-per diagnostic on stderr, plus provenance and residency lines:
+`--diagnostics` emits one JSON object per diagnostic on stderr, plus provenance
+and residency lines:
 
 ```console
 $ echo '{"a":1}' | jqf --diagnostics .a
@@ -73,8 +72,12 @@ meaning:    Ledger totals read at run end.
 
 `--plan-out PATH` writes the compiled program's routing facts (the same facts
 `--explain` prints) as a small versioned, byte-stable file, before any input is
-read. `--plan-file PATH` reads one back and requires it to match. A mismatch is
-a startup error, never a silent fallback:
+read. The current plan format is version 10: the shortcut tag; identity and
+`range_locate` bools are omitted (the tag already carries both). The decoder
+still reads v9 (those bools plus the tag), v8's four route bools, and v7, which
+omitted them.
+`--plan-file PATH` reads one back and requires it to match. A mismatch is a
+startup error, never a silent fallback:
 
 ```console
 $ jqf --plan-out users.plan '.users[].name' users.json

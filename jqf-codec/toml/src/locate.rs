@@ -3,52 +3,14 @@
 //! Non-empty paths go through [`crate::walk`]. This module owns the step vocabulary, signed-bound slice helpers, and
 //! the empty-path root table.
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use jqf_codec_core::{CodecError, CodecFailureKind, PortableStep};
+use jqf_codec_core::{CodecError, CodecFailureKind};
 use jqf_data::ValueKind;
 
 use crate::grammar::{TableTree, Tree};
 
-/// One owned exact-path step, decoupled from the requirement's lifetime so the sessions can live in the core-owned
-/// tracked carrier.
-#[derive(Debug)]
-pub(crate) enum ScopedStep {
-    Member(String),
-    Index(i64),
-    /// A contiguous element RANGE over an array container. Bounds are signed-or-open exactly as the portable step
-    /// carries them; this navigator resolves them against the OBSERVED array length. A range step is always TERMINAL.
-    Range {
-        start: Option<i64>,
-        end: Option<i64>,
-    },
-}
-
-/// Copies the portable path into owned steps.
-pub(crate) fn own_steps(steps: &[PortableStep]) -> Result<Vec<ScopedStep>, CodecError> {
-    let mut owned = Vec::new();
-    owned
-        .try_reserve_exact(steps.len())
-        .map_err(jqf_resource::ResourceError::from)?;
-    for step in steps {
-        owned.push(match step {
-            PortableStep::SemanticMember(member) => {
-                let mut stored = String::new();
-                stored
-                    .try_reserve_exact(member.as_str().len())
-                    .map_err(jqf_resource::ResourceError::from)?;
-                stored.push_str(member.as_str());
-                ScopedStep::Member(stored)
-            }
-            PortableStep::SemanticIndex(index) => ScopedStep::Index(*index),
-            PortableStep::SemanticRange { start, end } => ScopedStep::Range {
-                start: *start,
-                end: *end,
-            },
-        });
-    }
-    Ok(owned)
-}
+/// The owned exact-path vocabulary is core's: every pushed-down route of every codec copies the requirement's
+/// [`jqf_codec_core::PortableStep`]s the same way, for the same session lifetime.
+pub(crate) use jqf_codec_core::{OwnedStep, own_steps};
 
 /// The located exact-path observation over the parsed tree.
 #[derive(Debug)]
@@ -67,7 +29,7 @@ pub(crate) enum Located<'tree> {
 ///
 /// v1 resolves only the empty path (the root table). Non-empty paths are answered by the byte walk; calling this helper
 /// with steps is a contract violation.
-pub(crate) fn locate<'tree>(root: &'tree TableTree, steps: &[ScopedStep]) -> Result<Located<'tree>, CodecError> {
+pub(crate) fn locate<'tree>(root: &'tree TableTree, steps: &[OwnedStep]) -> Result<Located<'tree>, CodecError> {
     if !steps.is_empty() {
         return Err(CodecError::new(CodecFailureKind::InternalContractViolation {
             contract: "TOML tree locate accepts only the empty exact path",

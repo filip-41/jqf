@@ -23,7 +23,7 @@ pub(crate) use super::stage::{
 pub(crate) use crate::analysis::{AntiJoinScan, CorrelatedScan, PartialSort, TopKConsumer};
 pub(crate) use crate::program::{
     BinaryKind, BinaryShape, CountedKind, EnginePullKind, EngineSlot, FilterSlot, LabelSlot, LogicalOp, ModifyMode,
-    ObjectMemberNode, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess, VarSlot,
+    ObjectMemberNode, Program, ProgramNode, ProgramNodeId, StageStart, StageStep, StepAccess, VarSlot,
 };
 pub(crate) use jqf_builtins::codec_result::{CodecInputOutcome, EngineResult};
 pub(crate) use jqf_builtins::registry::Evaluator;

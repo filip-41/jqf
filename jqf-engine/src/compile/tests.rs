@@ -1,6 +1,8 @@
 //! Compile-pipeline snapshots: lowering, pushdown, prelude, and route facts.
 
-use super::{CompileOptions, CompiledProgram, EngineCompileError, UnsupportedConstruct, try_compile_program};
+use super::{
+    CompileOptions, CompiledProgram, EngineCompileError, HostIo, Shortcut, UnsupportedConstruct, try_compile_program,
+};
 use crate::analysis::BoundaryConsumer;
 use crate::codec_requirement::CodecRequirementPolicy;
 use crate::program::{ProgramNode, SliceBound, StageStart, StageStep, StepAccess};
@@ -176,11 +178,16 @@ fn prune_trees_over_the_loss_lane_shapes() {
         ),
         (
             "reduce .orders[] as [$user_id, $quantity] (0; . + $quantity)",
-            Some("{,orders:{[]:*}}"),
+            Some("{,orders:{[]:{[]:*}}}"),
         ),
     ];
     for (source, expected) in lanes {
-        let tree = compile(source).expect("compiles").prune_tree().cloned();
+        let compiled = compile(source).expect("compiles");
+        let (tree, _) = crate::analysis::prune_trees(
+            compiled.program.nodes(),
+            compiled.program.root(),
+            compiled.program.slots(),
+        );
         let rendered = tree.map(|tree| {
             let mut out = String::new();
             render(&tree, &mut out);
@@ -378,13 +385,19 @@ fn compile_with_args_err(source: &str, args: &[(String, Value)]) -> Result<Compi
 }
 
 #[test]
-fn is_identity_accepts_only_the_bare_identity_filter() {
-    assert!(compiled(".").is_identity(), "bare `.` must be recognized as identity");
+fn host_io_echo_accepts_only_the_bare_identity_filter() {
+    use crate::HostIo;
+    assert_eq!(
+        compiled(".").host_io(),
+        HostIo::Echo,
+        "bare `.` must be recognized as identity"
+    );
     // `. | .` lowers through stage fusion to the same zero-step `Current`
     // stage, so it is provably identity too: it emits its input once,
     // unchanged, for every input.
-    assert!(
-        compiled(". | .").is_identity(),
+    assert_eq!(
+        compiled(". | .").host_io(),
+        HostIo::Echo,
         "a fused identity pipe must be recognized as identity"
     );
     // The round-trip lane publishes the input bytes UNCHANGED, so anything
@@ -407,8 +420,9 @@ fn is_identity_accepts_only_the_bare_identity_filter() {
         "select(.)",
         "try .",
     ] {
-        assert!(
-            !compiled(source).is_identity(),
+        assert_ne!(
+            compiled(source).host_io(),
+            HostIo::Echo,
             "{source:?} must not be recognized as identity"
         );
     }
@@ -731,13 +745,35 @@ fn forward_requirement_reanchors_kept_subtree_onto_the_located_node() {
         "the located catalog object is not an iterated element"
     );
 
-    // `.catalog[] | .name`: the path crosses an element. Re-anchoring
+    // `.catalog[] | .name`: the residual starts at `.[]`. Re-anchoring
     // declines — the hint would not be rooted at the pushed-down node.
     let iterated = compiled(".catalog[] | .name");
     assert!(
         iterated.reanchor_prune_keys().is_none(),
         "re-anchor must decline when the residual starts at `.[]`"
     );
+
+    // Static index in the prefix: follow the shared element node so residual
+    // `{id,score}` omits unread members of the located object.
+    let indexed = compiled(".users[0] | {id,score}");
+    assert_eq!(
+        indexed.reanchor_prune_keys().as_deref(),
+        Some([String::from("id"), String::from("score")].as_slice())
+    );
+    let indexed_req = indexed.try_requirement(&resources).expect("requirement");
+    assert_eq!(indexed_req.result(), AccessResultKind::Located);
+    let indexed_steps = indexed_req.footprint().exact_path().expect("exact").steps();
+    assert_eq!(indexed_steps.len(), 2);
+    assert!(matches!(&indexed_steps[0], PortableStep::SemanticMember(m) if m == "users"));
+    assert!(matches!(indexed_steps[1], PortableStep::SemanticIndex(0)));
+    let indexed_names: Vec<&str> = indexed_req
+        .prune()
+        .expect("indexed construct prune")
+        .root()
+        .members()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(indexed_names, ["id", "score"]);
 }
 
 #[test]
@@ -747,6 +783,271 @@ fn identity_lowers_through_root_requirement() {
     let requirement = requirement_of(".");
     assert_eq!(requirement.result(), AccessResultKind::CompleteDocument);
     assert!(requirement.footprint().is_whole());
+}
+
+#[test]
+fn path_length_exact_locates_the_container() {
+    // Nonempty PATH | length Exact-locates PATH so the count oracle reads the
+    // located node. Bare `length` stays Whole (analysis/count.rs).
+    for (source, key) in [(".users | length", "users"), (".catalog | length", "catalog")] {
+        let requirement = requirement_of(source);
+        assert!(requirement.count().is_some(), "{source} must carry the count hint");
+        assert!(
+            !requirement.footprint().is_whole(),
+            "{source} Exact-locates the container"
+        );
+        assert_eq!(requirement.result(), AccessResultKind::Located, "{source}");
+        let steps = requirement.footprint().exact_path().expect("exact").steps();
+        assert_eq!(steps.len(), 1, "{source}");
+        assert!(
+            matches!(&steps[0], PortableStep::SemanticMember(m) if m == key),
+            "{source} exact step"
+        );
+    }
+}
+
+#[test]
+fn path_length_rebind_whole_keeps_count_and_prune() {
+    let resources = resources();
+    let program = compiled(".users | length");
+    let exact = program.try_requirement(&resources).expect("exact");
+    assert!(!exact.footprint().is_whole());
+    assert!(exact.count().is_some());
+    let rebind = program.try_rebind_whole_requirement(&resources).expect("rebind");
+    assert!(rebind.footprint().is_whole(), "miss charge is Whole");
+    assert!(rebind.count().is_some(), "ReboundWhole keeps the count hint");
+    assert!(rebind.prune().is_some(), "ReboundWhole keeps the document-rooted prune");
+}
+
+#[test]
+fn filter_collect_count_stays_exact_and_rebind_keeps_hints() {
+    let source = ".users | map(select(.score > 100)) | length";
+    let resources = resources();
+    let program = compiled(source);
+    let exact = program.try_requirement(&resources).expect("exact");
+    assert!(exact.count().is_some(), "{source} is a collect-filter count");
+    assert!(!exact.footprint().is_whole(), "{source} Exact-locates the container");
+    let rebind = program.try_rebind_whole_requirement(&resources).expect("rebind");
+    assert!(rebind.footprint().is_whole());
+    assert!(rebind.count().is_some(), "filter miss keeps the count hint");
+    assert!(rebind.prune().is_some(), "filter miss keeps prune");
+}
+
+#[test]
+fn path_has_exact_locates_the_subject() {
+    // PATH | has(LITERAL) Exact-locates PATH so the oracle reads the located
+    // node. Bare `has("k")` stays Whole.
+    let requirement = requirement_of(r#".users | has("id")"#);
+    assert!(
+        matches!(compiled(r#".users | has("id")"#).shortcut(), Shortcut::Has(_)),
+        "PATH | has is a has row"
+    );
+    assert!(
+        !requirement.footprint().is_whole(),
+        "PATH | has Exact-locates the subject"
+    );
+    assert_eq!(requirement.result(), AccessResultKind::Located);
+    let steps = requirement.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "users"));
+
+    let bare = requirement_of(r#"has("k")"#);
+    assert!(matches!(compiled(r#"has("k")"#).shortcut(), Shortcut::Has(_)));
+    assert!(bare.footprint().is_whole(), "bare has stays Whole");
+}
+
+#[test]
+fn path_any_all_exact_locates_the_container() {
+    // PATH | all(P) Exact-locates PATH so the oracle iterates the located
+    // node. Bare `all(.ok)` stays Whole.
+    let requirement = requirement_of(".users | all(.id)");
+    assert!(
+        matches!(compiled(".users | all(.id)").shortcut(), Shortcut::AnyAll(_)),
+        "PATH | all is an any/all row"
+    );
+    assert!(
+        !requirement.footprint().is_whole(),
+        "PATH | all Exact-locates the container"
+    );
+    assert_eq!(requirement.result(), AccessResultKind::Located);
+    let steps = requirement.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "users"));
+
+    let bare = requirement_of("all(.ok)");
+    assert!(matches!(compiled("all(.ok)").shortcut(), Shortcut::AnyAll(_)));
+    assert!(bare.footprint().is_whole(), "bare all stays Whole");
+
+    let generated = requirement_of("all(.users[]; .id)");
+    assert!(matches!(compiled("all(.users[]; .id)").shortcut(), Shortcut::AnyAll(_)));
+    assert!(
+        generated.footprint().is_whole(),
+        "generator path is not a split prefix; empty prefix stays Whole"
+    );
+
+    assert!(
+        !matches!(compiled(".a | all(.b[]; .k)").shortcut(), Shortcut::AnyAll(_)),
+        "pipe prefix plus generator path is not a row"
+    );
+}
+
+#[test]
+fn path_min_max_exact_locates_the_container() {
+    // PATH | min Exact-locates PATH so the oracle reads the located node.
+    // Bare `min` stays Whole.
+    let requirement = requirement_of(".xs | min");
+    assert!(
+        matches!(compiled(".xs | min").shortcut(), Shortcut::MinMax(_)),
+        "PATH | min is a min/max row"
+    );
+    assert!(
+        !requirement.footprint().is_whole(),
+        "PATH | min Exact-locates the container"
+    );
+    assert!(requirement.minmax().is_some(), "PATH | min packs the minmax hint");
+    assert_eq!(requirement.result(), AccessResultKind::Located);
+    let steps = requirement.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "xs"));
+
+    let bare = requirement_of("min");
+    assert!(matches!(compiled("min").shortcut(), Shortcut::MinMax(_)));
+    assert!(bare.footprint().is_whole(), "bare min stays Whole");
+
+    let by = requirement_of(".xs | min_by(.n)");
+    assert!(matches!(compiled(".xs | min_by(.n)").shortcut(), Shortcut::MinMax(_)));
+    assert!(!by.footprint().is_whole(), "PATH | min_by Exact-locates");
+}
+
+#[test]
+fn finish_commits_one_shortcut() {
+    use super::Access;
+    assert!(matches!(compiled(".").shortcut(), Shortcut::Identity));
+    assert!(matches!(compiled("length").shortcut(), Shortcut::Count(_)));
+    assert_eq!(compiled("length").access(), Access::Whole);
+    assert!(matches!(
+        compiled(".users[] | .id").shortcut(),
+        Shortcut::Element { .. }
+    ));
+    assert_eq!(compiled(".users[] | .id").access(), Access::Exact);
+    assert_eq!(compiled(".[] | .id").access(), Access::Whole);
+    assert_eq!(compiled(".users | length").access(), Access::Exact);
+    assert!(matches!(
+        compiled("[.users[].name] | length").shortcut(),
+        Shortcut::Count(_)
+    ));
+    assert_eq!(compiled("[.users[].name] | length").access(), Access::Exact);
+    assert!(matches!(compiled("keys").shortcut(), Shortcut::Keys(_)));
+    assert!(matches!(compiled("type").shortcut(), Shortcut::Type(_)));
+    assert!(matches!(compiled(r#"has("k")"#).shortcut(), Shortcut::Has(_)));
+    assert!(matches!(compiled("all(.ok)").shortcut(), Shortcut::AnyAll(_)));
+    assert!(matches!(compiled("min").shortcut(), Shortcut::MinMax(_)));
+    assert!(matches!(compiled(".[1:3]").shortcut(), Shortcut::RangeLocate));
+    assert_eq!(compiled(".[1:3]").access(), Access::Whole);
+    assert_eq!(compiled(".catalog[1:3]").access(), Access::Exact);
+    assert!(matches!(compiled(".a + .b").shortcut(), Shortcut::None));
+}
+
+#[test]
+fn finish_pins_the_shortcut_across_consultations() {
+    let compiled = compiled("[.catalog[] | .id] | length");
+    let first = compiled.shortcut();
+    for _ in 0..64 {
+        let _ = compiled.shortcut();
+        let _ = compiled.host_io();
+    }
+    assert!(core::ptr::eq(first, compiled.shortcut()));
+    assert!(matches!(compiled.shortcut(), Shortcut::Count(_)));
+}
+
+#[test]
+fn packed_requirement_matches_the_old_ladder() {
+    use crate::HostIo;
+
+    let identity = requirement_of(".");
+    assert!(identity.footprint().is_whole(), "identity is Whole");
+    assert!(identity.count().is_none());
+    assert!(identity.element().is_none());
+    assert!(!identity.type_demand());
+    assert_eq!(compiled(".").host_io(), HostIo::Echo);
+
+    let whole_count = requirement_of("length");
+    assert!(whole_count.footprint().is_whole(), "bare length is Whole");
+    assert!(whole_count.count().is_some(), "bare length carries the count hint");
+    assert!(whole_count.element().is_none());
+    assert!(!whole_count.type_demand());
+    assert_eq!(whole_count.result(), AccessResultKind::CompleteDocument);
+
+    let exact_count = requirement_of(".users | length");
+    assert!(!exact_count.footprint().is_whole(), "PATH | length is Exact");
+    assert!(exact_count.count().is_some(), "PATH | length carries the count hint");
+    assert_eq!(exact_count.result(), AccessResultKind::Located);
+    let steps = exact_count.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "users"));
+
+    let exact_range = requirement_of(".catalog[1:3]");
+    assert!(
+        !exact_range.footprint().is_whole(),
+        "PATH[a:b] Exact-locates the prefix"
+    );
+    assert!(exact_range.count().is_none());
+    assert!(exact_range.element().is_none());
+    assert!(!exact_range.type_demand());
+    assert_eq!(exact_range.result(), AccessResultKind::Located);
+    let steps = exact_range.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "catalog"));
+    assert_eq!(compiled(".catalog[1:3]").host_io(), HostIo::SpanCut);
+    let resources = resources();
+    let range = compiled(".catalog[1:3]")
+        .try_range_locate_requirement(&resources)
+        .expect("range-locate charges the packed slice path");
+    let range_steps = range.footprint().exact_path().expect("exact").steps();
+    assert!(
+        range_steps
+            .iter()
+            .any(|step| matches!(step, PortableStep::SemanticRange { .. })),
+        "range-locate requirement keeps the trailing range"
+    );
+
+    let residual = requirement_of(".a + .b");
+    assert!(residual.count().is_none(), "residual has no count hint");
+    assert!(residual.element().is_none(), "residual has no element hint");
+    assert!(!residual.type_demand(), "residual has no type hint");
+    assert_eq!(compiled(".a + .b").host_io(), HostIo::Run);
+
+    let exact_element = requirement_of(".users[] | .id");
+    assert!(
+        exact_element.element().is_some(),
+        "PATH[] | .id Exact still carries the element hint"
+    );
+    assert!(!exact_element.footprint().is_whole(), "nonempty element path is Exact");
+    assert_eq!(
+        exact_element.lazy_frontier(),
+        1,
+        "fan-out Exact stays lazy so the span leaf can extract"
+    );
+    assert_eq!(compiled(".users[] | .id").host_io(), HostIo::Run);
+
+    let construct = requirement_of(".users | map({id,score})");
+    assert!(construct.element().is_some(), "map({{id,score}}) is an element row");
+    assert!(
+        construct.element_construct().is_some(),
+        "map({{id,score}}) packs construct fields for the locate walk"
+    );
+    assert!(!construct.footprint().is_whole(), "PATH | map construct Exact-locates");
+
+    let root_fields = requirement_of("{id,score}");
+    assert!(root_fields.footprint().is_whole(), "root construct is Whole");
+    let root_names: Vec<&str> = root_fields
+        .prune()
+        .expect("root construct prune")
+        .root()
+        .members()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(root_names, ["id", "score"]);
 }
 
 #[test]
@@ -796,18 +1097,17 @@ fn the_corpus_floor_forcing_wrapper_takes_the_whole_document_route() {
         );
         assert!(floor.footprint().is_whole());
     }
-    // `.catalog[].name` is an ELEMENT row: it lowers the
-    // whole-document requirement with the element demand hint, exactly
-    // like a count row — the codec's span skeleton must survive for the
-    // document-core consumer to iterate it. The wrapper keeps its own
-    // whole-document floor, so the two agree on the route.
+    // `.catalog[].name` is an ELEMENT row with a nonempty PATH: finish
+    // Exact-locates `.catalog` and still carries the element hint so the
+    // span skeleton survives for the document-core consumer. The wrapper
+    // keeps its own whole-document floor (constructor on the spine).
     let bare = requirement_of(".catalog[].name");
     assert_eq!(
         bare.result(),
-        AccessResultKind::CompleteDocument,
-        "the fan-out row must take the whole-document route"
+        AccessResultKind::Located,
+        "the fan-out row Exact-locates the container"
     );
-    assert!(bare.footprint().is_whole());
+    assert!(!bare.footprint().is_whole());
     assert!(
         bare.element().is_some(),
         "the fan-out row must carry the element demand hint"
@@ -1171,22 +1471,27 @@ fn prefixed_iteration_pushes_the_prefix_and_keeps_the_residual() {
 }
 
 #[test]
-fn prefixed_iteration_lowers_the_element_whole_document() {
-    // `.a[].b` is an ELEMENT row (the bare fan-out), so it lowers the
-    // LAZY WHOLE-DOCUMENT requirement with the element demand hint — the
-    // codec's span skeleton must survive for the document-core consumer
-    // to iterate it — where `.a` keeps the scoped forward route. The
-    // prefix pushdown of the program's SPLIT is unchanged (`.a`,
-    // length 1); only the requirement route moved, exactly as the count
-    // rows did.
+fn prefixed_iteration_exact_locates_the_container() {
+    use super::Access;
+    // `.a[].b` is an ELEMENT row with a nonempty PATH. Finish commits Exact
+    // of `.a` so the oracle starts at `located.node()`. Empty `.[]` stays
+    // Whole — it cannot Exact-walk. Packed Exact carries the element hint.
     let prefixed = requirement_of(".a[].b");
     let bare = requirement_of(".a");
-    assert_ne!(prefixed.footprint(), bare.footprint());
-    assert!(prefixed.footprint().is_whole());
-    assert_eq!(prefixed.result(), AccessResultKind::CompleteDocument);
-    assert!(prefixed.element().is_some());
+    assert_eq!(compiled(".a[].b").access(), Access::Exact);
+    assert!(!prefixed.footprint().is_whole(), ".a[].b Exact-locates `.a`");
+    assert!(prefixed.element().is_some(), "Exact element still carries the hint");
+    assert_eq!(prefixed.result(), AccessResultKind::Located);
+    let steps = prefixed.footprint().exact_path().expect("exact").steps();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0], PortableStep::SemanticMember(m) if m == "a"));
     assert!(!bare.footprint().is_whole());
     assert_eq!(bare.result(), AccessResultKind::Located);
+
+    let root = requirement_of(".[] | .id");
+    assert_eq!(compiled(".[] | .id").access(), Access::Whole);
+    assert!(root.footprint().is_whole(), "`.[]` at root stays Whole");
+    assert!(root.element().is_some());
 }
 
 #[test]
@@ -1392,7 +1697,7 @@ fn a_folded_computed_bound_matches_its_authored_literal_requirement() {
     // authority. This is the byte-identity the corpus pins at run time.
     let resources = resources();
     for (folded, authored) in [(".[(1+2):]", ".[3:]"), (".catalog[(10-2):(1+2)]", ".catalog[8:3]")] {
-        assert!(compiled(folded).range_locate_eligible(), "{folded} must route");
+        assert_eq!(compiled(folded).host_io(), HostIo::SpanCut, "{folded} must route");
         let folded_req = compiled(folded)
             .try_range_locate_requirement(&resources)
             .expect("the folded range-locate requirement lowers");
@@ -1408,7 +1713,7 @@ fn a_folded_computed_bound_matches_its_authored_literal_requirement() {
     }
     // The decline twin: a non-foldable computed bound keeps the floor — it
     // is not silently given the literal's fast lane.
-    assert!(!compiled(".[(1*2):]").range_locate_eligible());
+    assert_ne!(compiled(".[(1*2):]").host_io(), HostIo::SpanCut);
 }
 
 #[test]
@@ -1723,6 +2028,9 @@ fn a_spine_node_hoists_the_prefix_its_operands_share() {
         // became a `FlatMap` whose leading stage the outer join then reads,
         // so an `elif` ladder contributes the prefix its whole chain shares.
         ("if .a.b then .a.c elif .a.d then .a.e else .a.f end", 1),
+        // A comma the Choice hoist rewrote is the same composition: the
+        // then-arm is `.a | (.c, .d)`, so the outer join still sees `.a`.
+        ("if .a.b then (.a.c, .a.d) else .a.e end", 1),
         // 014 Part A: an `==` operand joins like its `!=`/`<` siblings. The
         // probe-equality guard (`join::is_probe_equality`) protects only a
         // SELECT predicate's leftmost conjunct — the one context a scan row
@@ -1775,8 +2083,8 @@ fn a_spine_hoist_declines_every_shape_it_cannot_prove() {
             "a call ARM poisons the node just as a call condition does",
         ),
         (
-            "if .a.b then (.a.c, .a.d) else .a.e end",
-            "a comma operand is unresolvable",
+            "if .a.b then (.a.c, 1) else .a.e end",
+            "a comma fuse_choice declined (literal arm) has no leading stage",
         ),
         (
             "if .a.b then (try .a.c) else .a.d end",
@@ -1811,6 +2119,42 @@ fn group_choice_equivalence_shares_the_requirement() {
     let piped = requirement_of("(.a, .b) | .c");
     assert_eq!(postfix.footprint(), piped.footprint());
     assert_eq!(postfix.result(), piped.result());
+}
+
+#[test]
+fn alternative_hoist_shares_choice_fences_and_the_piped_spelling() {
+    use super::Access;
+    let hoisted = compiled(".a.b // .a.c");
+    assert!(!hoisted.program.split().is_whole_document());
+    assert_eq!(hoisted.program.split().prefix_len(), 1);
+    assert_eq!(hoisted.access(), Access::Exact);
+    let piped = compiled(".a | (.b // .c)");
+    assert_eq!(piped.program.split().prefix_len(), 1);
+    assert_eq!(
+        requirement_of(".a.b // .a.c").footprint(),
+        requirement_of(".a | (.b // .c)").footprint()
+    );
+    assert!(compiled(".a // .b").program.split().is_whole_document());
+    assert!(compiled(".a?.b // .a?.c").program.split().is_whole_document());
+    assert_eq!(compiled(".p.a? // 1").program.split().prefix_len(), 1);
+}
+
+#[test]
+fn three_arm_comma_compiles_to_exact_of_the_shared_stem() {
+    use super::Access;
+    let hoisted = compiled(".a.b, .a.c, .a.d");
+    let piped = compiled(".a | (.b, .c, .d)");
+    assert_eq!(hoisted.access(), Access::Exact);
+    assert_eq!(piped.access(), Access::Exact);
+    let hoisted_req = requirement_of(".a.b, .a.c, .a.d");
+    let piped_req = requirement_of(".a | (.b, .c, .d)");
+    assert!(
+        !hoisted_req.footprint().is_whole(),
+        "three-arm comma must be Exact of the shared stem, not Whole"
+    );
+    let path = hoisted_req.footprint().exact_path().expect("Exact path");
+    assert_eq!(path.steps(), &[PortableStep::SemanticMember("a".into())]);
+    assert_eq!(hoisted_req.footprint(), piped_req.footprint());
 }
 
 #[test]
@@ -2443,7 +2787,7 @@ fn a_divergent_recursion_terminates_with_the_depth_error() {
                     jqf_builtins::codec_result::EngineResult::owned(Value::Null),
                 );
                 let crate::exec::EngineRun::Stream { mut stream, .. } =
-                    program.try_run(outcome, &resources).expect("run seeds")
+                    program.execute(outcome, &mut resources).expect("run seeds")
                 else {
                     panic!("a recursive def is a stream");
                 };
@@ -2715,8 +3059,7 @@ fn a_term_suppression_barrier_encloses_the_binders_it_covers() {
     }
 }
 
-/// The container path of a program's ungated projected plan, rendered as the
-/// receipt spelling (`.` for the root container, `.a.b` / `.a[0]` otherwise).
+/// The consumer of a named element boundary (fold, bind, collect, residual).
 #[test]
 fn the_boundary_is_named_inside_a_reduce_or_foreach_source() {
     // The leading shape: `PushdownSplit` could not name a `.[]` inside a
@@ -2868,7 +3211,7 @@ fn the_range_locate_row_is_the_bare_slice_publish_and_nothing_else() {
         ".catalog?[1:3]",
     ] {
         assert!(
-            compiled(source).range_locate_eligible(),
+            compiled(source).host_io() == HostIo::SpanCut,
             "{source} must be range-locate eligible"
         );
     }
@@ -2897,7 +3240,7 @@ fn the_range_locate_row_is_the_bare_slice_publish_and_nothing_else() {
         (".catalog[1:3], .meta", "a comma"),
     ] {
         assert!(
-            !compiled(source).range_locate_eligible(),
+            compiled(source).host_io() != HostIo::SpanCut,
             "{source} must decline the range-locate rung ({why})"
         );
     }
@@ -3119,12 +3462,12 @@ fn flatmap_free_programs_leave_scan_tables_empty() {
             "{source}: topk sorts must stay empty"
         );
         assert!(
-            !program.has_reachable_flatmap(),
+            !program.program.has_reachable_flatmap(),
             "{source}: live graph must be FlatMap-free"
         );
     }
     assert!(
-        compiled("[.[] | select(.a)]").has_reachable_flatmap(),
+        compiled("[.[] | select(.a)]").program.has_reachable_flatmap(),
         "a select scan must cache a reachable FlatMap"
     );
 }

@@ -539,6 +539,23 @@ fn residual_requirement(
             Some(demand) => residual.with_element(demand.clone()),
             None => residual,
         };
+        let residual = match requirement.has_key() {
+            Some(key) => residual.with_has_key(key.clone()),
+            None => residual,
+        };
+        let residual = if requirement.keys_demand() {
+            residual.with_keys_demand()
+        } else {
+            residual
+        };
+        let residual = match requirement.element_construct() {
+            Some(fields) => residual.with_element_construct(fields.to_vec()),
+            None => residual,
+        };
+        let residual = match requirement.minmax() {
+            Some(hint) => residual.with_minmax(hint.clone()),
+            None => residual,
+        };
         if let Some(tree) = requirement.prune() {
             let clone = tree
                 .try_clone_in(resources)
@@ -953,6 +970,16 @@ mod tests {
             .with_prune(prune)
             .with_count(demand)
             .with_element(element)
+            .with_has_key(jqf_data::Value::try_string("id").expect("has key"))
+            .with_keys_demand()
+            .with_element_construct(alloc::vec![(
+                alloc::string::String::from("id"),
+                alloc::vec![jqf_data::CountStep::ObjectKey(alloc::string::String::from("id"))],
+            )])
+            .with_minmax(jqf_data::MinMaxHint {
+                op: jqf_data::MinMaxOp::Min,
+                probe: None,
+            })
             .with_canonicality_probe(true)
             .with_type_demand()
             .with_authored_spans(false)
@@ -975,6 +1002,22 @@ mod tests {
         assert!(
             residual.element().is_some(),
             "element hint dropped by the residual reconstruction"
+        );
+        assert!(
+            residual.has_key().is_some(),
+            "has hint dropped by the residual reconstruction"
+        );
+        assert!(
+            residual.keys_demand(),
+            "keys hint dropped by the residual reconstruction"
+        );
+        assert!(
+            residual.element_construct().is_some(),
+            "element construct hint dropped by the residual reconstruction"
+        );
+        assert!(
+            residual.minmax().is_some(),
+            "minmax hint dropped by the residual reconstruction"
         );
         assert!(
             residual.canonicality_probe(),

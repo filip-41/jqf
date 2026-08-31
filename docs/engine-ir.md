@@ -6,7 +6,8 @@ by id, with one root — and the executor interprets that graph. This page is th
 detail under [Architecture § Engine IR](architecture.md#engine-ir).
 
 For the full compile pipeline (gate, preludes, lowering, transform, analyze,
-finish), see [Engine compiler](engine-compiler.md).
+finish), see [Engine compiler](engine-compiler.md). For the execute entry
+(shortcut, then the residual graph), see [Engine executor](engine-exec.md).
 
 ## The composition core
 
@@ -20,15 +21,14 @@ Five node kinds carry the shape of the program:
 | `CollectArray`    | `[…]`                   | collect the body's stream into one array                                  |
 | `ConstructObject` | `{…}`                   | the Cartesian product of member streams, built pairwise                   |
 
-Stage steps are the path vocabulary, each step
-carrying its own `?` flag.
+Stage steps are the path vocabulary, each step carrying its own `?` flag.
 
 Control forms are IR nodes too, not a second representation: `if` lowers to
 `Conditional`, `//` to `Alternative`, `try` to `Try`, `as` to `Bind`,
 `reduce`/`foreach` to their own nodes, `label`/`break` to slot-addressed nodes.
-On top of that, a non-recursive `def` inlines into its call sites, recursion becomes an explicit
-callable, assignments lower to `Modify` and fact
-assignments to `FactAssign`, a span delta for [the edit lane](editing.md).
+On top of that, a non-recursive `def` inlines into its call sites, recursion
+becomes an explicit callable, assignments lower to `Modify` and fact assignments
+to `FactAssign`, a span delta for [the edit lane](editing.md).
 
 `CountCollect` is the one fused special: `[body] | length` without ever
 materializing the array.
@@ -42,10 +42,16 @@ body (it ignores its upstream, so fusing would change cardinality). One
 structural rewrite runs alongside: an object constructor whose members share a
 static prefix hoists it — `{a: .p.x, b: .p.y}` → `.p | {a: .x, b: .y}` — except
 a leftmost `==` under `select`, which is protected because the
-[correlated-scan recognizer](recognizers.md#correlated-scan) needs it intact.
+[correlated-scan recognizer](recognizers.md#correlated-scan) needs it intact. A
+`Choice` (comma) whose arms are current-start stages hoists the static prefix
+they share — `.a.b, .a.c` → `.a | (.b, .c)`, and N arms the same way:
+`.a.b, .a.c, .a.d` → `.a | (.b, .c, .d)`. `Alternative` (`//`) uses that same
+hoist. The `?` / `.[]` / slice fences match: a prefix that emits zero skips the
+pipe, while comma still publishes the right arm and `//` still tries it. A
+literal fallback still hoists through `//`; comma poisons that arm.
 
-The arena at rest is in **path-normal form** - no fusable pipe of stages remains.
-A bare-`Stage` root is a pure path, a `Choice` or constructor root is a
+The arena at rest is in **path-normal form** - no fusable pipe of stages
+remains. A bare-`Stage` root is a pure path, a `Choice` or constructor root is a
 top-level comma or collection and `FlatMap` root survives only where one side
 blocked.
 
@@ -79,8 +85,8 @@ Two machines dictated by shape:
   **graph interpreter** on a unified frame stack.
 
 Both obey the same discipline: **one value in flight per frame**. Fan-out is
-never buffered and emission walks the live frames top-down and the first consumer
-takes the value.
+never buffered and emission walks the live frames top-down and the first
+consumer takes the value.
 
 Worked intuition:
 
@@ -93,5 +99,5 @@ Worked intuition:
 | `.a = 1`        | `Modify`                  | whole document | graph                |
 
 After normalization, analysis walks this arena against the closed
-[recognizer tables](recognizers.md); the split and the recognizer verdicts
-together become the plan that `--explain` prints.
+[recognizer tables](recognizers.md); the split and the one committed
+[shortcut](engine-exec.md) together become the plan that `--explain` prints.

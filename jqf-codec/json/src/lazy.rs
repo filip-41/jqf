@@ -30,8 +30,9 @@
 //! produces the same value. A commented dialect whose coverage (or Preserve) demands
 //! [`BuilderCoverage::attached_facts`] re-parses with that family on so leading comments collected in the span attach as
 //! `jsonc.comment@1` / `json5.comment@1` list-of-texts on the materialized nodes, matching [`JsonParseState`]. Exact
-//! does not take this path (it re-parses the located span through `JsonParseState` directly); lazy element/count walks
-//! do.
+//! print rematerializes the located span through `JsonParseState`. Exact array length, collect-filter count, `FanOut`
+//! values, and min/max winners answer from the proving-walk cache; uncached count and element visit still use these
+//! span walks.
 
 use jqf_codec_core::{CodecError, CodecRunContext, DocumentProduct, map_span_materialization_error};
 use jqf_data::{
@@ -391,14 +392,6 @@ fn unescape_string(raw_content: &[u8]) -> Option<alloc::string::String> {
         let escaped = *raw_content.get(cursor + 1)?;
         cursor += 2;
         match escaped {
-            b'"' => out.push('"'),
-            b'\\' => out.push('\\'),
-            b'/' => out.push('/'),
-            b'b' => out.push('\u{8}'),
-            b'f' => out.push('\u{c}'),
-            b'n' => out.push('\n'),
-            b'r' => out.push('\r'),
-            b't' => out.push('\t'),
             b'u' => {
                 let high = hex4(raw_content, cursor)?;
                 cursor += 4;
@@ -420,7 +413,7 @@ fn unescape_string(raw_content: &[u8]) -> Option<alloc::string::String> {
                     out.push(char::from_u32(high)?);
                 }
             }
-            _ => return None,
+            other => out.push(crate::json_simple_unescape(other)?),
         }
     }
     Some(out)
@@ -447,7 +440,7 @@ fn hex4(raw_content: &[u8], start: usize) -> Option<u32> {
 /// Classifies the tested member at its first significant byte into the shared [`jqf_data::CountMember`] vocabulary.
 /// Numeric members assemble their exact decimal parts into `scratch` (cleared per call), so the hot walk allocates
 /// nothing.
-fn classify_member<'a>(
+pub(crate) fn classify_member<'a>(
     bytes: &'a [u8],
     at: usize,
     scratch: &'a mut alloc::string::String,

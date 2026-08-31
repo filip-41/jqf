@@ -1,15 +1,16 @@
-//! The value drive family (122 W4-T2 split of the former pipeline.rs).
+//! The value drive family: identity echo, range-locate span cut, and the
+//! decode → execute → encode floor.
 
 use super::{
     AccessReport, AccessRequirement, CodecCatalog, CodecError, CodecInputOutcome, CodecInputResult, CodecRunContext,
-    CompiledProgram, DataError, Diagnostics, DialectId, EncodeRequest, EncodedItemReport, EngineResult, EngineRun,
-    EngineRunStream, FacadeFraming, FactDelta, FormatId, InputLines, Integer, ItemSink, Number, ObjectBuilder,
-    ObjectKey, OrderedEncodingPolicy, PhysicalRouteId, PipelineDisposition, PipelineError, PipelineFailure,
-    PipelinePolicy, PipelineReport, Publication, PublicationStatus, RaisedError, ResolvedSource, ResourceContext,
-    ReusableAccessSession, ReusableEncoderSession, RunError, RunInput, RunPoll, RuntimeError, SequenceValueError,
-    ToOwned, Value, access_input, admit_visible_boundary, checked_delta, decode_sequence_item, encode_one,
-    is_per_value_codec_kind, located_range_declined, overflow, publish_all, pushdown_error, require_forward_progress,
-    resume, set_lazy_deferred, skip_value_separator, split_run_error, try_lower_root_requirement, validate_credits,
+    CompiledProgram, Diagnostics, DialectId, EncodeRequest, EncodedItemReport, EngineResult, EngineRun,
+    EngineRunStream, FacadeFraming, FactDelta, FormatId, InputLines, ItemSink, OrderedEncodingPolicy, PhysicalRouteId,
+    PipelineDisposition, PipelineError, PipelineFailure, PipelinePolicy, PipelineReport, Publication,
+    PublicationStatus, RaisedError, ResolvedSource, ResourceContext, ReusableAccessSession, ReusableEncoderSession,
+    RunError, RunInput, RunPoll, RuntimeError, SequenceValueError, Value, access_input, admit_visible_boundary,
+    checked_delta, decode_sequence_item, encode_one, execute_or_rebind_whole, is_per_value_codec_kind,
+    located_range_declined, overflow, publish_all, pushdown_error, require_forward_progress, resume, set_lazy_deferred,
+    skip_value_separator, split_run_error, try_lower_root_requirement, validate_credits,
 };
 use jqf_engine::CodecRequirementPolicy;
 
@@ -80,7 +81,7 @@ pub(crate) fn execute_source_roundtrip<Sink: ItemSink>(
 ) -> Result<RoundtripRun, PipelineError<Sink::Error>> {
     let mut publication = Publication::new();
     validate_credits(policy.cooperative_credits, &publication)?;
-    if !program.is_identity()
+    if program.host_io() != jqf_engine::HostIo::Echo
         || !policy.decode.allow_adjacent_values
         || input_format.as_str() != output_format.as_str()
         || input_dialect.as_str() != output_dialect.as_str()
@@ -397,121 +398,34 @@ pub(crate) fn execute_value_document<'a, Sink: ItemSink>(
             )
             .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?;
         let mut reused_encoder = ReusableEncoderSession::new();
-        // Plan 133 R1's COUNT fast-path: a count-class program's value is
-        // served by the document-core consumer from the lazy document's span
-        // skeleton — no executor run, no leaf materialization. A decline
-        // falls through to the ordinary residual run over the same outcome.
-        if let Some(count) = count_answer(&engine, program, resources)
-            .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-        {
-            encode_one(
-                &factory,
-                &mut reused_encoder,
-                &EngineResult::owned(count),
-                0,
-                encoding_policy,
-                framing,
-                resources,
-                sink,
-                &mut publication,
-            )?;
-            return Ok(PipelineReport {
-                publication: PublicationStatus::Complete {
-                    items: 1,
-                    published_bytes: publication.published_bytes,
-                },
-                disposition: PipelineDisposition::Emitted,
-                access: access_report,
-            });
-        }
-        if let Some(keys) = keys_answer(&engine, program, resources) {
-            encode_one(
-                &factory,
-                &mut reused_encoder,
-                &EngineResult::owned(keys),
-                0,
-                encoding_policy,
-                framing,
-                resources,
-                sink,
-                &mut publication,
-            )?;
-            return Ok(PipelineReport {
-                publication: PublicationStatus::Complete {
-                    items: 1,
-                    published_bytes: publication.published_bytes,
-                },
-                disposition: PipelineDisposition::Emitted,
-                access: access_report,
-            });
-        }
-        // Plan 133 R6's ELEMENT-ITERATION fast-path: a fan-out/fold program's
-        // values are served by the document-core consumer iterating the lazy
-        // document's span skeleton — no executor run, no whole-tree
-        // materialization. A decline falls through to the ordinary residual
-        // run over the same outcome (which, for an element program, is the
-        // whole program over the whole document).
-        {
-            match element_answer(
-                &engine,
-                program,
-                &factory,
-                &mut reused_encoder,
-                encoding_policy,
-                framing,
-                resources,
-                sink,
-                &mut publication,
-            )? {
-                ElementAnswer::FanOut { items } => {
-                    return Ok(PipelineReport {
-                        publication: PublicationStatus::Complete {
-                            items,
-                            published_bytes: publication.published_bytes,
-                        },
-                        disposition: PipelineDisposition::Emitted,
-                        access: access_report,
-                    });
-                }
-                ElementAnswer::Fold(state) => {
-                    encode_one(
-                        &factory,
-                        &mut reused_encoder,
-                        &EngineResult::owned(state),
-                        0,
-                        encoding_policy,
-                        framing,
-                        resources,
-                        sink,
-                        &mut publication,
-                    )?;
-                    return Ok(PipelineReport {
-                        publication: PublicationStatus::Complete {
-                            items: 1,
-                            published_bytes: publication.published_bytes,
-                        },
-                        disposition: PipelineDisposition::Emitted,
-                        access: access_report,
-                    });
-                }
-                ElementAnswer::None => {}
-            }
-        }
-        // Everything flows through the residual: a resolved value or a pushed-down
-        // missing/null both stream through it (an identity residual forwards one
-        // item, an `.[]` residual fans out or errors). A flagged-step pushdown
-        // mismatch suppresses; an unflagged pushdown mismatch, and any typed/iterate
-        // mismatch discovered mid-fan-out, is a hard error for this single value.
-        // A Located range decline rebinds the whole-document floor: the prefix
-        // was not resolved, so the whole program runs.
-        let (disposition, stream) = match if run_whole {
-            program.try_run_whole_value(engine, resources)
+        // Everything flows through execute (shortcut, then graph) except a
+        // Located range decline, which rebinds Whole above: the prefix was
+        // not resolved, so the whole program runs. JSON Exact count miss
+        // returns ReboundWhole: this document's root *is* the selection, so
+        // the graph cannot run on it.
+        let run = if run_whole {
+            program
+                .try_run_whole_value(engine, resources)
+                .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
         } else {
-            program.try_run(engine, resources)
-        }
-        .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?
-        .with_iteration_cap(policy.max_iterations)
-        {
+            execute_or_rebind_whole(program, engine, resources, &publication, |resources| {
+                let whole = program
+                    .try_rebind_whole_requirement(resources)
+                    .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?;
+                access_input(
+                    catalog,
+                    source,
+                    input_format,
+                    input_dialect,
+                    &whole,
+                    policy,
+                    resources,
+                    &publication,
+                )
+                .map(|access| access.into_parts().0)
+            })?
+        };
+        let (disposition, stream) = match run.with_iteration_cap(policy.max_iterations) {
             EngineRun::Stream { stream, input } => (disposition_of(input), stream),
             // A suppressed value publishes zero items: report a completed
             // zero-item publication, byte-compatible with jq (prints nothing, exit
@@ -541,6 +455,13 @@ pub(crate) fn execute_value_document<'a, Sink: ItemSink>(
                     input_line,
                     None,
                 ));
+            }
+            EngineRun::ReboundWhole => {
+                return Err(publication.fail(PipelineFailure::Codec(CodecError::new(
+                    jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                        contract: "Exact count miss must rebind Whole before the graph",
+                    },
+                ))));
             }
         };
         let mut publication = Publication::new();
@@ -639,8 +560,8 @@ pub enum RangeLocateRun {
 /// region that holds exactly its in-range elements.
 ///
 /// `requirement` must be `program`'s range-locate requirement
-/// ([`CompiledProgram::try_range_locate_requirement`]) and `program` must be
-/// [`CompiledProgram::range_locate_eligible`]. There is no residual: the row's
+/// ([`CompiledProgram::try_range_locate_requirement`]) and `program` must have
+/// [`jqf_engine::HostIo::SpanCut`]. There is no residual: the row's
 /// whole program IS the path, so the located value is the published value and no
 /// program graph runs at all.
 ///
@@ -1064,613 +985,6 @@ pub(crate) fn report_and_fail_runtime<Sink: ItemSink>(
         return publication.fail(PipelineFailure::Sink(sink_error));
     }
     publication.fail(mismatch.into_failure())
-}
-
-/// Plan 133 R1's count fast-path: a count-class program's value served by the
-/// document-core consumer from the lazy document's span skeleton — no executor
-/// run, no leaf materialization.
-///
-/// `Ok(None)` means the program is not a count row, the outcome is not a
-/// document-backed result, or the consumer DECLINED (a shape it cannot prove);
-/// the caller then runs the residual over the same outcome, which reproduces
-/// the floor byte for byte. A document the consumer cannot navigate is the
-/// same decline — the residual run surfaces the real error.
-pub(crate) fn count_answer(
-    outcome: &CodecInputOutcome<'_>,
-    program: &CompiledProgram,
-    resources: &mut ResourceContext<'_>,
-) -> Result<Option<Value>, CodecError> {
-    // The mismatch dial beyond lenient takes the floor: the count consumer
-    // answers missing keys as the reference's null (one output), but the
-    // strict/warn dials must fire their mismatch cells on exactly those
-    // reads — the floor's engine walk is the only evaluation that fires
-    // them. The count fast-path is lenient-only, exactly as the
-    // requirement lowering already is.
-    if resources.mismatch_policy() != jqf_resource::policy::MismatchPolicy::Lenient {
-        return Ok(None);
-    }
-    let Some(demand) = program.count_demand() else {
-        return Ok(None);
-    };
-    let CodecInputOutcome::Result(EngineResult::Located(located)) = outcome else {
-        return Ok(None);
-    };
-    match located.product().document().count_children_demand(demand, resources) {
-        Ok(jqf_data::CountVerdict::Count(n)) => Ok(Some(count_value(n)?)),
-        // A decline (a shape the skeleton cannot prove) and a document the
-        // consumer cannot navigate are the same fall-through: the residual
-        // run reproduces the floor.
-        Ok(jqf_data::CountVerdict::Decline) | Err(_) => Ok(None),
-    }
-}
-
-fn navigate_count_path<'d, 's>(
-    mut view: jqf_data::ValueView<'d, 's>,
-    path: &[jqf_data::CountStep],
-) -> Option<jqf_data::ValueView<'d, 's>> {
-    for step in path {
-        match step {
-            jqf_data::CountStep::ObjectKey(key) => {
-                let object = view.object().ok().flatten()?;
-                view = object.get(key.as_str())?;
-            }
-            jqf_data::CountStep::ArrayIndex(index) => {
-                let array = view.array().ok().flatten()?;
-                let resolved = jqf_data::resolve_index(array.len(), *index)?;
-                view = array.get(resolved)?;
-            }
-        }
-    }
-    Some(view)
-}
-
-/// Keys-publish fast-path: `keys` / `PATH | keys` answered from the document
-/// projection without running the residual. Decline to the floor when the
-/// path is missing or not a container.
-pub(crate) fn keys_answer(
-    outcome: &CodecInputOutcome<'_>,
-    program: &CompiledProgram,
-    resources: &mut ResourceContext<'_>,
-) -> Option<Value> {
-    if resources.mismatch_policy() != jqf_resource::policy::MismatchPolicy::Lenient {
-        return None;
-    }
-    let path = program.keys_demand()?;
-    let CodecInputOutcome::Result(EngineResult::Located(located)) = outcome else {
-        return None;
-    };
-    let document = located.product().document();
-    let Ok(node_view) = document.value_view(located.node()) else {
-        return None;
-    };
-    // Exact already landed on the keys container. Re-walking `path` from the
-    // document root can land on a self-similar nested copy. Navigate only when
-    // the record is still the document root (a whole-document locate).
-    let view = if located.node() == document.root_handle() && !path.is_empty() {
-        navigate_count_path(node_view, path)?
-    } else {
-        node_view
-    };
-    let mut values: Vec<Value> = Vec::new();
-    if let Ok(Some(object)) = view.object() {
-        let mut names: Vec<std::string::String> = Vec::new();
-        for entry in object.iter() {
-            let Ok(entry) = entry else {
-                return None;
-            };
-            names.push(std::string::String::from(entry.key()));
-        }
-        names.sort_unstable();
-        for name in names {
-            let Ok(value) = Value::try_string(&name) else {
-                return None;
-            };
-            values.push(value);
-        }
-    } else if let Ok(Some(array)) = view.array() {
-        for index in 0..array.len() {
-            let Ok(value) = count_value(index as u64) else {
-                return None;
-            };
-            values.push(value);
-        }
-    } else {
-        let _ = resources;
-        return None;
-    }
-    match jqf_data::Array::try_from_vec(values) {
-        Ok(array) => Some(Value::Array(array)),
-        Err(_) => None,
-    }
-}
-
-/// Plan 133 R6's element-iteration fast-path verdict.
-pub(crate) enum ElementAnswer {
-    /// A [`jqf_data::ElementRow::FanOut`] demand: every element's probe value
-    /// was published through the sink (the consumer's visit-all-or-none
-    /// contract guarantees a decline publishes NOTHING — the caller falls
-    /// back to the floor with zero bytes on the sink).
-    FanOut { items: u64 },
-    /// A [`jqf_data::ElementRow::ReduceFold`] demand: the folded state, to be
-    /// published as exactly one item by the caller.
-    Fold(Value),
-    /// Not an element program, a non-lenient dial, a non-document outcome, or
-    /// the consumer declined; the caller runs the residual over the same
-    /// outcome, which reproduces the floor byte for byte.
-    None,
-}
-
-/// Plan 133 R6's element-iteration fast-path: a fan-out/fold program's values
-/// served by the document-core consumer iterating the lazy document's span
-/// skeleton — no executor run, no whole-tree materialization.
-///
-/// A [`jqf_data::ElementRow::FanOut`] demand publishes each element's probe
-/// value through `sink` as it lands; a [`jqf_data::ElementRow::ReduceFold`]
-/// demand folds the probe values into the caller-returned state (published
-/// only on completion, so a mid-fold decline publishes nothing).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one fast-path keeps its encoder, sink, and publication explicit"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per element row: the answer IS the dispatch table over the demand ladder, and splitting it would hide which rows are covered"
-)]
-pub(crate) fn element_answer<Sink: ItemSink>(
-    outcome: &CodecInputOutcome<'_>,
-    program: &CompiledProgram,
-    factory: &jqf_codec_core::ErasedEncoderFactory,
-    reused_encoder: &mut ReusableEncoderSession,
-    encoding_policy: OrderedEncodingPolicy<'_>,
-    framing: FacadeFraming<'_>,
-    resources: &mut ResourceContext<'_>,
-    sink: &mut Sink,
-    publication: &mut Publication,
-) -> Result<ElementAnswer, PipelineError<Sink::Error>> {
-    // The mismatch dial beyond lenient takes the floor, exactly as the count
-    // fast-path: the element consumer answers missing keys as the reference's
-    // null, but the strict/warn dials must fire their mismatch cells on
-    // exactly those reads.
-    if resources.mismatch_policy() != jqf_resource::policy::MismatchPolicy::Lenient {
-        return Ok(ElementAnswer::None);
-    }
-    let Some(demand) = program.element_demand() else {
-        return Ok(ElementAnswer::None);
-    };
-    let CodecInputOutcome::Result(EngineResult::Located(located)) = outcome else {
-        return Ok(ElementAnswer::None);
-    };
-    match demand.row {
-        jqf_data::ElementRow::FanOut => {
-            if let Some(fields) = program.element_construct_fields() {
-                return construct_fan_out(
-                    located.product().document(),
-                    demand,
-                    fields,
-                    program.element_collect(),
-                    factory,
-                    reused_encoder,
-                    encoding_policy,
-                    framing,
-                    resources,
-                    sink,
-                    publication,
-                );
-            }
-            if program.element_collect() {
-                let mut values: std::vec::Vec<Value> = std::vec::Vec::new();
-                let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
-                    // Growth is fallible like every neighboring path: a
-                    // refused reservation declines to the floor (nothing has
-                    // been published) instead of aborting the process.
-                    if values.try_reserve(1).is_err() {
-                        return Err(DataError::InvalidDocument);
-                    }
-                    values.push(value.clone());
-                    Ok(())
-                };
-                let verdict = located
-                    .product()
-                    .document()
-                    .visit_elements(demand, resources, &mut visitor);
-                match verdict {
-                    Ok(jqf_data::ElementVerdict::Completed(_)) => {
-                        let Ok(array) = jqf_data::Array::try_from_vec(values) else {
-                            return Ok(ElementAnswer::None);
-                        };
-                        encode_one(
-                            factory,
-                            reused_encoder,
-                            &EngineResult::owned(Value::Array(array)),
-                            0,
-                            encoding_policy,
-                            framing,
-                            resources,
-                            sink,
-                            publication,
-                        )?;
-                        Ok(ElementAnswer::FanOut { items: 1 })
-                    }
-                    Ok(jqf_data::ElementVerdict::Decline) | Err(_) => Ok(ElementAnswer::None),
-                }
-            } else {
-                let mut items = 0u64;
-                let mut publish_error: Option<PipelineError<Sink::Error>> = None;
-                let mut visitor = |value: &Value, visitor_resources: &mut ResourceContext<'_>| {
-                    if publish_error.is_some() {
-                        return Err(DataError::InvalidDocument);
-                    }
-                    if let Err(error) = encode_one(
-                        factory,
-                        reused_encoder,
-                        &EngineResult::owned(value.clone()),
-                        items,
-                        encoding_policy,
-                        framing,
-                        visitor_resources,
-                        sink,
-                        publication,
-                    ) {
-                        publish_error = Some(error);
-                        return Err(DataError::InvalidDocument);
-                    }
-                    let Some(next) = items.checked_add(1) else {
-                        publish_error = Some(overflow::<Sink::Error>(publication));
-                        return Err(DataError::InvalidDocument);
-                    };
-                    items = next;
-                    Ok(())
-                };
-                let verdict = located
-                    .product()
-                    .document()
-                    .visit_elements(demand, resources, &mut visitor);
-                // A publish failure outranks every consumer verdict; a decline or
-                // a navigation failure falls through to the floor.
-                if let Some(error) = publish_error {
-                    return Err(error);
-                }
-                match verdict {
-                    Ok(jqf_data::ElementVerdict::Completed(_)) => Ok(ElementAnswer::FanOut { items }),
-                    // A decline or navigation failure with nothing on the
-                    // sink falls through to the floor. With a prefix already
-                    // published it cannot: the floor would republish those
-                    // elements — the only honest answer is the hard stop.
-                    Ok(jqf_data::ElementVerdict::Decline) | Err(_) if items == 0 => Ok(ElementAnswer::None),
-                    Ok(_) | Err(_) => Err(publication.fail(PipelineFailure::Codec(CodecError::new(
-                        jqf_codec_core::CodecFailureKind::InternalContractViolation {
-                            contract: "fan-out published a prefix then declined",
-                        },
-                    )))),
-                }
-            }
-        }
-        jqf_data::ElementRow::ReduceFold => {
-            let Some(delta) = demand.increment else {
-                return Ok(ElementAnswer::None);
-            };
-            // The fold's internal state: the histogram's distinct keys in
-            // first-insertion order with their exact-integer counts (the
-            // row's only legal state — the object-increment update can never
-            // produce a float, decimal, or non-number value). The final
-            // object is built once, on completion.
-            let mut counts: std::vec::Vec<(std::string::String, i64)> = std::vec::Vec::new();
-            let mut index: std::collections::HashMap<std::string::String, usize> = std::collections::HashMap::new();
-            let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
-                // A non-string probe value is the reference's
-                // "Cannot index object with …" raise; the floor renders it.
-                let Value::String(key_text) = value.untagged() else {
-                    return Err(DataError::InvalidDocument);
-                };
-                let key = key_text.as_str();
-                if let Some(&at) = index.get(key) {
-                    let Some((_, count)) = counts.get_mut(at) else {
-                        return Err(DataError::InvalidDocument);
-                    };
-                    let Some(sum) = count.checked_add(delta) else {
-                        return Err(DataError::InvalidDocument);
-                    };
-                    *count = sum;
-                } else {
-                    // Same fallible-growth law for the fold's accumulators:
-                    // either reservation refused declines to the floor.
-                    if counts.try_reserve(1).is_err() || index.try_reserve(1).is_err() {
-                        return Err(DataError::InvalidDocument);
-                    }
-                    let owned = key.to_owned();
-                    index.insert(owned.clone(), counts.len());
-                    counts.push((owned, delta));
-                }
-                Ok(())
-            };
-            let verdict = located
-                .product()
-                .document()
-                .visit_elements(demand, resources, &mut visitor);
-            let Ok(jqf_data::ElementVerdict::Completed(_)) = verdict else {
-                // A mid-fold decline or a navigation failure: nothing was
-                // published; the floor serves the fold byte for byte.
-                return Ok(ElementAnswer::None);
-            };
-            let Ok(mut builder) = ObjectBuilder::try_with_capacity(counts.len()) else {
-                return Ok(ElementAnswer::None);
-            };
-            for (key, count) in counts {
-                let Ok(key) = ObjectKey::try_from_str(&key) else {
-                    return Ok(ElementAnswer::None);
-                };
-                if builder
-                    .try_insert_or_replace(key, Value::Number(Number::integer(Integer::from_i64(count))))
-                    .is_err()
-                {
-                    return Ok(ElementAnswer::None);
-                }
-            }
-            match builder.try_finish() {
-                Ok(object) => Ok(ElementAnswer::Fold(Value::Object(object))),
-                Err(_) => Ok(ElementAnswer::None),
-            }
-        }
-    }
-}
-
-/// `PATH[] | {static keys}` fan-out: visit whole elements, reconstruct each
-/// published object from the static field set. A two-pass walk so a
-/// mid-stream construct decline (a number element, a type-mismatched
-/// member) publishes nothing — `FanOut`'s visit-all-or-none contract.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "mirrors element_answer's explicit encoder/sink/publication ownership"
-)]
-/// The check pass's no-op element visitor: [`Document::visit_elements`] only
-/// needs the walk's verdict — the probe itself does the proving — but its
-/// visitor signature requires a fallible return.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the visitor signature Document::visit_elements requires returns Result; the probe carries the whole check"
-)]
-fn check_only(_value: &Value, _resources: &mut ResourceContext<'_>) -> Result<(), DataError> {
-    Ok(())
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "mirrors element_answer's explicit encoder/sink/publication ownership"
-)]
-fn construct_fan_out<Sink: ItemSink>(
-    document: &jqf_data::Document<'_>,
-    demand: &jqf_data::ElementDemand,
-    fields: &[(std::string::String, Vec<jqf_data::CountStep>)],
-    collect: bool,
-    factory: &jqf_codec_core::ErasedEncoderFactory,
-    reused_encoder: &mut ReusableEncoderSession,
-    encoding_policy: OrderedEncodingPolicy<'_>,
-    framing: FacadeFraming<'_>,
-    resources: &mut ResourceContext<'_>,
-    sink: &mut Sink,
-    publication: &mut Publication,
-) -> Result<ElementAnswer, PipelineError<Sink::Error>> {
-    // Streaming publishes per element, so a later field-path miss would
-    // already have bytes on the sink; probe every field first. Collect
-    // encodes once after the walk, so a miss declines with an empty sink
-    // and the floor rerun stays duplicate-free. A Path probe navigates
-    // spans without materializing them: cheap.
-    if fields.is_empty() {
-        return Ok(ElementAnswer::None);
-    }
-    if !collect {
-        let mut check = demand.clone();
-        for (_, path) in fields {
-            check.probe = jqf_data::ElementProbe::Path(path.clone());
-            match document.visit_elements(&check, resources, &mut check_only) {
-                Ok(jqf_data::ElementVerdict::Completed(_)) => {}
-                Ok(jqf_data::ElementVerdict::Decline) | Err(_) => return Ok(ElementAnswer::None),
-            }
-        }
-    }
-
-    if collect {
-        if fields
-            .iter()
-            .all(|(_, path)| matches!(path.as_slice(), [jqf_data::CountStep::ObjectKey(_)]))
-        {
-            return collect_construct_columns(
-                document,
-                demand,
-                fields,
-                factory,
-                reused_encoder,
-                encoding_policy,
-                framing,
-                resources,
-                sink,
-                publication,
-            );
-        }
-        let mut values: std::vec::Vec<Value> = std::vec::Vec::new();
-        let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
-            let Some(constructed) = construct_static_object(value, fields) else {
-                return Err(DataError::InvalidDocument);
-            };
-            if values.try_reserve(1).is_err() {
-                return Err(DataError::InvalidDocument);
-            }
-            values.push(constructed);
-            Ok(())
-        };
-        return match document.visit_elements(demand, resources, &mut visitor) {
-            Ok(jqf_data::ElementVerdict::Completed(_)) => {
-                let Ok(array) = jqf_data::Array::try_from_vec(values) else {
-                    return Ok(ElementAnswer::None);
-                };
-                encode_one(
-                    factory,
-                    reused_encoder,
-                    &EngineResult::owned(Value::Array(array)),
-                    0,
-                    encoding_policy,
-                    framing,
-                    resources,
-                    sink,
-                    publication,
-                )?;
-                Ok(ElementAnswer::FanOut { items: 1 })
-            }
-            Ok(jqf_data::ElementVerdict::Decline) | Err(_) => Ok(ElementAnswer::None),
-        };
-    }
-
-    let mut items = 0u64;
-    let mut publish_error: Option<PipelineError<Sink::Error>> = None;
-    let mut visitor = |value: &Value, visitor_resources: &mut ResourceContext<'_>| {
-        if publish_error.is_some() {
-            return Err(DataError::InvalidDocument);
-        }
-        let Some(constructed) = construct_static_object(value, fields) else {
-            return Err(DataError::InvalidDocument);
-        };
-        if let Err(error) = encode_one(
-            factory,
-            reused_encoder,
-            &EngineResult::owned(constructed),
-            items,
-            encoding_policy,
-            framing,
-            visitor_resources,
-            sink,
-            publication,
-        ) {
-            publish_error = Some(error);
-            return Err(DataError::InvalidDocument);
-        }
-        let Some(next) = items.checked_add(1) else {
-            publish_error = Some(overflow::<Sink::Error>(publication));
-            return Err(DataError::InvalidDocument);
-        };
-        items = next;
-        Ok(())
-    };
-    let verdict = document.visit_elements(demand, resources, &mut visitor);
-    if let Some(error) = publish_error {
-        return Err(error);
-    }
-    match verdict {
-        Ok(jqf_data::ElementVerdict::Completed(_)) => Ok(ElementAnswer::FanOut { items }),
-        // Unreachable after a completing check pass (every field's full path
-        // was proven over every element), but a decline or navigation error
-        // with bytes already on the sink must abort hard, never fall through
-        // to a floor rerun that would republish the prefix.
-        Ok(jqf_data::ElementVerdict::Decline) | Err(_) if items == 0 => Ok(ElementAnswer::None),
-        Ok(_) | Err(_) => Err(publication.fail(PipelineFailure::Codec(CodecError::new(
-            jqf_codec_core::CodecFailureKind::InternalContractViolation {
-                contract: "fan-out published a prefix then declined",
-            },
-        )))),
-    }
-}
-
-/// Collected `{static: .static_key, …}`: one Path-probe visit per field so the
-/// JSON span leaf extracts those members instead of rebuilding every element.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "mirrors construct_fan_out's encoder/sink/publication ownership"
-)]
-fn collect_construct_columns<Sink: ItemSink>(
-    document: &jqf_data::Document<'_>,
-    demand: &jqf_data::ElementDemand,
-    fields: &[(std::string::String, Vec<jqf_data::CountStep>)],
-    factory: &jqf_codec_core::ErasedEncoderFactory,
-    reused_encoder: &mut ReusableEncoderSession,
-    encoding_policy: OrderedEncodingPolicy<'_>,
-    framing: FacadeFraming<'_>,
-    resources: &mut ResourceContext<'_>,
-    sink: &mut Sink,
-    publication: &mut Publication,
-) -> Result<ElementAnswer, PipelineError<Sink::Error>> {
-    let mut columns: std::vec::Vec<std::vec::Vec<Value>> = std::vec::Vec::new();
-    if columns.try_reserve(fields.len()).is_err() {
-        return Ok(ElementAnswer::None);
-    }
-    for (_, path) in fields {
-        let mut field_demand = demand.clone();
-        field_demand.probe = jqf_data::ElementProbe::Path(path.clone());
-        let mut column: std::vec::Vec<Value> = std::vec::Vec::new();
-        let mut visitor = |value: &Value, _visitor_resources: &mut ResourceContext<'_>| {
-            if column.try_reserve(1).is_err() {
-                return Err(DataError::InvalidDocument);
-            }
-            column.push(value.clone());
-            Ok(())
-        };
-        match document.visit_elements(&field_demand, resources, &mut visitor) {
-            Ok(jqf_data::ElementVerdict::Completed(_)) => columns.push(column),
-            Ok(jqf_data::ElementVerdict::Decline) | Err(_) => return Ok(ElementAnswer::None),
-        }
-    }
-    let Some(width) = columns.first().map(std::vec::Vec::len) else {
-        return Ok(ElementAnswer::None);
-    };
-    if columns.iter().any(|column| column.len() != width) {
-        return Ok(ElementAnswer::None);
-    }
-    let mut values: std::vec::Vec<Value> = std::vec::Vec::new();
-    if values.try_reserve(width).is_err() {
-        return Ok(ElementAnswer::None);
-    }
-    for row in 0..width {
-        let Ok(mut builder) = ObjectBuilder::try_with_capacity(fields.len()) else {
-            return Ok(ElementAnswer::None);
-        };
-        for (column, (key, _)) in columns.iter().zip(fields) {
-            let Ok(key) = ObjectKey::try_from_str(key) else {
-                return Ok(ElementAnswer::None);
-            };
-            if builder.try_insert_or_replace(key, column[row].clone()).is_err() {
-                return Ok(ElementAnswer::None);
-            }
-        }
-        let Ok(object) = builder.try_finish() else {
-            return Ok(ElementAnswer::None);
-        };
-        values.push(Value::Object(object));
-    }
-    let Ok(array) = jqf_data::Array::try_from_vec(values) else {
-        return Ok(ElementAnswer::None);
-    };
-    encode_one(
-        factory,
-        reused_encoder,
-        &EngineResult::owned(Value::Array(array)),
-        0,
-        encoding_policy,
-        framing,
-        resources,
-        sink,
-        publication,
-    )?;
-    Ok(ElementAnswer::FanOut { items: 1 })
-}
-
-fn construct_static_object(
-    element: &Value,
-    fields: &[(std::string::String, Vec<jqf_data::CountStep>)],
-) -> Option<Value> {
-    let mut builder = ObjectBuilder::try_with_capacity(fields.len()).ok()?;
-    for (key, path) in fields {
-        let probe = jqf_data::ElementProbe::Path(path.clone());
-        let value = jqf_data::owned_probe_value(element, &probe)?;
-        let key = ObjectKey::try_from_str(key).ok()?;
-        builder.try_insert_or_replace(key, value).ok()?;
-    }
-    builder.try_finish().ok().map(Value::Object)
-}
-
-pub(crate) fn count_value(count: u64) -> Result<Value, CodecError> {
-    let integer = i64::try_from(count)
-        .map(Integer::from_i64)
-        .map_err(|_| CodecError::new(jqf_codec_core::CodecFailureKind::Overflow))?;
-    Ok(Value::Number(Number::integer(integer)))
 }
 
 pub(crate) const fn disposition_of(input: RunInput) -> PipelineDisposition {

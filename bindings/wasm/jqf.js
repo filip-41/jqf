@@ -27,7 +27,6 @@ export const FLAGS = Object.freeze({
     SORT_KEYS: 2,
     ASCII: 4,
     NULL_INPUT: 8,
-    TAB_INDENT: 16,
 });
 
 /** The ABI version this wrapper speaks; loadJqf refuses a mismatch. */

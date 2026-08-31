@@ -1,7 +1,8 @@
 //! jqft family codec receipt battery (the jqft vertical's gate).
 //!
-//! Pins the wave-1 core laws: the one-slot route inventory (Whole/
-//! `CompleteDocument`) for BOTH formats, core-value round-trip identity,
+//! Pins the family laws: the two-slot route inventory (Whole/
+//! `CompleteDocument` plus Exact/`Located`) for BOTH text formats, core-value
+//! round-trip identity,
 //! canonical byte law (`%jqft 1` header, two-space layout, `f`-suffixed
 //! floats, `0x"…"` bytes, TOML-shaped temporals, `@tag` layers retained),
 //! the dedicated reserved-spelling refusals, and the jqfjson strict-JSON
@@ -168,14 +169,13 @@ pub fn run() -> Result<(), String> {
     assert_reserved_spellings();
     assert_jqfjson_laws()?;
     println!(
-        "codec-jqft-smoke: routes=1 jqfjson_routes=1 jqfb_routes=2 roundtrip=true encode=true reserved=true jqfjson=true receipts=true"
+        "codec-jqft-smoke: routes=2 jqfjson_routes=2 jqfb_routes=2 roundtrip=true encode=true reserved=true jqfjson=true receipts=true"
     );
     Ok(())
 }
 
-/// The one-slot route inventory (the vertical's slot duty, mirrored in
-/// `jqf-sdk-smoke`): Whole/CompleteDocument, and nothing else — every richer
-/// demand is served by the core's generic exact adapter over the whole route.
+/// The two-slot route inventory (the vertical's slot duty, mirrored in
+/// `jqf-sdk-smoke`): Whole/CompleteDocument plus native Exact/Located.
 fn assert_route_inventory() -> Result<(), String> {
     let mut resources = resources();
     let registration = jqf_codec_jqft::registration_jqft().map_err(|error| format!("{error:?}"))?;
@@ -206,11 +206,14 @@ fn assert_route_inventory() -> Result<(), String> {
         .iter()
         .map(|route| (route.slot().get(), route.bundle().footprint(), route.bundle().result()))
         .collect();
-    let expected = [(
-        0,
-        jqf_codec_core::AccessFootprintKind::Whole,
-        AccessResultKind::CompleteDocument,
-    )];
+    let expected = [
+        (
+            0,
+            jqf_codec_core::AccessFootprintKind::Whole,
+            AccessResultKind::CompleteDocument,
+        ),
+        (1, jqf_codec_core::AccessFootprintKind::Exact, AccessResultKind::Located),
+    ];
     if kinds != expected {
         return Err(format!("jqft route inventory drifted: {kinds:?}"));
     }
@@ -265,7 +268,7 @@ fn assert_jqfb_route_inventory() -> Result<(), String> {
     Ok(())
 }
 
-/// The jqfjson one-slot route inventory.
+/// The jqfjson two-slot route inventory.
 fn assert_jqfjson_route_inventory() -> Result<(), String> {
     let mut resources = resources();
     let registration = jqf_codec_jqft::registration_jqfjson().map_err(|error| format!("{error:?}"))?;
@@ -296,18 +299,21 @@ fn assert_jqfjson_route_inventory() -> Result<(), String> {
         .iter()
         .map(|route| (route.slot().get(), route.bundle().footprint(), route.bundle().result()))
         .collect();
-    let expected = [(
-        0,
-        jqf_codec_core::AccessFootprintKind::Whole,
-        AccessResultKind::CompleteDocument,
-    )];
+    let expected = [
+        (
+            0,
+            jqf_codec_core::AccessFootprintKind::Whole,
+            AccessResultKind::CompleteDocument,
+        ),
+        (1, jqf_codec_core::AccessFootprintKind::Exact, AccessResultKind::Located),
+    ];
     if kinds != expected {
         return Err(format!("jqfjson route inventory drifted: {kinds:?}"));
     }
     Ok(())
 }
 
-/// decode -> encode -> decode round-trip identity over the wave-1 core
+/// decode -> encode -> decode round-trip identity over the core
 /// vocabulary: scalars, containers, floats, bytes, temporals, tags.
 fn assert_round_trip() -> Result<(), String> {
     let cases: [&[u8]; 14] = [

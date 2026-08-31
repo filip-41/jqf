@@ -81,7 +81,7 @@ pub const MISMATCH_WARN: u16 = 38;
 pub const MISMATCH_STRICT: u16 = 39;
 /// A ~generator init/update/extract emitted two or more values on one pull: one state, one emission, per pull.
 pub const RAISE_ENGINE_CARDINALITY: u16 = 40;
-/// Reserved: a projected route validated a corrupt byte the program never read.
+/// Reserved: Exact validate named the path and offset of a corrupt byte the program did not materialize.
 pub const FRONTIER_VALIDATION: u16 = 100;
 
 /// One registry row: the stable meaning of a code.
@@ -142,7 +142,7 @@ pub(crate) const CODES: &[(u16, CodeRow)] = &[
     (38, CodeRow { name: "MISMATCH_WARN", revision: 1, class: RecordClass::Informational, severity: Severity::Warning, reserved: false, description: "The mismatch dial's capped, aggregated warn report: one record per run, named after the run, carrying the per-cell counts." }),
     (39, CodeRow { name: "MISMATCH_STRICT", revision: 1, class: RecordClass::Semantic, severity: Severity::Error, reserved: false, description: "A mismatch cell raised under the strict dial; the payload names the cell." }),
     (40, CodeRow { name: "RAISE_ENGINE_CARDINALITY", revision: 1, class: RecordClass::Semantic, severity: Severity::Error, reserved: false, description: "A ~generator init/update/extract emitted two or more values on one pull: one state, one emission, per pull." }),
-    (100, CodeRow { name: "FRONTIER_VALIDATION", revision: 1, class: RecordClass::Informational, severity: Severity::Info, reserved: true, description: "Reserved: a projected route validated a corrupt byte the program never read." }),
+    (100, CodeRow { name: "FRONTIER_VALIDATION", revision: 1, class: RecordClass::Informational, severity: Severity::Info, reserved: true, description: "Reserved: Exact validate named the path and offset of a corrupt byte the program did not materialize." }),
 ];
 
 /// Looks one code up by id (the public read path `--explain-code` uses).

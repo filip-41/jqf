@@ -6,7 +6,7 @@ use jqf_codec_core::{
     CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ExactSelectionRecord, PortableStep,
     ValidationMode,
 };
-use jqf_data::{DialectId, Value};
+use jqf_data::{CountDemand, CountRow, CountVerdict, DialectId, Value};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -90,6 +90,43 @@ fn decode_located<'s>(
     session.decode(&mut run)
 }
 
+fn container_count() -> CountDemand {
+    CountDemand {
+        row: CountRow::Container,
+        path: Vec::new(),
+        range: None,
+        probe: Vec::new(),
+        filter: None,
+    }
+}
+
+fn decode_located_count<'s>(
+    bytes: &'s [u8],
+    steps: &[PortableStep],
+    resources: &mut ResourceContext<'_>,
+) -> Result<jqf_codec_core::AccessResult<'s>, CodecError> {
+    let registration = jqf_codec_xml::registration().expect("registration");
+    let dialect = DialectId::try_new(jqf_codec_xml::XML_DOCUMENT_DIALECT_ID).expect("dialect");
+    let mut provider = registration.decoder().expect("decoder").create_provider(
+        source(bytes),
+        DecodeRequest {
+            validation: ValidationMode::Strict,
+            diagnostics: DiagnosticPolicy::ErrorsOnly,
+            dialect: &dialect,
+            options: None,
+            allow_adjacent_values: false,
+            value_separator: &[],
+        },
+        resources,
+    )?;
+    let requirement = located_requirement(resources, steps).with_count(container_count());
+    let handle = provider.bind(&requirement).expect("bind");
+    let mut session = provider.open(&handle, resources)?;
+    let mut run = CodecRunContext::new(resources);
+    run.set_cooperative_credits(4_096);
+    session.decode(&mut run)
+}
+
 fn member(name: &str) -> PortableStep {
     PortableStep::SemanticMember(name.to_owned())
 }
@@ -137,6 +174,36 @@ fn a_plural_member_declines_located_so_the_floor_can_stream() {
     assert_eq!(render(children.get(1).expect("second")), r#"["2"]"#);
 }
 
+/// Nested unique members Exact equals Whole then navigate. Siblings prove
+/// the path selected by name, not by being the only child.
+#[test]
+fn a_nested_unique_member_equals_whole_then_navigate() {
+    let mut resources = resources();
+    let bytes = b"<doc><pad>p</pad><nested><deep>x</deep><skip>y</skip></nested></doc>";
+    let result = decode_located(bytes, &[member("nested"), member("deep")], &mut resources).expect("located");
+    let exact = materialize_located(&result, &mut resources);
+    let root = jqf_codec_xml::decode_document(source(bytes), &mut resources).expect("whole");
+    let Value::Array(doc_children) = &root else {
+        panic!("document element is an array of children, got {root:?}");
+    };
+    assert_eq!(doc_children.len(), 2, "pad and nested");
+    let Value::Array(nested_children) = doc_children.get(1).expect("nested") else {
+        panic!("nested is an array of children");
+    };
+    let deep = nested_children.get(0).expect("deep");
+    assert_eq!(render(&exact), render(deep));
+    assert_eq!(render(&exact), r#"["x"]"#);
+}
+
+#[test]
+fn a_nested_plural_member_declines_located() {
+    let mut resources = resources();
+    let bytes = b"<doc><g><b>1</b><b>2</b></g></doc>";
+    let error = decode_located(bytes, &[member("g"), member("b")], &mut resources)
+        .expect_err("nested plural member is not one Located document");
+    assert_eq!(error.kind(), CodecFailureKind::RequirementMismatch);
+}
+
 #[test]
 fn a_single_child_member_stays_located_element() {
     let mut resources = resources();
@@ -180,4 +247,113 @@ fn a_single_child_index_after_member_stays_located() {
     )
     .expect("located");
     assert_eq!(render(&materialize_located(&result, &mut resources)), r#""1""#);
+}
+
+/// Exact + count publishes the locate element's span. The proving parse already
+/// counted direct children; count must not re-parse the hit.
+#[test]
+fn exact_count_demand_uses_the_locate_span() {
+    let mut resources = resources();
+    let result = decode_located_count(
+        b"<root><users><a/><b/><c/></users></root>",
+        &[member("users")],
+        &mut resources,
+    )
+    .expect("count demand");
+    let AccessOutcome::Located(located) = result.outcome() else {
+        panic!("located")
+    };
+    let ExactSelectionRecord::Node { node, .. } = located.result() else {
+        panic!("node")
+    };
+    let document = located.product().document();
+    assert!(
+        document
+            .value_view(*node)
+            .expect("view")
+            .is_container_span()
+            .expect("span"),
+        "count Exact must publish the locate span, not a rematerialized tree"
+    );
+    assert_eq!(document.node_count(), 1, "skeleton Exact is one container-span node");
+    assert_eq!(
+        document.container_span_child_count(*node).expect("handle"),
+        Some(3),
+        "Exact count records cardinality on the proving walk"
+    );
+    assert_eq!(
+        document
+            .count_children_from(*node, &container_count(), &mut resources)
+            .expect("span count"),
+        CountVerdict::Count(3)
+    );
+}
+
+#[test]
+fn exact_count_demand_empty_element_records_zero() {
+    let mut resources = resources();
+    let result = decode_located_count(b"<root><users/></root>", &[member("users")], &mut resources).expect("empty");
+    let AccessOutcome::Located(located) = result.outcome() else {
+        panic!("located")
+    };
+    let ExactSelectionRecord::Node { node, .. } = located.result() else {
+        panic!("node")
+    };
+    let document = located.product().document();
+    assert_eq!(document.container_span_child_count(*node).expect("handle"), Some(0));
+    assert_eq!(
+        document
+            .count_children_from(*node, &container_count(), &mut resources)
+            .expect("empty count"),
+        CountVerdict::Count(0)
+    );
+}
+
+#[test]
+fn exact_count_demand_nested_member_uses_the_locate_span() {
+    let mut resources = resources();
+    let result = decode_located_count(
+        b"<doc><nested><deep><a/><b/></deep></nested></doc>",
+        &[member("nested"), member("deep")],
+        &mut resources,
+    )
+    .expect("nested count");
+    let AccessOutcome::Located(located) = result.outcome() else {
+        panic!("located")
+    };
+    let ExactSelectionRecord::Node { node, .. } = located.result() else {
+        panic!("node")
+    };
+    let document = located.product().document();
+    assert!(
+        document
+            .value_view(*node)
+            .expect("view")
+            .is_container_span()
+            .expect("span"),
+        "nested Exact count still publishes the final hit as a span"
+    );
+    assert_eq!(
+        document.node_count(),
+        1,
+        "nested Exact count is one container-span node"
+    );
+    assert_eq!(document.container_span_child_count(*node).expect("handle"), Some(2));
+    assert_eq!(
+        document
+            .count_children_from(*node, &container_count(), &mut resources)
+            .expect("nested span count"),
+        CountVerdict::Count(2)
+    );
+}
+
+#[test]
+fn exact_count_demand_still_validates_unread_bytes() {
+    let mut resources = resources();
+    decode_located_count(
+        b"<root><users><a/><b/><c/></users></root> trailing",
+        &[member("users")],
+        &mut resources,
+    )
+    .expect_err("unread trailing bytes must still fail Exact validation");
 }

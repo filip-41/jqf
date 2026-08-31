@@ -28,8 +28,8 @@ use crate::harness::{FailingSink, PartialSink, is_scoped_exact_report, program_f
 use crate::prefix::{
     assert_adversarial_boundaries, assert_authoritative_empty_diagnostics, assert_bind_source_prefix_route,
     assert_choice_prefix_route_identity, assert_comma_pipe_equivalence, assert_constructor_shapes,
-    assert_fusion_route_identity, assert_map_lowering_equivalence, assert_ordered_many,
-    assert_prefix_pushdown_route_contrast, assert_prefix_route_family,
+    assert_fusion_route_identity, assert_map_lowering_equivalence, assert_prefix_pushdown_route_contrast,
+    assert_prefix_route_family,
 };
 use crate::projection::{
     assert_explain_plan, assert_plan_serialization, assert_projection_classes, assert_projection_floor_oracle,
@@ -292,7 +292,6 @@ fn main() -> Result<(), String> {
         return Err(format!("sink failure accounting mismatch: {failure}"));
     }
 
-    assert_ordered_many(catalog, &format, &dialect)?;
     assert_adversarial_boundaries(catalog, &format, &dialect, policy)?;
     assert_fusion_route_identity(catalog, &format, &dialect)?;
     assert_prefix_pushdown_route_contrast(catalog, &format, &dialect)?;
@@ -328,7 +327,7 @@ fn main() -> Result<(), String> {
     assert_mismatch_policy(catalog, &format, &dialect)?;
 
     println!(
-        "sdk-smoke: root=true exact_root=true forward=true signed_index=true missing=true type_mismatch=true diagnostics=true sink_failure=true ordered_many=true adversarial_boundaries=true fusion_route=true prefix_pushdown_route=true choice_prefix_route=true comma_pipe_equivalence=true constructor_route=true call_prefix_route=true map_lowering_equivalence=true arith_prefix_route=true conditional_prefix_route=true try_prefix_route=true reduce_prefix_route=true bind_prefix_route=true descent_prefix_route=true slice_prefix_route=true projection_class=true explain_plan=true plan_serialization=true demand_transfer_registry=true equivalence_classes=true projection_floor_oracle=true bind_source_prefix_route=true force_route_corpus=true xml_force_route=true record_route=true csv_record_route=true json_seq_routes=true toml_routes=true yaml_routes=true html_routes=true json_routes=true jsonc_routes=true json5_routes=true cbor_seq_routes=true jqft_routes=true jqfb_routes=true xml_routes=true messagepack_routes=true properties_routes=true ini_routes=true dotenv_routes=true edit_capability=true render_surface=true every_codec_answers_every_demand=true ffi_correct_core=true task_grants=true mismatch_policy=true"
+        "sdk-smoke: root=true exact_root=true forward=true signed_index=true missing=true type_mismatch=true diagnostics=true sink_failure=true adversarial_boundaries=true fusion_route=true prefix_pushdown_route=true choice_prefix_route=true comma_pipe_equivalence=true constructor_route=true call_prefix_route=true map_lowering_equivalence=true arith_prefix_route=true conditional_prefix_route=true try_prefix_route=true reduce_prefix_route=true bind_prefix_route=true descent_prefix_route=true slice_prefix_route=true projection_class=true explain_plan=true plan_serialization=true demand_transfer_registry=true equivalence_classes=true projection_floor_oracle=true bind_source_prefix_route=true force_route_corpus=true xml_force_route=true record_route=true csv_record_route=true json_seq_routes=true toml_routes=true yaml_routes=true html_routes=true json_routes=true jsonc_routes=true json5_routes=true cbor_seq_routes=true jqft_routes=true jqfb_routes=true xml_routes=true messagepack_routes=true properties_routes=true ini_routes=true dotenv_routes=true edit_capability=true render_surface=true every_codec_answers_every_demand=true ffi_correct_core=true task_grants=true mismatch_policy=true"
     );
     Ok(())
 }

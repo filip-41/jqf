@@ -90,7 +90,13 @@ impl InputProvider for JqfbProvider {
         if slot == RouteSlot::new(1) {
             let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
             let coverage = jqf_codec_core::required_builder_coverage(requirement);
-            let session = jqfb_routes::NativeLocatedSession::try_new(image, path.steps(), origin, coverage)?;
+            let session = jqfb_routes::NativeLocatedSession::try_new(
+                image,
+                path.steps(),
+                origin,
+                coverage,
+                requirement.located_skeleton(),
+            )?;
             return ErasedAccessSession::try_new_source_with_route(source, JQFB_LOCATED_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });

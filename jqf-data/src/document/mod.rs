@@ -28,6 +28,7 @@ pub use builder::{
 };
 pub use count::{
     CountCompare, CountDemand, CountFilter, CountLiteral, CountMember, CountRow, CountStep, CountTest, CountVerdict,
+    MinMaxHint, MinMaxOp,
 };
 /// One slice range after negative bounds have already been resolved.
 ///

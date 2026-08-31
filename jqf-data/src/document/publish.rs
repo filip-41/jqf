@@ -772,6 +772,7 @@ impl<'source> AccountedDocumentFinalizer<'source> {
                         relationship_total: arenas.relationship_total,
                         span_materializer: builder.span_materializer,
                         container_spans: builder.container_spans,
+                        span_cache: builder.span_cache,
                         authored_spans: builder.authored_spans,
                     };
                     let storage = match (shared_schema, inline_schema) {

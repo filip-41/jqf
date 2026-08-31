@@ -52,26 +52,12 @@ pub(crate) enum Located {
     },
 }
 
-/// Owns one portable step's text (the member name).
-#[derive(Debug)]
-pub(crate) enum OwnedStep {
-    Member(Vec<u8>),
-    Index(i64),
-    /// A contiguous signed range `[start, end)` of an array container.
-    Range {
-        /// Lower bound (open at the container's start when `None`).
-        start: Option<i64>,
-        /// Upper bound (open at the container's end when `None`).
-        end: Option<i64>,
-    },
-}
+/// The owned exact-path vocabulary is core's: every pushed-down route of every codec copies the requirement's
+/// [`jqf_codec_core::PortableStep`]s the same way, for the same session lifetime.
+pub(crate) use jqf_codec_core::OwnedStep;
 
 /// Copies portable steps into session-owned storage.
 pub(crate) fn own_steps(steps: &[PortableStep]) -> Result<Vec<OwnedStep>, CodecError> {
-    let mut owned = Vec::new();
-    owned
-        .try_reserve_exact(steps.len())
-        .map_err(jqf_resource::ResourceError::from)?;
     for (position, step) in steps.iter().enumerate() {
         // A range is materialized as a FRESH array and this walk cannot carry navigation past it, so a non-trailing
         // range would otherwise be answered with every later step silently DISCARDED (`.a[1:3].b` as `.a[1:3]`). The
@@ -80,26 +66,8 @@ pub(crate) fn own_steps(steps: &[PortableStep]) -> Result<Vec<OwnedStep>, CodecE
         if position + 1 < steps.len() && matches!(step, PortableStep::SemanticRange { .. }) {
             return Err(CodecError::new(CodecFailureKind::RequirementMismatch));
         }
-        let step = match step {
-            PortableStep::SemanticMember(name) => {
-                let name = name.as_str();
-                let mut text = Vec::new();
-                text.try_reserve_exact(name.len())
-                    .map_err(jqf_resource::ResourceError::from)?;
-                for byte in name.as_bytes() {
-                    text.push(*byte);
-                }
-                OwnedStep::Member(text)
-            }
-            PortableStep::SemanticIndex(index) => OwnedStep::Index(*index),
-            PortableStep::SemanticRange { start, end } => OwnedStep::Range {
-                start: *start,
-                end: *end,
-            },
-        };
-        owned.push(step);
     }
-    Ok(owned)
+    jqf_codec_core::own_steps(steps).map_err(CodecError::from)
 }
 
 /// Resolves an exact path over the graph, returning the located node or a negative observation.
@@ -138,14 +106,13 @@ pub(crate) fn locate(
                 // over a mapping that holds one must raise the floor's yaml.key error — never answer Missing/null
                 // (scoped route) or fabricate identity.
                 validate_mapping_keys(graph, entries, source, dialect)?;
-                let name = String::from_utf8_lossy(name.as_slice());
                 // LAST-VALUE-WINS: scan the ENTIRE mapping and keep the final matching entry. This is the same law
                 // materialization keeps (the object builder lets the final occurrence supply the value), so located
                 // navigation and materialization answer the same document the same way; first-hit-stop would answer the
                 // FIRST occurrence and disagree with `.[0]`'s object.
                 let mut found = None;
                 for (key, value) in entries {
-                    if key_text(graph, *key, source).as_deref() == Some(name.as_ref()) {
+                    if key_text(graph, *key, source).as_deref() == Some(name.as_str()) {
                         found = Some(*value);
                     }
                 }

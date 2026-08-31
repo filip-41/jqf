@@ -39,7 +39,7 @@ const TRANSFER_DECLARATIONS: &[TransferDeclaration] = &[
         arity: 0,
         transfer: DemandTransfer::Subtree,
         // The PER-ELEMENT class stays conservative and always will: an element's
-        // keys are that element's own payload, so a projected route would have to
+        // keys are that element's own payload, so Fields omit would still have to
         // decode it. The whole-program demand on the value at a path is now
         // served by the lazy whole-document binding, never a stand-in.
         probes: &[

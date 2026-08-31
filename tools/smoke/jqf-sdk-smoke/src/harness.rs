@@ -9,14 +9,12 @@
 use jqf_codec_core::{
     AccessAdapter, AccessResultKind, DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode,
 };
-use jqf_data::{DialectId, FormatId, Value};
-use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, try_compile_program};
+use jqf_data::{DialectId, FormatId};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, CompiledProgram, HostIo, try_compile_program};
 use jqf_resource::{
     ContinueControl, Control, ControlOutcome, RequestAccount, ResourceContext, ResourceLimits, WorkMeter,
 };
-use jqf_sdk::{
-    CodecCatalog, EncodedItemReport, FacadeFraming, ItemSink, OrderedResultPoll, OrderedResultProducer, PipelinePolicy,
-};
+use jqf_sdk::{CodecCatalog, EncodedItemReport, FacadeFraming, ItemSink, PipelinePolicy};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
 use std::sync::OnceLock;
@@ -109,28 +107,6 @@ impl ItemSink for FaultSink<'_> {
         } else {
             Ok(())
         }
-    }
-}
-
-pub(crate) struct ManyProducer {
-    pub(crate) items: std::vec::IntoIter<Value>,
-    pub(crate) pending: bool,
-}
-
-impl OrderedResultProducer<'static> for ManyProducer {
-    fn poll_next(
-        &mut self,
-        _context: &mut jqf_codec_core::CodecRunContext<'_, '_>,
-    ) -> Result<OrderedResultPoll<'static>, jqf_codec_core::CodecError> {
-        if self.pending {
-            self.pending = false;
-            return Ok(OrderedResultPoll::Pending);
-        }
-        Ok(self
-            .items
-            .next()
-            .map(jqf_engine::EngineResult::owned)
-            .map_or(OrderedResultPoll::Complete, OrderedResultPoll::Item))
     }
 }
 
@@ -229,7 +205,7 @@ pub(crate) struct OracleOutcome {
     pub(crate) range_located: bool,
     /// The failure CLASS a failed run ended in (`None` on success). The
     /// force-route differential compares bytes and completion on every row,
-    /// but a projected route that raises the WRONG class at zero bytes (e.g.
+    /// but a designated rung that raises the WRONG class at zero bytes (e.g.
     /// an `InternalContractViolation` where the floor raised a type error)
     /// publishes zero bytes on both sides and would pass a byte-only compare.
     /// The class is the payload-free soundness net for exactly that case.
@@ -282,7 +258,7 @@ pub(crate) fn failure_class<SinkError: std::fmt::Debug>(failure: &jqf_sdk::Pipel
 /// The payload-free class name of a codec failure kind: the variant, never
 /// the payload. The net compares CLASSES across the designated route and the
 /// floor; a `Resource` ceiling number or an `InternalContractViolation`
-/// contract text would legitimately differ between them (the projected route
+/// contract text would legitimately differ between them (the designated route
 /// allocates less), so the class must not carry it. Exhaustive on purpose: a
 /// new `CodecFailureKind` variant fails to compile here until it has a class.
 fn codec_kind_class(kind: &jqf_codec_core::CodecFailureKind) -> &'static str {
@@ -330,7 +306,7 @@ pub(crate) fn oracle_run_over(
 
     // The BARE-SLICE publish rung, read exactly as the CLI's selector reads it:
     // last before the ordinary route, and declining into it without publishing.
-    if route == OracleRoute::Designated && program.range_locate_eligible() {
+    if route == OracleRoute::Designated && program.host_io() == HostIo::SpanCut {
         let requirement = program
             .try_range_locate_requirement(&oracle_resources)
             .map_err(|error| format!("oracle range-locate requirement: {:?}", error.kind()))?;

@@ -19,7 +19,12 @@ use jqf_source::ResolvedSource;
 #[derive(Clone, Debug)]
 pub(crate) enum Located {
     /// The value at the target path, as a byte span.
-    Value { start: usize, end: usize },
+    Value {
+        start: usize,
+        end: usize,
+        /// Container span kind and direct-child count, set together. `None` for a scalar.
+        container: Option<(jqf_data::ContainerSpanKind, u64)>,
+    },
     /// The step at which navigation stopped: no member or position exists.
     Missing { step: usize },
     /// The step at which a kind mismatch stopped the path.
@@ -151,7 +156,7 @@ impl Walker<'_> {
             _ => {
                 let kind = self.skip_scalar(start, marker)?;
                 self.note_scalar_mismatch(step, kind);
-                self.note_value(step, value_start, self.pos);
+                self.note(step, value_start, self.pos, None);
             }
         }
         Ok(())
@@ -189,9 +194,7 @@ impl Walker<'_> {
                     navigable = false;
                 }
                 (OwnedStep::Range { .. }, _) => {
-                    return Err(jqf_codec_core::data_contract(
-                        "MessagePack walk does not serve range steps",
-                    ));
+                    return Err(decline_located_range());
                 }
             }
         }
@@ -285,7 +288,7 @@ impl Walker<'_> {
                 }
             }
         }
-        self.note_value(step, value_start, self.pos);
+        self.note(step, value_start, self.pos, Some((container, count)));
         Ok(())
     }
 
@@ -566,9 +569,21 @@ impl Walker<'_> {
         Ok(u32::from_be_bytes(self.read_be()?))
     }
 
-    fn note_value(&mut self, step: StepCtx, start: usize, end: usize) {
+    fn note(&mut self, step: StepCtx, start: usize, end: usize, container: Option<(Container, u64)>) {
         if self.outcome.is_none() && step == Some(self.steps.len()) {
-            self.outcome = Some(Located::Value { start, end });
+            self.outcome = Some(Located::Value {
+                start,
+                end,
+                container: container.map(|(kind, count)| {
+                    (
+                        match kind {
+                            Container::Array => jqf_data::ContainerSpanKind::Array,
+                            Container::Object => jqf_data::ContainerSpanKind::Object,
+                        },
+                        count,
+                    )
+                }),
+            });
         }
     }
 
@@ -592,6 +607,12 @@ impl Walker<'_> {
             self.note_mismatch(index, actual);
         }
     }
+}
+
+/// A located route that cannot serve the demanded step shape declines, so the binder's whole-document floor serves the
+/// demand instead.
+fn decline_located_range() -> CodecError {
+    CodecError::new(CodecFailureKind::RequirementMismatch)
 }
 
 #[cfg(test)]
@@ -627,7 +648,7 @@ mod tests {
         let bytes = [0x82, 0xa1, b'a', 0x01, 0xa1, b'b', 0x02];
         let located = locate_bytes(&bytes, &[OwnedStep::Member(alloc::string::String::from("b"))]).expect("locate .b");
         match located {
-            Located::Value { start, end } => {
+            Located::Value { start, end, .. } => {
                 assert_eq!(&bytes[start..end], &[0x02]);
             }
             other => panic!("expected value, got {other:?}"),
@@ -659,10 +680,31 @@ mod tests {
         let bytes = [0x82, 0xa1, b'a', 0x01, 0xa1, b'a', 0x02];
         let located = locate_bytes(&bytes, &[OwnedStep::Member(alloc::string::String::from("a"))]).expect("locate .a");
         match located {
-            Located::Value { start, end } => {
+            Located::Value { start, end, .. } => {
                 assert_eq!(&bytes[start..end], &[0x02], "final value wins");
             }
             other => panic!("expected value, got {other:?}"),
         }
+    }
+
+    /// A RANGE step reaching the native located route declines as a requirement mismatch — the binder's
+    /// whole-document floor serves ranges — never an internal contract violation from a user program.
+    #[test]
+    fn a_range_step_declines_to_the_floor() {
+        let bytes = [0x82, 0x01, 0x02];
+        let steps = [OwnedStep::Range {
+            start: Some(0),
+            end: None,
+        }];
+        let mut resources = test_support::resources();
+        let source = jqf_source::ResolvedSource::new(
+            jqf_source::SourceRef::new(jqf_source::SourceId::new(91), jqf_source::SourceKind::Input),
+            "walk.test",
+            &bytes,
+            0,
+        );
+        let error =
+            locate(source, Dialect::Utf8, &steps, &mut resources).expect_err("a range step declines the located route");
+        assert_eq!(error.kind(), CodecFailureKind::RequirementMismatch);
     }
 }

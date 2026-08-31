@@ -4,12 +4,13 @@
 //! ([`crate::walk::locate`]) validates the complete input to the generic dialect's exact strictness, so a corrupt byte
 //! anywhere fails this route exactly as it fails the floor (the validate-everything-first law). The walk resolves the
 //! target path over the WIRE without building any nodes, so retention is bounded to what the route actually
-//! materializes: the located span's re-decoded subtree.
+//! materializes.
 //!
-//! The "second read is budgeted" law: the walk validated everything, so the span re-decode
-//! ([`crate::parse::decode_span`] and the per-value descent it drives) assumes validity and materializes only the
-//! located subtree. Navigation is PAYLOAD-TRANSPARENT through tag layers: the walk unwraps uninterpreted tags, so a
-//! path over a tagged root resolves, and the subtree copier preserves tags.
+//! Count and element Exact jobs publish the walk's last-wins container span with the child
+//! count proved on that pass ([`crate::parse::publish_located_skeleton`]). Print without that
+//! hint still re-decodes the span ([`crate::parse::decode_span`]). Navigation is PAYLOAD-TRANSPARENT
+//! through tag layers: the walk unwraps uninterpreted tags, so a path over a tagged root resolves,
+//! and a print-path subtree copier preserves tags.
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
@@ -21,7 +22,10 @@ use jqf_source::ResolvedSource;
 
 use alloc::vec::Vec;
 
-use crate::parse::{PruneLookup, SCALAR_KIND, data_contract, decode_span, fresh_builder, kind_only_span, map_data};
+use crate::parse::{
+    PruneLookup, SCALAR_KIND, data_contract, decode_span, fresh_builder, kind_only_span, map_data,
+    publish_located_skeleton,
+};
 use crate::walk::{self, Located};
 
 /// The one input shape these routes serve: a raw source range (the record drive hands each route a byte range). A
@@ -64,6 +68,29 @@ fn negative_outcome(
 
 // ---------------------------------------------------------------------------
 
+/// How a successful locate hit is published after the one validating walk.
+#[derive(Clone, Copy)]
+enum LocatedHitPublish {
+    /// Re-decode the located span (print, prune, or a non-container hit).
+    Decode,
+    /// Empty container or dummy scalar from the first payload byte / tag.
+    KindOnly,
+    /// Count/element Exact: the walk's container span plus the cached child count.
+    Skeleton,
+}
+
+impl LocatedHitPublish {
+    fn from_demand(type_demand: bool, skeleton: bool) -> Self {
+        if type_demand {
+            Self::KindOnly
+        } else if skeleton {
+            Self::Skeleton
+        } else {
+            Self::Decode
+        }
+    }
+}
+
 /// Native located session: walk, decode the located span, publish a [`LocatedOutcome`] (negative observations share the
 /// null-product arm verbatim).
 pub(crate) struct NativeLocatedSession {
@@ -74,8 +101,7 @@ pub(crate) struct NativeLocatedSession {
     adjacent: bool,
     /// Re-anchored kept-subtree prune over the located span. `None` keeps every member.
     prune: Option<PruneLookup>,
-    /// Kind-only span: empty container or dummy scalar from the first payload byte / tag.
-    type_demand: bool,
+    hit_publish: LocatedHitPublish,
     finished: bool,
 }
 
@@ -86,13 +112,14 @@ impl NativeLocatedSession {
         allow_adjacent_values: bool,
         prune: Option<PruneLookup>,
         type_demand: bool,
+        skeleton: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             steps: own_steps(steps)?,
             origin,
             adjacent: allow_adjacent_values,
             prune,
-            type_demand,
+            hit_publish: LocatedHitPublish::from_demand(type_demand, skeleton),
             finished: false,
         })
     }
@@ -106,6 +133,7 @@ impl NativeLocatedSession {
         allow_adjacent_values: bool,
         prune: Option<PruneLookup>,
         type_demand: bool,
+        skeleton: bool,
     ) -> Result<bool, CodecError> {
         if !steps_match(&self.steps, steps) {
             self.steps = own_steps(steps)?;
@@ -113,7 +141,7 @@ impl NativeLocatedSession {
         self.origin = origin;
         self.adjacent = allow_adjacent_values;
         self.prune = prune;
-        self.type_demand = type_demand;
+        self.hit_publish = LocatedHitPublish::from_demand(type_demand, skeleton);
         self.finished = false;
         Ok(true)
     }
@@ -121,19 +149,27 @@ impl NativeLocatedSession {
     fn decode_located<'source>(
         &mut self,
         source: ResolvedSource<'source>,
-        resources: &mut ResourceContext<'_>,
+        context: &mut CodecRunContext<'_, '_>,
     ) -> Result<AccessResult<'source>, CodecError> {
         if self.finished {
             return Err(data_contract());
         }
         self.finished = true;
-        let (located, item_end) = walk::locate(source, self.steps.as_slice(), self.adjacent, resources)?;
+        let (located, item_end) = walk::locate(source, self.steps.as_slice(), self.adjacent, context.resources())?;
         let (product, selection) = match located {
-            Located::Value { start, end, .. } => {
-                let product = if self.type_demand {
-                    kind_only_span(source, start, resources)?
-                } else {
-                    decode_span(source, start, end, self.prune.as_ref(), resources)?
+            Located::Value { start, end, container } => {
+                let product = match self.hit_publish {
+                    LocatedHitPublish::KindOnly => kind_only_span(source, start, context.resources())?,
+                    LocatedHitPublish::Skeleton if self.prune.is_none() => {
+                        if let Some((kind, child_count)) = container {
+                            publish_located_skeleton(source, start, end, kind, Some(child_count), context)?
+                        } else {
+                            decode_span(source, start, end, None, context.resources())?
+                        }
+                    }
+                    LocatedHitPublish::Decode | LocatedHitPublish::Skeleton => {
+                        decode_span(source, start, end, self.prune.as_ref(), context.resources())?
+                    }
                 };
                 let selection = ExactSelectionRecord::Node {
                     node: product
@@ -145,7 +181,7 @@ impl NativeLocatedSession {
                 (product, selection)
             }
             negative @ (Located::Missing { .. } | Located::TypeMismatch { .. }) => {
-                negative_outcome(&negative, self.origin, resources)?
+                negative_outcome(&negative, self.origin, context.resources())?
             }
         };
         let outcome = LocatedOutcome::try_new(&product, selection)?;
@@ -192,6 +228,6 @@ impl AccessSession for NativeLocatedSession {
         context: &mut CodecRunContext<'_, '_>,
     ) -> Result<AccessResult<'source>, CodecError> {
         let source = source_input(&input)?;
-        self.decode_located(source, context.resources())
+        self.decode_located(source, context)
     }
 }

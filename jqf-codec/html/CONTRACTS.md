@@ -72,6 +72,12 @@ After recover, empty-path `length` and Whole bare-root `type` may project
 a measure skeleton: the document element plus NAME-only child stubs.
 `.[]` does not — measure children are not recovered elements.
 
+Exact prune is after recover, at subtree materialize. Named child
+elements are prune keys — the same tag names `.div` / `.span` locate
+with. An unobservable child element is omitted from the product; text
+leaves and comment facts stay. Keep-all / no prune is the full located
+subtree. Whole ignores the hint.
+
 ## Fragment
 
 `html.fragment@1` runs the fragment algorithm with the fixed context

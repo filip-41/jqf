@@ -15,22 +15,22 @@
 //!   (payload-transparent, validated to arbitrary depth) is unwrapped ITERATIVELY, so an attacker-chosen tag depth
 //!   costs loop iterations, not call stack.
 //!
-//! What the route materializes is exactly the located subtree: the scoped route decodes exactly `[start, start +
-//! subtree_size)` through the shared whole-document walk bounded to that extent (`JqfbDecodeState`'s scoped mode — the
-//! same one node-kind dispatch table, never a second copy).
+//! What the route materializes is the locate product: count/element Exact publishes the
+//! landed subtree as a container span with the payload child count already in the node
+//! table. Print without that hint still scoped-decodes `[start, start + subtree_size)`.
 
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use jqf_codec_core::{
     AccessInput, AccessOutcome, AccessResult, AccessSession, CodecError, CodecFailureKind, CodecRunContext,
-    DocumentProduct, ExactSelectionRecord, LocatedOutcome, PortableStep, SelectionOrigin,
+    DocumentProduct, ExactSelectionRecord, LocatedOutcome, OwnedStep, PortableStep, SelectionOrigin, own_steps,
 };
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError,
-    DiagnosticCoverage, DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, TagId, ValueKind,
+    AccountedDocumentBuilder, AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind,
+    DataError, DiagnosticCoverage, DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll,
+    DocumentSourceBindingPoll, DocumentSourceBindingStage, LazySpanMaterializer, TagId, ValueKind,
 };
-use jqf_resource::{ResourceContext, ResourceError, WorkAdmission};
+use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::ResolvedSource;
 
 use crate::jqfb::{self, CoreChunks, kinds};
@@ -38,49 +38,19 @@ use crate::jqfb_decode::{JqfbDecodeState, JqfbImage};
 use crate::parse::try_temporal;
 use crate::provider;
 
-/// One owned path step, copied from the portable requirement path.
-#[derive(Debug)]
-pub(crate) enum Step {
-    Member(String),
-    Index(i64),
-    /// A contiguous element RANGE over an array container. v1 declines range footprints for these routes (the engine's
-    /// static pushdown), so the variant exists only for the navigator's contract check.
-    Range,
-}
-
 /// The located answer of the node-table walk.
 #[derive(Debug)]
 enum Located {
     /// The subtree at the target path: node-table entries `[start, start + subtree_size)`.
-    Value { start: usize, size: u32 },
+    Value {
+        start: usize,
+        size: u32,
+        container: Option<(ContainerSpanKind, u64)>,
+    },
     /// The step at which navigation stopped: no member or position exists.
     Missing { step: usize },
     /// The step at which a kind mismatch stopped the path.
     TypeMismatch { step: usize, actual: ValueKind },
-}
-
-pub(crate) fn own_steps(steps: &[PortableStep]) -> Result<Vec<Step>, CodecError> {
-    let mut owned = Vec::new();
-    owned
-        .try_reserve_exact(steps.len())
-        .map_err(ResourceError::from)
-        .map_err(CodecError::from)?;
-    for step in steps {
-        owned.push(match step {
-            PortableStep::SemanticMember(member) => {
-                let mut stored = String::new();
-                stored
-                    .try_reserve_exact(member.as_str().len())
-                    .map_err(ResourceError::from)
-                    .map_err(CodecError::from)?;
-                stored.push_str(member.as_str());
-                Step::Member(stored)
-            }
-            PortableStep::SemanticIndex(index) => Step::Index(*index),
-            PortableStep::SemanticRange { .. } => Step::Range,
-        });
-    }
-    Ok(owned)
 }
 
 // --------------------------------------------------------------------------- Pass 1: the validating walk (mirrors the
@@ -103,6 +73,36 @@ enum VKind {
     Array,
     Object,
     Tag,
+}
+
+fn located_value(node: &[u8], start: usize, size: u32) -> Result<Located, CodecError> {
+    Ok(Located::Value {
+        start,
+        size,
+        container: container_facts(node, start)?,
+    })
+}
+
+/// Unwraps payload-transparent tags so Exact count caches the ARRAY/OBJECT payload count.
+fn container_facts(node: &[u8], start: usize) -> Result<Option<(ContainerSpanKind, u64)>, CodecError> {
+    let mut cursor = start;
+    loop {
+        let entry = jqfb::read_node(node, cursor)?;
+        match entry.kind {
+            kinds::TAG => {
+                cursor = cursor
+                    .checked_add(1)
+                    .ok_or_else(|| jqfb::invalid("tag payload index overflows"))?;
+            }
+            kinds::ARRAY => {
+                return Ok(Some((ContainerSpanKind::Array, u64::from(entry.payload))));
+            }
+            kinds::OBJECT => {
+                return Ok(Some((ContainerSpanKind::Object, u64::from(entry.payload))));
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 /// Validates the COMPLETE node table and pool content to the whole-document decode's exact strictness, building
@@ -286,7 +286,7 @@ fn navigate(
     node_count: usize,
     strg: &[u8],
     strg_offsets: &[u32],
-    steps: &[Step],
+    steps: &[OwnedStep],
 ) -> Result<Located, CodecError> {
     let mut cursor = 0usize;
     walk_value(node, node_count, strg, strg_offsets, &mut cursor, 0, steps)
@@ -310,7 +310,7 @@ fn walk_value(
     strg_offsets: &[u32],
     cursor: &mut usize,
     step: usize,
-    steps: &[Step],
+    steps: &[OwnedStep],
 ) -> Result<Located, CodecError> {
     // Unwrap same-step tag layers in a loop, validating each head exactly as the pre-unwrap walk did, until the first
     // non-tag entry (or the no-steps early return on a tag itself).
@@ -329,10 +329,7 @@ fn walk_value(
         }
         if step >= steps.len() {
             *cursor = head_end;
-            return Ok(Located::Value {
-                start: head_start,
-                size: head.subtree_size,
-            });
+            return located_value(node, head_start, head.subtree_size);
         }
         if head.kind != kinds::TAG {
             break (head, head_start, head_end);
@@ -344,7 +341,7 @@ fn walk_value(
         kinds::ARRAY => {
             let count = usize::try_from(entry.payload).map_err(|_| jqfb::invalid("array child count overflows"))?;
             match &steps[step] {
-                Step::Index(index) => {
+                OwnedStep::Index(index) => {
                     let Some(position) = jqf_data::resolve_index(count, *index) else {
                         *cursor = end;
                         return Ok(Located::Missing { step });
@@ -366,22 +363,23 @@ fn walk_value(
                     *cursor = end;
                     Ok(located)
                 }
-                Step::Member(_) => {
+                OwnedStep::Member(_) => {
                     *cursor = end;
                     Ok(Located::TypeMismatch {
                         step,
                         actual: ValueKind::Array,
                     })
                 }
-                Step::Range => Err(data_contract()),
+                OwnedStep::Range { .. } => Err(decline_located_range()),
             }
         }
         kinds::OBJECT => {
             let members = usize::try_from(entry.payload).map_err(|_| jqfb::invalid("object member count overflows"))?;
             match &steps[step] {
-                Step::Member(name) => {
+                OwnedStep::Member(name) => {
+                    // Duplicate KEYTEXT is last-wins, not unique-key physics.
                     let mut child = start + 1;
-                    let mut matched = false;
+                    let mut winner = None;
                     for _ in 0..members {
                         let key = jqfb::read_node(node, child)?;
                         if key.kind != kinds::KEYTEXT {
@@ -390,8 +388,7 @@ fn walk_value(
                         let key_text = strg_text(strg, strg_offsets, key.payload)?;
                         child += 1; // the key is a leaf (size 1)
                         if key_text.as_bytes() == name.as_str().as_bytes() {
-                            matched = true;
-                            break;
+                            winner = Some(child);
                         }
                         let head = jqfb::read_node(node, child)?;
                         let head_size =
@@ -403,23 +400,22 @@ fn walk_value(
                             return Err(jqfb::invalid("an object member exceeds the object"));
                         }
                     }
-                    if !matched {
+                    let Some(mut target) = winner else {
                         *cursor = end;
                         return Ok(Located::Missing { step });
-                    }
-                    let mut target = child;
+                    };
                     let located = walk_value(node, node_count, strg, strg_offsets, &mut target, step + 1, steps)?;
                     *cursor = end;
                     Ok(located)
                 }
-                Step::Index(_) => {
+                OwnedStep::Index(_) => {
                     *cursor = end;
                     Ok(Located::TypeMismatch {
                         step,
                         actual: ValueKind::Object,
                     })
                 }
-                Step::Range => Err(data_contract()),
+                OwnedStep::Range { .. } => Err(decline_located_range()),
             }
         }
         // A pending step against a scalar can never resolve: the walker does not navigate into scalar payloads.
@@ -510,9 +506,11 @@ fn validate_number(numb: &[u8], offsets: &[u32], index: u32) -> Result<(), Codec
 /// Native located session: validate the whole table, navigate to the exact path, publish a [`LocatedOutcome`].
 pub(crate) struct NativeLocatedSession {
     image: JqfbImage,
-    steps: Vec<Step>,
+    steps: Vec<OwnedStep>,
     origin: SelectionOrigin,
     coverage: BuilderCoverage,
+    /// Count/element Exact: publish the node-table subtree as a cached container span.
+    skeleton: bool,
     phase: Phase,
     /// The bounded subtree decode (scoped mode), driven to completion.
     decode: Option<JqfbDecodeState>,
@@ -535,12 +533,14 @@ impl NativeLocatedSession {
         steps: &[PortableStep],
         origin: SelectionOrigin,
         coverage: BuilderCoverage,
+        skeleton: bool,
     ) -> Result<Self, CodecError> {
         Ok(Self {
             image,
             steps: own_steps(steps)?,
             origin,
             coverage,
+            skeleton,
             phase: Phase::Locate,
             decode: None,
             finalizer: None,
@@ -567,7 +567,30 @@ impl NativeLocatedSession {
                 Phase::Locate => {
                     let located = locate(&self.image, &chunks, self.steps.as_slice())?;
                     match located {
-                        Located::Value { start, size } => {
+                        Located::Value { start, size, container } => {
+                            if self.skeleton
+                                && let Some((kind, child_count)) = container
+                            {
+                                let product = publish_located_skeleton(
+                                    source,
+                                    chunks.node,
+                                    start,
+                                    size,
+                                    kind,
+                                    child_count,
+                                    context,
+                                )?;
+                                let selection = ExactSelectionRecord::Node {
+                                    node: product
+                                        .document()
+                                        .node_handle(product.document().root())
+                                        .map_err(map_data)?,
+                                    origin: self.origin,
+                                };
+                                self.published = true;
+                                let outcome = LocatedOutcome::try_new(&product, selection)?;
+                                return Ok(AccessResult::from_outcome(AccessOutcome::Located(outcome)));
+                            }
                             self.decode = Some(JqfbDecodeState::try_new_scoped(
                                 &self.image,
                                 start,
@@ -650,7 +673,7 @@ fn source_input<'s>(input: &AccessInput<'_, 's>) -> Result<ResolvedSource<'s>, C
 }
 
 /// Validates the whole table, then navigates the exact path over it.
-fn locate(image: &JqfbImage, chunks: &CoreChunks<'_>, steps: &[Step]) -> Result<Located, CodecError> {
+fn locate(image: &JqfbImage, chunks: &CoreChunks<'_>, steps: &[OwnedStep]) -> Result<Located, CodecError> {
     validate_table(
         chunks.node,
         chunks.strg,
@@ -719,10 +742,166 @@ fn negative_outcome(
     Ok((product, selection))
 }
 
+struct JqfbSpanMaterializer;
+
+impl LazySpanMaterializer for JqfbSpanMaterializer {
+    fn materialize_span(
+        &self,
+        _text: &str,
+        _resources: &mut ResourceContext<'_>,
+    ) -> Result<jqf_data::Value, DataError> {
+        Err(DataError::InvalidDocument)
+    }
+
+    fn materialize_span_bytes(
+        &self,
+        _bytes: &[u8],
+        _resources: &mut ResourceContext<'_>,
+    ) -> Result<jqf_data::Value, DataError> {
+        Err(DataError::InvalidDocument)
+    }
+}
+
+static JQFB_SPAN_MATERIALIZER: JqfbSpanMaterializer = JqfbSpanMaterializer;
+
+/// Publishes the landed node-table subtree as a lazy span root. `validate_table` already
+/// proved the image; `navigate` already named `{start, size}` and the payload count.
+/// Count reads the cache — no second scoped decode of the hit.
+#[allow(
+    unsafe_code,
+    reason = "span admission and source attach are unsafe by jqf-data; validate_table proved this subtree"
+)]
+fn publish_located_skeleton<'source>(
+    source: ResolvedSource<'source>,
+    node: &'source [u8],
+    start: usize,
+    size: u32,
+    container: ContainerSpanKind,
+    child_count: u64,
+    context: &mut CodecRunContext<'_, '_>,
+) -> Result<DocumentProduct<'source>, CodecError> {
+    let byte_start = start
+        .checked_mul(kinds::ENTRY_LEN)
+        .ok_or_else(|| jqfb::invalid("node span start overflows"))?;
+    let byte_end = start
+        .checked_add(usize::try_from(size).map_err(|_| jqfb::invalid("subtree size overflows"))?)
+        .and_then(|end| end.checked_mul(kinds::ENTRY_LEN))
+        .ok_or_else(|| jqfb::invalid("node span end overflows"))?;
+    let bytes = node
+        .get(byte_start..byte_end)
+        .ok_or_else(|| jqfb::invalid("located subtree exceeds the NODE chunk"))?;
+    let base = 0u64;
+    let sub = ResolvedSource::new(source.source(), source.label(), bytes, base);
+    let recipe = provider::jqfb_recipe().map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, BuilderCoverage::minimal_semantic())
+            .map_err(map_data)?;
+    builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+        DocumentCapabilityFamily::Attributes,
+    ));
+    builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
+    builder.bind_span_materializer(&JQFB_SPAN_MATERIALIZER as &dyn LazySpanMaterializer);
+    let mut stage = DocumentSourceBindingStage::new(sub).map_err(map_data)?;
+    let binding = loop {
+        // SAFETY: codec-core holds this session's source unchanged; `sub` is the
+        // node-table range navigate recorded on that authority.
+        match unsafe { stage.poll(sub, context.resources()) }.map_err(map_data)? {
+            DocumentSourceBindingPoll::Pending => context.replenish_work()?,
+            DocumentSourceBindingPoll::Ready(binding) => break binding,
+        }
+    };
+    builder.bind_source(binding).map_err(map_data)?;
+    let span = jqf_source::Span::from_usize(0, bytes.len());
+    let slot = match container {
+        ContainerSpanKind::Array => 10,
+        ContainerSpanKind::Object => 11,
+    };
+    let kind = schema.node_kind(slot).ok_or_else(data_contract)?;
+    // SAFETY: validate_table proved this contiguous subtree on the session's image.
+    let root =
+        unsafe { builder.add_prepared_bound_container_span_node(&schema, kind, span, container, context.resources()) }
+            .map_err(map_data)?;
+    builder
+        .set_container_span_counts(root, Some(child_count), None)
+        .map_err(map_data)?;
+    let document = builder.finish(root, context.resources()).map_err(map_data)?;
+    let document =
+        unsafe { document.with_borrowed_source_from_bound_authority(sub, context.resources()) }.map_err(map_data)?;
+    DocumentProduct::try_new(document, context.resources())
+}
+
 fn map_data(error: DataError) -> CodecError {
     jqf_codec_core::map_data(error, "jqfb builder rejected document construction")
 }
 
 fn data_contract() -> CodecError {
     jqf_codec_core::data_contract("jqfb demand route construction")
+}
+
+/// A located route that cannot serve the demanded step shape declines, so the binder's whole-document floor serves the
+/// demand instead.
+fn decline_located_range() -> CodecError {
+    CodecError::new(CodecFailureKind::RequirementMismatch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jqfb_decode::JqfbImage;
+    use jqf_codec_core::{EncodeItem, EncodeRequest, PreservationRequest};
+    use jqf_data::{Array, DialectId, FormatId, Integer, Number, Value};
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &ContinueControl,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn encode_array(values: &[i64]) -> alloc::vec::Vec<u8> {
+        let items: alloc::vec::Vec<Value> = values
+            .iter()
+            .map(|value| Value::Number(Number::integer(Integer::from_i64(*value))))
+            .collect();
+        let array = Value::Array(Array::try_from_vec(items).expect("array"));
+        let mut resources = resources();
+        let registration = crate::registration_jqfb().expect("jqfb registration");
+        let request = EncodeRequest {
+            format: &FormatId::try_new(crate::FORMAT_ID_JQFB).expect("format"),
+            dialect: &DialectId::try_new(crate::JQFB_CANONICAL_DIALECT_ID).expect("dialect"),
+            diagnostics: jqf_codec_core::DiagnosticPolicy::ErrorsOnly,
+            preservation: PreservationRequest::None,
+            options: Some(&crate::JqfbEncodeOptions { with_source: false }),
+        };
+        let factory = registration
+            .encoder()
+            .expect("encoder")
+            .create_factory(request, &mut resources)
+            .expect("factory");
+        let mut session = factory
+            .start(EncodeItem::owned(&array), PreservationRequest::None, &mut resources)
+            .expect("session");
+        let mut out = alloc::vec::Vec::new();
+        let mut sink = jqf_codec_core::VecByteSink::new(&mut out);
+        let mut context = CodecRunContext::new(&mut resources);
+        context.set_cooperative_credits(4_096);
+        session.encode(&mut sink, &mut context).expect("encode");
+        out
+    }
+
+    /// A RANGE step reaching the native located route declines as a requirement mismatch — the binder's
+    /// whole-document floor serves ranges — never an internal contract violation from a user program.
+    #[test]
+    fn a_range_step_declines_to_the_floor() {
+        let bytes = encode_array(&[1, 2]);
+        let image = JqfbImage::validate(&bytes).expect("valid jqfb image");
+        let chunks = image.slice(&bytes).expect("core chunks");
+        let error = locate(&image, &chunks, &[OwnedStep::Range { start: None, end: None }])
+            .expect_err("range declines the located route");
+        assert_eq!(error.kind(), CodecFailureKind::RequirementMismatch);
+    }
 }

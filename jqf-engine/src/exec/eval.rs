@@ -59,6 +59,7 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
             scans,
             topk,
             anti,
+            program: None,
             joins: Vec::new(),
 
             user_indexes: Vec::new(),
@@ -80,19 +81,69 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
         })
     }
 
+    /// Seeds from [`Program`]: tables come from the program, join warm-up
+    /// only when `use_join_tables`.
+    pub(crate) fn from_program(
+        program: &'program Program,
+        root: ProgramNodeId,
+        entry: ProgramNodeId,
+        entry_offset: usize,
+        input: EngineResult<'source>,
+        use_join_tables: bool,
+    ) -> Result<Self, EngineRunError> {
+        let (scans, anti) = if use_join_tables {
+            (program.scans(), program.anti_joins())
+        } else {
+            (&[][..], &[][..])
+        };
+        let mut machine = Self::seed(
+            program.nodes(),
+            root,
+            entry,
+            entry_offset,
+            program.slots(),
+            scans,
+            program.topk_sorts(),
+            anti,
+            input,
+        )?;
+        machine.program = Some(program);
+        Ok(machine)
+    }
+
+    /// Nested machine over `root` / `input`. Top-k always travels. Join
+    /// tables travel only when `use_join_tables`.
+    pub(crate) fn seed_nested(
+        &self,
+        root: ProgramNodeId,
+        input: EngineResult<'source>,
+        use_join_tables: bool,
+    ) -> Result<Self, EngineRunError> {
+        let mut machine = if let Some(program) = self.program {
+            Self::from_program(program, root, root, 0, input, use_join_tables)?
+        } else {
+            Self::seed(
+                self.nodes,
+                root,
+                root,
+                0,
+                self.slots,
+                if use_join_tables { self.scans } else { &[] },
+                self.topk,
+                if use_join_tables { self.anti } else { &[] },
+                input,
+            )?
+        };
+        machine.iteration_cap = self.iteration_cap;
+        Ok(machine)
+    }
+
     /// Takes a nested argument machine from the reuse slot, or seeds one.
     ///
-    /// The seed threads this machine's top-k table so a partial-sort shape
-    /// inside a builtin filter argument (`limit(3; sort_by(.x) | .[0:2])`)
-    /// takes the bounded-heap route instead of the full-sort floor. The scan
-    /// and anti-join tables stay EMPTY here, deliberately: their warm-up is
-    /// runtime state built across REPEATED scans of one field
-    /// (`dispatch.rs` join warm-up), which a per-call argument machine —
-    /// seeded, driven, pooled — never reaches, and `arg_reuse` pooling would
-    /// make that warm-up law ambiguous anyway (`reseed` retakes no table
-    /// parameters, so a pooled machine keeps its ORIGINAL seed's tables).
-    /// Do not "fix" scans/anti symmetrically with topk: the recognizer is
-    /// stateless, so threading it is safe; the join tables are not.
+    /// [`Self::seed_nested`] with `use_join_tables = false`: top-k travels so a
+    /// partial-sort shape inside a builtin filter argument takes the bounded-heap
+    /// route. Scan and anti-join tables stay empty — their warm-up is runtime
+    /// state a per-call argument machine never reaches. See [`Self::seed_nested`].
     pub(crate) fn take_arg_machine(
         &mut self,
         filter: ProgramNodeId,
@@ -102,20 +153,7 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
             machine.reseed(filter, EngineResult::owned(input));
             Ok(machine)
         } else {
-            let mut machine = Box::new(GraphMachine::seed(
-                self.nodes,
-                filter,
-                filter,
-                0,
-                self.slots,
-                // Scans/anti intentionally empty — see the doc above.
-                &[],
-                self.topk,
-                &[],
-                EngineResult::owned(input),
-            )?);
-            machine.iteration_cap = self.iteration_cap;
-            Ok(machine)
+            Ok(Box::new(self.seed_nested(filter, EngineResult::owned(input), false)?))
         }
     }
 
@@ -129,11 +167,8 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
     }
 
     /// Takes a nested callable-body machine from the reuse slot, or seeds
-    /// one. The body drive seeds with THIS machine's scan/top-k/anti tables
-    /// (unlike [`Self::take_arg_machine`]'s deliberately empty scans/anti),
-    /// and `reseed` retakes no table parameters — every pooled machine was
-    /// originally seeded from the same parent tables, so the references stay
-    /// identical across reuse.
+    /// one. [`Self::seed_nested`] with `use_join_tables = true`: body drives
+    /// inherit scan/top-k/anti. `reseed` retakes no table parameters.
     pub(crate) fn take_body_machine(
         &mut self,
         body: ProgramNodeId,
@@ -143,11 +178,7 @@ impl<'program, 'source> GraphMachine<'program, 'source> {
             machine.reseed(body, input);
             Ok(machine)
         } else {
-            let mut machine = Box::new(GraphMachine::seed(
-                self.nodes, body, body, 0, self.slots, self.scans, self.topk, self.anti, input,
-            )?);
-            machine.iteration_cap = self.iteration_cap;
-            Ok(machine)
+            Ok(Box::new(self.seed_nested(body, input, true)?))
         }
     }
 

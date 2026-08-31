@@ -25,18 +25,20 @@ mod explain;
 mod plan;
 mod program;
 
+pub(crate) use analysis::{AnyAllDemand, AnyAllPolarity, HasDemand, MinMaxDemand, MinMaxOp};
 pub use analysis::{BoundaryConsumer, ProjectionClass};
 pub use codec_requirement::{
     CodecRequirementPolicy, StaticForwardStep, try_lower_forward_requirement, try_lower_root_requirement,
 };
 pub use compile::{
-    CompileOptions, CompiledProgram, EngineCompileError, ParseRejection, UnsupportedConstruct, try_compile_program,
+    CompileOptions, CompiledProgram, EngineCompileError, HostIo, ParseRejection, UnsupportedConstruct,
+    try_compile_program,
 };
 pub use exec::{EngineRun, EngineRunStream, FactDelta, RunInput, RunPoll};
 pub use exec::{
     InputSource, InputSourceError, InputSourceHandle, LoadedModule, ModuleLoader, ModuleLoaderHandle, with_input_source,
 };
-pub use explain::ExplainPlan;
+pub use explain::{ExplainPlan, ShortcutKind};
 pub use jqf_builtins::codec_result::{CodecInputOutcome, CodecInputResult, EngineResult};
 pub use jqf_builtins::error::message::{dump_trunc_owned, kind_name, raised_body, raised_frame_note};
 pub use jqf_builtins::error::{ArithFailure, ArithMismatchOp, EngineRunError};
@@ -49,7 +51,6 @@ pub use jqf_builtins::semantics::decode::json as decode_json;
 pub use jqf_builtins::semantics::decode::json_sequence as decode_json_sequence;
 pub use jqf_builtins::semantics::decode::{JsonStreamStep, PruneHint, json_stream_next, json_stream_next_hinted};
 pub use jqf_builtins::semantics::order::values_semantically_equal;
-pub use jqf_builtins::semantics::rawtext::is_raw_text;
 pub use jqf_builtins::semantics::stream_events::{EventParser, StreamEvent};
 pub use jqf_builtins::semantics::truth::{PublicationFacts, is_empty_array, is_truthy, publication_facts};
 pub use plan::{PlanError, PlanRecord};

@@ -296,7 +296,7 @@ pub(crate) fn edit_document_cycle<'source, Sink: ItemSink>(
         .map_err(|error| publication.fail(PipelineFailure::Codec(error)))?;
     // The edit lane's requirement is the EAGER WHOLE DOCUMENT
     // (`try_whole_document_requirement`), so the codec never pushed down a
-    // prefix — the whole program must run from the root. `try_run` would
+    // prefix — the whole program must run from the root. `execute` would
     // skip `prefix_len` steps (the pushdown prefix the program's own
     // requirement would have resolved at the codec), and a skipped read
     // step emits its input unchanged — `--edit '.b'` over an array would
@@ -363,6 +363,13 @@ pub(crate) fn edit_document_cycle<'source, Sink: ItemSink>(
             sink.report_value_error(report)
                 .map_err(|error| publication.fail(PipelineFailure::Sink(error)))?;
             return Err(publication.fail(mismatch.into_failure()));
+        }
+        EngineRun::ReboundWhole => {
+            return Err(publication.fail(PipelineFailure::Codec(CodecError::new(
+                jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                    contract: "edit runs Whole; Exact count miss cannot rebound",
+                },
+            ))));
         }
     };
     let published: std::borrow::Cow<'_, [u8]> = if program.fact_writes() && program.modifies() {

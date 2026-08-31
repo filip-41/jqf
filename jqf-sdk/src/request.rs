@@ -9,9 +9,8 @@
 //!
 //! The SDK's routing is deliberately invisible here: `execute` picks the
 //! drive from `Input` + the flags + the compiled program's own facts, and an
-//! embedder never names a route. This is the surface 122 W4's exit gate
-//! pins: exactly one public `execute` in the crate, and the route-named
-//! entry points are `pub(crate)`.
+//! embedder never names a route. Exactly one public `execute` in the crate;
+//! the route-named entry points are `pub(crate)`.
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -22,7 +21,7 @@ use jqf_codec_core::{
     ValidationMode,
 };
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::CompiledProgram;
+use jqf_engine::{CompiledProgram, HostIo};
 use jqf_resource::ResourceContext;
 use jqf_source::{ResolvedSource, SourceFileRange, SourceId, SourceKind, SourceRef};
 
@@ -879,65 +878,71 @@ where
                     }
                 });
             }
-            // Default serial ladder: roundtrip, range-locate, then the floor.
-            // A declined roundtrip that already decoded a single document
-            // encodes it (RoundtripRun::Encoded) so the floor does not decode
-            // twice. Non-lenient mismatch skips the echo/range rungs — the
-            // codec's pushed-down prefix cannot report a cell.
+            // Default serial ladder: match packed HostIo once. Echo may reprint
+            // retained bytes; SpanCut may cut a codec span; Run is the floor.
+            // A declined echo that already decoded a single document encodes it
+            // (RoundtripRun::Encoded) so the floor does not decode twice.
+            // Non-lenient mismatch skips host I/O — the codec's pushed-down
+            // prefix cannot report a cell.
             if resources.mismatch_policy() == jqf_resource::policy::MismatchPolicy::Lenient {
-                let run = crate::drive::execute_source_roundtrip(
-                    catalog,
-                    source,
-                    &input_format,
-                    &input_dialect,
-                    program,
-                    &output_format,
-                    &output_dialect,
-                    policy,
-                    framing,
-                    resources,
-                    sink,
-                    true,
-                )
-                .map_err(map_pipeline)?;
-                match run {
-                    crate::drive::RoundtripRun::Published(report) => {
-                        if let Some(diagnostics) = diagnostics {
-                            diagnostics.record_route_named("roundtrip");
+                match program.host_io() {
+                    HostIo::Echo => {
+                        let run = crate::drive::execute_source_roundtrip(
+                            catalog,
+                            source,
+                            &input_format,
+                            &input_dialect,
+                            program,
+                            &output_format,
+                            &output_dialect,
+                            policy,
+                            framing,
+                            resources,
+                            sink,
+                            true,
+                        )
+                        .map_err(map_pipeline)?;
+                        match run {
+                            crate::drive::RoundtripRun::Published(report) => {
+                                if let Some(diagnostics) = diagnostics {
+                                    diagnostics.record_route_named("roundtrip");
+                                }
+                                return Ok(Outcome::Served(Report::Pipeline(report)));
+                            }
+                            crate::drive::RoundtripRun::Encoded(report) => {
+                                if let Some(diagnostics) = diagnostics {
+                                    diagnostics.record_route_named("sequence");
+                                }
+                                return Ok(Outcome::Served(Report::Pipeline(report)));
+                            }
+                            crate::drive::RoundtripRun::Declined => {}
                         }
-                        return Ok(Outcome::Served(Report::Pipeline(report)));
                     }
-                    crate::drive::RoundtripRun::Encoded(report) => {
-                        if let Some(diagnostics) = diagnostics {
-                            diagnostics.record_route_named("sequence");
+                    HostIo::SpanCut => {
+                        if let Ok(requirement) = program.try_range_locate_requirement(resources) {
+                            let run = crate::drive::execute_range_locate(
+                                catalog,
+                                source,
+                                &input_format,
+                                &input_dialect,
+                                &requirement,
+                                &output_format,
+                                &output_dialect,
+                                policy,
+                                framing,
+                                resources,
+                                sink,
+                            )
+                            .map_err(map_pipeline)?;
+                            if let crate::drive::RangeLocateRun::Completed(report) = run {
+                                if let Some(diagnostics) = diagnostics {
+                                    diagnostics.record_route_named("range-locate");
+                                }
+                                return Ok(Outcome::Served(Report::Pipeline(report)));
+                            }
                         }
-                        return Ok(Outcome::Served(Report::Pipeline(report)));
                     }
-                    crate::drive::RoundtripRun::Declined => {}
-                }
-                if program.range_locate_eligible()
-                    && let Ok(requirement) = program.try_range_locate_requirement(resources)
-                {
-                    let run = crate::drive::execute_range_locate(
-                        catalog,
-                        source,
-                        &input_format,
-                        &input_dialect,
-                        &requirement,
-                        &output_format,
-                        &output_dialect,
-                        policy,
-                        framing,
-                        resources,
-                        sink,
-                    )
-                    .map_err(map_pipeline)?;
-                    if let crate::drive::RangeLocateRun::Completed(report) = run {
-                        if let Some(diagnostics) = diagnostics {
-                            diagnostics.record_route_named("range-locate");
-                        }
-                        return Ok(Outcome::Served(Report::Pipeline(report)));
-                    }
+                    HostIo::Run => {}
                 }
             }
             // The floor: the single-document drive for a non-adjacent

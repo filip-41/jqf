@@ -16,12 +16,13 @@
 //! scan declined to project — is refused here with `UnsupportedRepresentation` — fail strict semantic decode.
 
 pub(crate) use jqf_codec_core::PruneLookup;
-use jqf_codec_core::{CodecError, PruneRef};
+use jqf_codec_core::{CodecError, CodecRunContext, DocumentProduct, PruneRef};
 use jqf_data::{
     AccountedDocumentBuilder, AccountedIntrinsicTag, AccountedOccurrenceKey, AccountedSemanticNode,
     AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind, DataError, DiagnosticCoverage, Document,
-    DocumentCapabilityFamily, DocumentCapacity, DocumentSchemaRecipe, FractionalSecond, KnownUtcOffset, LocalDateTime,
-    LocalOwnerRef, LocalTime, NodeId, OffsetDateTime, PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole,
+    DocumentCapabilityFamily, DocumentCapacity, DocumentSchemaRecipe, DocumentSourceBindingPoll,
+    DocumentSourceBindingStage, FractionalSecond, KnownUtcOffset, LazySpanMaterializer, LocalDateTime, LocalOwnerRef,
+    LocalTime, NodeId, OffsetDateTime, PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole,
     PreparedSemanticNode, UtcOffset, ValueKind, civil_from_epoch,
 };
 use jqf_resource::ResourceContext;
@@ -80,6 +81,66 @@ pub(crate) fn kind_only_document(
         .add_node(kind_name, semantic, None, resources)
         .map_err(map_data)?;
     Ok((builder, root))
+}
+
+/// Publishes the last-wins located container as a lazy span root. The walk already
+/// proved `[start, end)` one complete item and counted its children; count does not
+/// re-decode the hit.
+#[allow(
+    unsafe_code,
+    reason = "span admission and source attach are unsafe by jqf-data; the walk proved this range on the session-owned source"
+)]
+pub(crate) fn publish_located_skeleton<'source>(
+    source: ResolvedSource<'source>,
+    start: usize,
+    end: usize,
+    dialect: Dialect,
+    container: ContainerSpanKind,
+    child_count: Option<u64>,
+    context: &mut CodecRunContext<'_, '_>,
+) -> Result<DocumentProduct<'source>, CodecError> {
+    let bytes = &source.bytes()[start..end];
+    let base = source
+        .base_offset()
+        .saturating_add(u64::try_from(start).unwrap_or(u64::MAX));
+    let sub = ResolvedSource::new(source.source(), source.label(), bytes, base);
+    let recipe = schema_recipe(dialect).map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, BuilderCoverage::minimal_semantic())
+            .map_err(map_data)?;
+    builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+        DocumentCapabilityFamily::Attributes,
+    ));
+    builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
+    builder.bind_span_materializer(crate::lazy::span_materializer(dialect) as &dyn LazySpanMaterializer);
+    let mut stage = DocumentSourceBindingStage::new(sub).map_err(map_data)?;
+    let binding = loop {
+        // SAFETY: codec-core holds this session's source unchanged; `sub` is
+        // the last-wins range the walk recorded on that authority.
+        match unsafe { stage.poll(sub, context.resources()) }.map_err(map_data)? {
+            DocumentSourceBindingPoll::Pending => context.replenish_work()?,
+            DocumentSourceBindingPoll::Ready(binding) => break binding,
+        }
+    };
+    builder.bind_source(binding).map_err(map_data)?;
+    let span = Span::from_usize(0, bytes.len());
+    let slot = match container {
+        ContainerSpanKind::Array => 1,
+        ContainerSpanKind::Object => 2,
+    };
+    let kind = schema.node_kind(slot).ok_or_else(data_contract)?;
+    // SAFETY: the walk proved `[start, end)` one complete container of this
+    // session's immutable source.
+    let root =
+        unsafe { builder.add_prepared_bound_container_span_node(&schema, kind, span, container, context.resources()) }
+            .map_err(map_data)?;
+    builder
+        .set_container_span_counts(root, child_count, None)
+        .map_err(map_data)?;
+    let document = builder.finish(root, context.resources()).map_err(map_data)?;
+    let document =
+        unsafe { document.with_borrowed_source_from_bound_authority(sub, context.resources()) }.map_err(map_data)?;
+    DocumentProduct::try_new(document, context.resources())
 }
 
 fn schema_recipe(dialect: Dialect) -> Result<DocumentSchemaRecipe<'static>, DataError> {
@@ -763,8 +824,9 @@ mod tests {
     use super::*;
     use alloc::vec;
     use jqf_codec_core::{
-        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecFailureKind,
-        CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ValidationMode,
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, AccessResult, CodecDemand, CodecError,
+        CodecFailureKind, CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath,
+        ExactSelectionRecord, ValidationMode,
     };
     use jqf_data::{DialectId, Value};
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -1052,6 +1114,127 @@ mod tests {
         assert_eq!(nodes, 1, "type_demand must not retain child nodes");
     }
 
+    /// Exact + count publishes the walk's container span. The locate pass already
+    /// proved the range and counted its children; count must not re-decode the hit.
+    #[test]
+    fn exact_count_demand_uses_the_locate_span() {
+        // {"users":[1,2,3]}
+        let bytes: &[u8] = &[0x81, 0xa5, b'u', b's', b'e', b'r', b's', 0x93, 0x01, 0x02, 0x03];
+        let result = decode_exact_count(bytes, "users").expect("count demand");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("located")
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!("node")
+        };
+        let document = located.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span"),
+            "count Exact must publish the locate span, not a rematerialized tree"
+        );
+        assert_eq!(document.container_span_count(), 1);
+        assert_eq!(document.node_count(), 1, "skeleton Exact is one container-span node");
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(3),
+            "Exact count records cardinality on the proving walk"
+        );
+        let mut resources = crate::test_support::resources();
+        assert_eq!(
+            document
+                .count_children_from(*node, &empty_path_count(), &mut resources)
+                .expect("span count"),
+            jqf_data::CountVerdict::Count(3)
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_last_wins_replaces_the_pointer() {
+        // {"users":[1],"users":[1,2,3]}
+        let bytes: &[u8] = &[
+            0x82, 0xa5, b'u', b's', b'e', b'r', b's', 0x91, 0x01, 0xa5, b'u', b's', b'e', b'r', b's', 0x93, 0x01, 0x02,
+            0x03,
+        ];
+        let result = decode_exact_count(bytes, "users").expect("last-wins");
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("located")
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!("node")
+        };
+        let document = located.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span"),
+            "last-wins Exact still publishes a span, not the losing tree"
+        );
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(3),
+            "last-wins replaces the cached count with the winner"
+        );
+        let mut resources = crate::test_support::resources();
+        assert_eq!(
+            document
+                .count_children_from(*node, &empty_path_count(), &mut resources)
+                .expect("winning span count"),
+            jqf_data::CountVerdict::Count(3),
+            "the later duplicate key is the Exact product"
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_still_validates_unread_bytes() {
+        // {"users":[1,2,3]} plus a trailing reserved byte Whole would refuse.
+        let bytes: &[u8] = &[0x81, 0xa5, b'u', b's', b'e', b'r', b's', 0x93, 0x01, 0x02, 0x03, 0xc1];
+        decode_exact_count(bytes, "users").expect_err("unread trailing byte must still fail Exact validation");
+    }
+
+    fn decode_exact_count<'source>(bytes: &'source [u8], member: &str) -> Result<AccessResult<'source>, CodecError> {
+        let mut resources = crate::test_support::resources();
+        let source = ResolvedSource::new(
+            SourceRef::new(SourceId::new(97), SourceKind::Input),
+            "materialize.test",
+            bytes,
+            0,
+        );
+        let mut path = ExactPath::try_new(&resources);
+        path.try_push_semantic_member(member, &resources).expect("member");
+        let requirement = AccessRequirement::try_exact(
+            AccessFootprint::try_exact(path, &resources),
+            CodecDemand::try_new(&resources),
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("requirement")
+        .with_count(empty_path_count());
+        let registration = crate::registration().expect("registration");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source,
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(crate::MESSAGEPACK_UTF8_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )?;
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources).expect("open");
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run)
+    }
+
     fn empty_path_count() -> jqf_data::CountDemand {
         jqf_data::CountDemand {
             row: jqf_data::CountRow::Container,
@@ -1113,7 +1296,7 @@ mod tests {
         let nodes = document.node_count();
         let spans = document.container_span_count();
         let verdict = document
-            .count_children_demand(&empty_path_count(), &mut resources)
+            .count_children_from(document.root_handle(), &empty_path_count(), &mut resources)
             .expect("count");
         Ok((verdict, nodes, spans))
     }

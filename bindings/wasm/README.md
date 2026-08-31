@@ -13,7 +13,7 @@ What it has:
 - `jqf_run` — compile and run one program; returns a JSON envelope
 - `jqf_formats` — the closed format table as a JSON array
 - `jqf_version` / `jqf_abi_version` — package string and numeric ABI
-- `FLAG_*` — raw strings, sort keys, ASCII, null input, tab indent
+- `FLAG_*` — raw strings, sort keys, ASCII, null input (tab indent is `indent: -1`)
 - `jqf.js` — `loadJqf()` plus option defaults and envelope parsing
 
 The instance is one thread. The first call builds one session and keeps

@@ -13,6 +13,23 @@ pub fn json_escape_byte(byte: u8) -> (u8, [u8; 6]) {
     JSON_ESCAPE[usize::from(byte)]
 }
 
+/// The six JSON simple escapes plus solidus: the unescape twin of [`json_escape_byte`]'s short forms. `None` for `\u`
+/// and every non-escape byte.
+#[must_use]
+pub(crate) fn json_simple_unescape(byte: u8) -> Option<char> {
+    match byte {
+        b'"' => Some('"'),
+        b'\\' => Some('\\'),
+        b'/' => Some('/'),
+        b'b' => Some('\u{8}'),
+        b'f' => Some('\u{c}'),
+        b'n' => Some('\n'),
+        b'r' => Some('\r'),
+        b't' => Some('\t'),
+        _ => None,
+    }
+}
+
 const fn escape_entry(byte: u8) -> (u8, [u8; 6]) {
     match byte {
         b'"' => (2, [b'\\', b'"', 0, 0, 0, 0]),
@@ -69,7 +86,21 @@ pub fn push_json_escaped(out: &mut Vec<u8>, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::json_escape_byte;
+    use super::{json_escape_byte, json_simple_unescape};
+
+    #[test]
+    fn json_simple_unescape_covers_the_short_forms() {
+        assert_eq!(json_simple_unescape(b'"'), Some('"'));
+        assert_eq!(json_simple_unescape(b'\\'), Some('\\'));
+        assert_eq!(json_simple_unescape(b'/'), Some('/'));
+        assert_eq!(json_simple_unescape(b'b'), Some('\u{8}'));
+        assert_eq!(json_simple_unescape(b'f'), Some('\u{c}'));
+        assert_eq!(json_simple_unescape(b'n'), Some('\n'));
+        assert_eq!(json_simple_unescape(b'r'), Some('\r'));
+        assert_eq!(json_simple_unescape(b't'), Some('\t'));
+        assert_eq!(json_simple_unescape(b'u'), None);
+        assert_eq!(json_simple_unescape(0x7f), None);
+    }
 
     /// The table is the law: every byte's escape matches the documented short forms, C0 `\u00XX`, and DEL `\u007f`.
     #[test]

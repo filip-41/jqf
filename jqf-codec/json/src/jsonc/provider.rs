@@ -2,15 +2,16 @@
 //! values [`CommentedSpec`] names.
 //!
 //! Slot 0 is Whole/`CompleteDocument`. Slot 1 is Exact/`Located`: the strict-JSON [`crate::scoped::ScopedSession`] with
-//! this dialect's grammar (comments, trailing commas, JSON5 extras). Validation still walks every byte. Materialize
-//! re-parses the located span through [`crate::parse::JsonParseState`] with comment facts when
+//! this dialect's grammar (comments, trailing commas, JSON5 extras). Validation still walks every byte. Count and
+//! element Exact publish the last-wins span as a lazy container root. Print rematerialize of the located span still
+//! goes through [`crate::parse::JsonParseState`] with comment facts when
 //! [`jqf_data::BuilderCoverage::attached_facts`] is on; leading comments that sit before a selected member's key are
 //! collected during validate and seeded onto the materializer so Preserve / `.@comment` keep them. Identity Exact still
 //! validates unread bytes (trailing trivia is skipped; trailing values are not).
 //!
-//! Lazy element/count walks re-parse a deferred span through [`crate::lazy::CommentedSpanMaterializer`]. When
+//! Lazy Whole walks re-parse a deferred span through [`crate::lazy::CommentedSpanMaterializer`]. When
 //! [`jqf_data::BuilderCoverage::attached_facts`] is on (Preserve / `.@comment`), that re-parse attaches leading comments
-//! as `<fmt>.comment@1` list-of-texts, matching [`crate::parse::JsonParseState`]. Exact does not take that path.
+//! as `<fmt>.comment@1` list-of-texts, matching [`crate::parse::JsonParseState`].
 
 use alloc::vec::Vec;
 
@@ -183,10 +184,7 @@ impl InputProvider for CommentedProvider {
             scope,
             resources,
         )?;
-        if let Some(tree) = requirement.prune() {
-            session.arm_prune(tree.try_clone_in(resources).map_err(|_| data_contract())?);
-        }
-        session.set_type_demand(requirement.type_demand());
+        session.arm_requirement(requirement, resources)?;
         ErasedAccessSession::try_new_source_with_route(input.source(), spec.scoped_route, || Ok(session))
     }
 
@@ -195,7 +193,7 @@ impl InputProvider for CommentedProvider {
         state: &mut RecycledSessionState<'_>,
         slot: RouteSlot,
         requirement: &AccessRequirement,
-        _resources: &mut ResourceContext<'_>,
+        resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
         let (diagnostics, coverage) = decode_shape(requirement);
         if slot == RouteSlot::new(0) {
@@ -242,7 +240,7 @@ impl InputProvider for CommentedProvider {
         if !scoped.try_reset(path.steps(), origin, diagnostics, coverage, false) {
             return Ok(false);
         }
-        scoped.set_type_demand(requirement.type_demand());
+        scoped.arm_requirement(requirement, resources)?;
         Ok(true)
     }
 }

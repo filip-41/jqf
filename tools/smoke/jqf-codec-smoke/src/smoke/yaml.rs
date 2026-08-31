@@ -9,10 +9,10 @@
 //! the block dialect's quoting round-trip, target tag validation, and
 //! decode→encode→decode round-trip identity.
 
-use crate::drive::{resources, source, whole_requirement};
+use crate::drive::{decode_session, exact_requirement, resources, source, whole_requirement};
 use jqf_codec_core::{
-    AccessOutcome, AccessResultKind, CodecFailureKind, CodecRunContext, DecodeRequest, DiagnosticPolicy, EncodeItem,
-    EncodeRequest, ValidationMode,
+    AccessAdapter, AccessOutcome, AccessResultKind, CodecFailureKind, CodecRunContext, DecodeRequest, DiagnosticPolicy,
+    EncodeItem, EncodeRequest, ExactSelectionRecord, ValidationMode,
 };
 use jqf_data::{DialectId, FormatId, TagId, Value, ValueKind};
 
@@ -150,6 +150,7 @@ fn encode_yaml_block(value: &Value) -> Result<Vec<u8>, CodecFailureKind> {
 
 pub fn run() -> Result<(), String> {
     assert_route_inventory()?;
+    assert_exact_member_binds_slot_1()?;
     assert_schema_laws()?;
     assert_number_law()?;
     assert_key_equivalence();
@@ -158,7 +159,7 @@ pub fn run() -> Result<(), String> {
     assert_block_round_trip()?;
     assert_tag_validator()?;
     println!(
-        "codec-yaml-smoke: routes=2 schemas=true numbers=true keys=true duplicates=true roundtrip=true encode=true block-roundtrip=true tags=true receipts=true"
+        "codec-yaml-smoke: routes=2 exact=true schemas=true numbers=true keys=true duplicates=true roundtrip=true encode=true block-roundtrip=true tags=true receipts=true"
     );
     Ok(())
 }
@@ -202,6 +203,55 @@ fn assert_route_inventory() -> Result<(), String> {
     ];
     if kinds != expected {
         return Err(format!("route inventory drifted: {kinds:?}"));
+    }
+    Ok(())
+}
+
+/// Slot 1 is Direct Exact: a member path binds Located, adapter none, not the whole-document fallback.
+fn assert_exact_member_binds_slot_1() -> Result<(), String> {
+    let mut resources = resources();
+    let registration = jqf_codec_yaml::registration().map_err(|error| format!("{error:?}"))?;
+    let mut provider = registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            source(b"a: 1\nb: 2\n"),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(jqf_codec_yaml::YAML_CORE_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )
+        .map_err(|error| format!("provider: {:?}", error.kind()))?;
+    let requirement = exact_requirement(&resources, &["a"], None, None);
+    let handle = provider
+        .bind(&requirement)
+        .map_err(|error| format!("exact bind: {error:?}"))?;
+    if handle.slot().get() != 1 {
+        return Err(format!("YAML Exact bind must use slot 1, got {}", handle.slot().get()));
+    }
+    if handle.demand_fallback() {
+        return Err("YAML Exact bind must not be the whole-document demand fallback".into());
+    }
+    let mut session = provider
+        .open(&handle, &mut resources)
+        .map_err(|error| format!("open: {:?}", error.kind()))?;
+    let result = decode_session(&mut session, &mut resources).map_err(|error| format!("decode: {:?}", error.kind()))?;
+    if result.report().adapter() != AccessAdapter::None {
+        return Err(format!(
+            "YAML Exact adapter must be None, got {:?}",
+            result.report().adapter()
+        ));
+    }
+    let AccessOutcome::Located(located) = result.outcome() else {
+        return Err(format!("YAML Exact must be Located, got {:?}", result.outcome()));
+    };
+    if !matches!(located.result(), ExactSelectionRecord::Node { .. }) {
+        return Err(format!("YAML Exact member must be a node, got {:?}", located.result()));
     }
     Ok(())
 }

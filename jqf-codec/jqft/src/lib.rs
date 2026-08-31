@@ -7,8 +7,8 @@
 //! Markup nodes decode as an array of ordered children with name/attribute/content facts. Anchors, aliases, namespaced
 //! markup names, and non-string object keys are refused with a dedicated diagnostic, never silently dropped.
 //!
-//! The text formats advertise one slot, Whole/`CompleteDocument`; the binary `jqfb` image adds the native Exact/Located
-//! subtree walk beside it.
+//! The text formats advertise two slots, Whole/`CompleteDocument` and Exact/`Located`; the binary `jqfb` image uses
+//! the same pair, with Exact served by the node-table walk.
 
 #![cfg_attr(not(test), no_std)]
 #![deny(missing_docs)]
@@ -28,8 +28,10 @@ mod jqfb_decode;
 mod jqfb_encode;
 mod jqfb_routes;
 mod json_escape;
+mod locate;
 mod parse;
 mod provider;
+mod scoped;
 
 /// Compiles the README examples as doctests.
 #[cfg(doctest)]
@@ -94,6 +96,14 @@ pub const JQFT_FULL_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
         None => panic!("nonzero route identity"),
     };
 
+/// Stable physical identity of the jqft LOCATED route — the Exact/Located access slot whose product is the located
+/// subtree republished as the document root.
+pub const JQFT_LOCATED_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
+    match jqf_codec_core::PhysicalRouteId::derive(crate::FORMAT_ID, 2, 1) {
+        Some(id) => id,
+        None => panic!("nonzero route identity"),
+    };
+
 /// Stable physical identity of canonical jqft encoding.
 pub const JQFT_ENCODE_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
     match jqf_codec_core::PhysicalRouteId::derive(crate::FORMAT_ID, 3, 1) {
@@ -104,6 +114,14 @@ pub const JQFT_ENCODE_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
 /// Stable physical identity of the complete jqfjson document route.
 pub const JQFJSON_FULL_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
     match jqf_codec_core::PhysicalRouteId::derive(crate::JQFJSON_FORMAT_ID, 1, 1) {
+        Some(id) => id,
+        None => panic!("nonzero route identity"),
+    };
+
+/// Stable physical identity of the jqfjson LOCATED route — the Exact/Located access slot whose product is the located
+/// subtree republished as the document root.
+pub const JQFJSON_LOCATED_PHYSICAL_ROUTE_ID: jqf_codec_core::PhysicalRouteId =
+    match jqf_codec_core::PhysicalRouteId::derive(crate::JQFJSON_FORMAT_ID, 2, 1) {
         Some(id) => id,
         None => panic!("nonzero route identity"),
     };
@@ -326,9 +344,11 @@ mod tests {
         // itself: the constant must equal what the triple derives.
         let derive = |kind, spec| jqf_codec_core::PhysicalRouteId::derive("jqft", kind, spec).expect("derived");
         assert_eq!(JQFT_FULL_PHYSICAL_ROUTE_ID, derive(1, 1));
+        assert_eq!(JQFT_LOCATED_PHYSICAL_ROUTE_ID, derive(2, 1));
         assert_eq!(JQFT_ENCODE_PHYSICAL_ROUTE_ID, derive(3, 1));
         let derive = |kind, spec| jqf_codec_core::PhysicalRouteId::derive("jqfjson", kind, spec).expect("derived");
         assert_eq!(JQFJSON_FULL_PHYSICAL_ROUTE_ID, derive(1, 1));
+        assert_eq!(JQFJSON_LOCATED_PHYSICAL_ROUTE_ID, derive(2, 1));
         assert_eq!(JQFJSON_ENCODE_PHYSICAL_ROUTE_ID, derive(3, 1));
         let derive = |kind, spec| jqf_codec_core::PhysicalRouteId::derive("jqfb", kind, spec).expect("derived");
         assert_eq!(JQFB_FULL_PHYSICAL_ROUTE_ID, derive(1, 1));

@@ -10,21 +10,25 @@
 //! Member ORDER is canonical, not authored: every section object attaches to the root before any root-level scalar
 //! regardless of file position, and the encoder re-emits root scalars first (then sections) — so decode → encode is
 //! stable even where the decoded key order differs from the file's.
+//!
+//! Exact access reuses this builder for a hit-only product: one string node, one section object of last-wins members,
+//! or the null scalar a missing / mismatched path publishes. Sibling: [`crate::scoped`].
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use jqf_codec_core::CodecError;
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedOccurrenceKey, AuthoritativeEmptyFamilies, BuilderCoverage, DataError,
-    DiagnosticCoverage, DocumentCapabilityFamily, DocumentSchemaRecipe, FactPayload, LocalOwnerRef, NodeId,
-    PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole, PreparedSemanticNode,
+    AccountedDocumentBuilder, AccountedOccurrenceKey, AccountedSemanticNode, AuthoritativeEmptyFamilies,
+    BuilderCoverage, DataError, DiagnosticCoverage, DocumentCapabilityFamily, DocumentSchemaRecipe, FactPayload,
+    LocalOwnerRef, NodeId, PreparedDocumentSchema, PreparedNodeKind, PreparedOccurrenceRole, PreparedSemanticNode,
 };
 use jqf_resource::ResourceContext;
 use jqf_source::Span;
 
 use crate::options::Grammar;
-use crate::scan::Skeleton;
+use crate::scan::{Entry, Skeleton};
 
 /// The two node kinds of one grammar's document (object first, then string).
 fn node_kinds(grammar: Grammar) -> &'static [&'static str] {
@@ -146,14 +150,7 @@ pub(crate) fn build_document(
     coverage: BuilderCoverage,
     resources: &mut ResourceContext<'_>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
-    let recipe = schema_recipe(grammar).map_err(map_data)?;
-    let (mut builder, schema) =
-        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
-    builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
-        DocumentCapabilityFamily::Attributes,
-    ));
-    builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
-    let (object, string, member) = resolve_handles(&schema)?;
+    let (mut builder, schema, object, string, member) = begin_hit_builder(grammar, coverage)?;
     let root = builder
         .add_prepared_node(&schema, object, PreparedSemanticNode::Object(member), resources)
         .map_err(map_data)?;
@@ -182,34 +179,17 @@ pub(crate) fn build_document(
             .map_err(map_data)?;
         section_nodes.push(node);
     }
+    let kinds = MemberKinds {
+        schema: &schema,
+        string,
+        member,
+    };
     for entry in &skeleton.entries {
         let owner = match entry.section {
             Some(index) => section_nodes[index as usize],
             None => root,
         };
-        let text = add_text(&mut builder, &entry.value, resources)?;
-        let value_node = builder
-            .add_prepared_stored_string_node(&schema, string, text, resources)
-            .map_err(map_data)?;
-        record_authored_span(&mut builder, value_node, entry.value_span, resources)?;
-        attach_comments(
-            &mut builder,
-            comment_facts(grammar)[0],
-            &entry.leading_comments,
-            value_node,
-            coverage.attached_facts(),
-            resources,
-        )?;
-        builder
-            .add_prepared_occurrence(
-                &schema,
-                LocalOwnerRef::Node(owner),
-                member,
-                Some(AccountedOccurrenceKey::Text(entry.key.as_str())),
-                value_node,
-                resources,
-            )
-            .map_err(map_data)?;
+        add_entry(&mut builder, &kinds, owner, entry, grammar, coverage, resources)?;
     }
     // The document trailer: comment lines after the last entry attach to the ROOT as its foot-comment fact (the
     // ownership-precedence rule — no next node follows, so the whole document owns them). The encoder re-emits the
@@ -223,6 +203,172 @@ pub(crate) fn build_document(
         resources,
     )?;
     Ok((builder, root))
+}
+
+/// One string node as the document root: Exact of a key, last-wins value only.
+pub(crate) fn build_string_document(
+    entry: &Entry,
+    grammar: Grammar,
+    coverage: BuilderCoverage,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    let (mut builder, schema, _object, string, _member) = begin_hit_builder(grammar, coverage)?;
+    let text = add_text(&mut builder, &entry.value, resources)?;
+    let root = builder
+        .add_prepared_stored_string_node(&schema, string, text, resources)
+        .map_err(map_data)?;
+    record_authored_span(&mut builder, root, entry.value_span, resources)?;
+    attach_comments(
+        &mut builder,
+        comment_facts(grammar)[0],
+        &entry.leading_comments,
+        root,
+        coverage.attached_facts(),
+        resources,
+    )?;
+    Ok((builder, root))
+}
+
+/// One section object as the document root: Exact of `.section`, last-wins members only.
+pub(crate) fn build_section_document(
+    skeleton: &Skeleton,
+    section: u32,
+    grammar: Grammar,
+    coverage: BuilderCoverage,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    let header = skeleton.sections.get(section as usize).ok_or_else(data_contract)?;
+    let (mut builder, schema, object, string, member) = begin_hit_builder(grammar, coverage)?;
+    let root = builder
+        .add_prepared_node(&schema, object, PreparedSemanticNode::Object(member), resources)
+        .map_err(map_data)?;
+    record_authored_span(&mut builder, root, header.header_span, resources)?;
+    let kinds = MemberKinds {
+        schema: &schema,
+        string,
+        member,
+    };
+    for index in last_wins_entry_indices(skeleton, Some(section)) {
+        add_entry(
+            &mut builder,
+            &kinds,
+            root,
+            &skeleton.entries[index],
+            grammar,
+            coverage,
+            resources,
+        )?;
+    }
+    Ok((builder, root))
+}
+
+/// The null product a missing or mismatched Exact path publishes. No source spans.
+pub(crate) fn build_null_document(
+    grammar: Grammar,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
+    let mut builder = AccountedDocumentBuilder::try_new_with_coverage(
+        grammar.format_id(),
+        Some(grammar.input_dialect_id()),
+        BuilderCoverage::minimal_semantic(),
+    )
+    .map_err(map_data)?;
+    builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+        DocumentCapabilityFamily::Attributes,
+    ));
+    builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
+    let root = builder
+        .add_node(null_kind(grammar), AccountedSemanticNode::Null, None, resources)
+        .map_err(map_data)?;
+    Ok((builder, root))
+}
+
+fn null_kind(grammar: Grammar) -> &'static str {
+    match grammar {
+        Grammar::Properties => "properties.null@1",
+        Grammar::Ini => "ini.null@1",
+        Grammar::Dotenv => "dotenv.null@1",
+    }
+}
+
+fn begin_hit_builder(
+    grammar: Grammar,
+    coverage: BuilderCoverage,
+) -> Result<
+    (
+        AccountedDocumentBuilder<'static>,
+        PreparedDocumentSchema,
+        PreparedNodeKind,
+        PreparedNodeKind,
+        PreparedOccurrenceRole,
+    ),
+    CodecError,
+> {
+    let recipe = schema_recipe(grammar).map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, coverage).map_err(map_data)?;
+    builder.set_authoritative_empty_families(AuthoritativeEmptyFamilies::from_family(
+        DocumentCapabilityFamily::Attributes,
+    ));
+    builder.set_diagnostic_coverage(DiagnosticCoverage::NotRequested);
+    let (object, string, member) = resolve_handles(&schema)?;
+    Ok((builder, schema, object, string, member))
+}
+
+/// Last-wins entry indices in first-insertion order for one owner (root or one section).
+fn last_wins_entry_indices(skeleton: &Skeleton, section: Option<u32>) -> Vec<usize> {
+    let mut last: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut order: Vec<&str> = Vec::new();
+    for (index, entry) in skeleton.entries.iter().enumerate() {
+        if entry.section != section {
+            continue;
+        }
+        if last.insert(entry.key.as_str(), index).is_none() {
+            order.push(entry.key.as_str());
+        }
+    }
+    order.into_iter().map(|key| last[key]).collect()
+}
+
+struct MemberKinds<'a> {
+    schema: &'a PreparedDocumentSchema,
+    string: PreparedNodeKind,
+    member: PreparedOccurrenceRole,
+}
+
+fn add_entry(
+    builder: &mut AccountedDocumentBuilder<'static>,
+    kinds: &MemberKinds<'_>,
+    owner: NodeId,
+    entry: &Entry,
+    grammar: Grammar,
+    coverage: BuilderCoverage,
+    resources: &mut ResourceContext<'_>,
+) -> Result<(), CodecError> {
+    let text = add_text(builder, &entry.value, resources)?;
+    let value_node = builder
+        .add_prepared_stored_string_node(kinds.schema, kinds.string, text, resources)
+        .map_err(map_data)?;
+    record_authored_span(builder, value_node, entry.value_span, resources)?;
+    attach_comments(
+        builder,
+        comment_facts(grammar)[0],
+        &entry.leading_comments,
+        value_node,
+        coverage.attached_facts(),
+        resources,
+    )?;
+    builder
+        .add_prepared_occurrence(
+            kinds.schema,
+            LocalOwnerRef::Node(owner),
+            kinds.member,
+            Some(AccountedOccurrenceKey::Text(entry.key.as_str())),
+            value_node,
+            resources,
+        )
+        .map_err(map_data)?;
+    Ok(())
 }
 
 fn map_data(error: DataError) -> CodecError {

@@ -244,7 +244,9 @@ mod measure_session_tests {
         };
         let document = product.document();
         assert_eq!(
-            document.count_children_demand(&demand, &mut resources).expect("count"),
+            document
+                .count_children_from(document.root_handle(), &demand, &mut resources)
+                .expect("count"),
             jqf_data::CountVerdict::Count(2),
             "root length is the child count"
         );

@@ -1,8 +1,8 @@
 //! Exact-path location for the XML scoped route (slot 1, `Exact`/
 //! `Located`), applied DURING the validate-everything parse: the parser
-//! records the document element's direct children and [`apply_steps`]
-//! resolves the owned path over them, so the scoped session never
-//! materializes the whole tree.
+//! records a stack of child ledgers along the remaining path and
+//! [`apply_steps`] walks those ledgers, so the scoped session never
+//! materializes the whole tree and never re-parses a nested extent.
 //!
 //! The whole XML document's value is the root ELEMENT: an array of its
 //! ordered children (each child element, text run, comment, or processing
@@ -25,20 +25,20 @@ use jqf_data::{ValueKind, resolve_index};
 /// scoped route never materializes the whole Tree.
 #[derive(Debug)]
 pub(crate) enum LocatedHit {
-    /// A complete element's source extent `[start, end)`.
+    /// A complete element's source extent `[start, end)` and the direct-child
+    /// count recorded while that element was open on the proving walk.
     Element {
         start: usize,
         end: usize,
+        child_count: u64,
     },
     /// A decoded scalar leaf.
     Leaf {
         kind: &'static str,
         value: String,
     },
-    /// Several hits in document order.
-    Range {
-        children: Vec<LocatedHit>,
-    },
+    /// Several hits in document order. The session declines this as a stream.
+    Range,
     Missing {
         step: usize,
     },
@@ -54,8 +54,16 @@ pub(crate) enum LocatedHit {
 pub(crate) enum LocateChild {
     Element {
         name: ExpandedName,
+        /// Attribute expanded names, recorded when further path steps remain
+        /// so a nested miss can carry the same own-name / attribute hint.
+        attrs: alloc::vec::Vec<ExpandedName>,
         start: usize,
         end: usize,
+        child_count: u64,
+        /// Direct children recorded on the proving walk when more path steps
+        /// remain after this element. Empty at the last path depth: that
+        /// level only increments `child_count`.
+        children: alloc::vec::Vec<LocateChild>,
     },
     Text(String),
     Comment(String),
@@ -68,9 +76,15 @@ pub(crate) enum LocateChild {
 impl LocateChild {
     fn as_hit(&self) -> LocatedHit {
         match self {
-            LocateChild::Element { start, end, .. } => LocatedHit::Element {
+            LocateChild::Element {
+                start,
+                end,
+                child_count,
+                ..
+            } => LocatedHit::Element {
                 start: *start,
                 end: *end,
+                child_count: *child_count,
             },
             LocateChild::Text(text) => LocatedHit::Leaf {
                 kind: crate::document::TEXT_KIND,
@@ -99,9 +113,7 @@ pub(crate) fn apply_steps(
     step_offset: usize,
 ) -> LocatedHit {
     if steps.is_empty() {
-        return LocatedHit::Range {
-            children: children.iter().map(LocateChild::as_hit).collect(),
-        };
+        return LocatedHit::Range;
     }
     let step = &steps[0];
     match step {
@@ -122,41 +134,40 @@ pub(crate) fn apply_steps(
                 };
             }
             match hits.as_slice() {
-                [LocateChild::Element { start, end, .. }] => LocatedHit::Element {
-                    start: *start,
-                    end: *end,
-                },
-                _ => LocatedHit::Range {
-                    children: hits.iter().map(|c| (*c).as_hit()).collect(),
-                },
+                [child] => apply_into_element(intern, child, &steps[1..], step_offset + 1),
+                _ => LocatedHit::Range,
             }
         }
         OwnedStep::Index(signed) => {
             let Some(child) = index_locate_child(children, *signed) else {
                 return LocatedHit::Missing { step: step_offset };
             };
-            if steps.len() == 1 {
-                return child.as_hit();
-            }
-            match child {
-                LocateChild::Element { start, end, .. } => LocatedHit::Element {
-                    start: *start,
-                    end: *end,
-                },
-                _ => LocatedHit::TypeMismatch {
-                    step: step_offset + 1,
-                    actual: ValueKind::String,
-                    hint: None,
-                },
-            }
+            apply_into_element(intern, child, &steps[1..], step_offset + 1)
         }
-        OwnedStep::Range { start, end } => {
-            let (from, to) = resolve_range(children.len(), *start, *end);
-            let slice = &children[from..to];
-            LocatedHit::Range {
-                children: slice.iter().map(LocateChild::as_hit).collect(),
-            }
-        }
+        OwnedStep::Range { .. } => LocatedHit::Range,
+    }
+}
+
+/// Applies any remaining steps to a unique child already recorded on the
+/// proving walk. An empty remainder is the child's own hit.
+fn apply_into_element(
+    intern: &NameInterner,
+    child: &LocateChild,
+    rest: &[OwnedStep],
+    next_offset: usize,
+) -> LocatedHit {
+    if rest.is_empty() {
+        return child.as_hit();
+    }
+    match child {
+        LocateChild::Element {
+            name, attrs, children, ..
+        } => apply_steps(intern, *name, attrs, false, children, rest, next_offset),
+        _ => LocatedHit::TypeMismatch {
+            step: next_offset,
+            actual: ValueKind::String,
+            hint: None,
+        },
     }
 }
 
@@ -190,6 +201,7 @@ fn member_hint(
 /// way, for the same session lifetime.
 pub(crate) use jqf_codec_core::{OwnedStep, own_steps};
 
+#[cfg(test)]
 pub(crate) fn copy_steps(steps: &[OwnedStep]) -> Vec<OwnedStep> {
     steps
         .iter()
@@ -207,6 +219,7 @@ pub(crate) fn copy_steps(steps: &[OwnedStep]) -> Vec<OwnedStep> {
 /// Resolves signed range bounds against a length, following the same
 /// len-relative law as an index: a strictly negative bound counts from the
 /// end, then both clamp into `0..=len`.
+#[cfg(test)]
 fn resolve_range(len: usize, start: Option<i64>, end: Option<i64>) -> (usize, usize) {
     let len_i = len as i64;
     let resolve = |bound: Option<i64>, default: i64| -> i64 {
@@ -261,12 +274,58 @@ mod tests {
             }
         };
         match hit {
-            LocatedHit::Element { start, end } => {
-                assert!(
-                    input[start..end].contains("<deep>"),
-                    "matched extent must contain the deep element: {}",
+            LocatedHit::Element {
+                start,
+                end,
+                child_count,
+            } => {
+                assert_eq!(
+                    &input[start..end],
+                    "<deep>x</deep>",
+                    "nested locate must be the innermost extent, got {}",
                     &input[start..end]
                 );
+                assert_eq!(child_count, 1, "deep's one text child is counted on the proving walk");
+            }
+            other => panic!("expected an element hit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn locate_during_parse_walks_a_three_step_member_path() {
+        let input = "<doc><a><b><c>z</c></b></a></doc>";
+        let steps = own_steps(&[member("a"), member("b"), member("c")]).expect("owned");
+        let mut parse = XmlParseState::try_new_locate(input.as_bytes(), copy_steps(&steps)).expect("state");
+        let mut resources = jqf_resource::ResourceContext::new(
+            jqf_resource::RequestAccount::try_new(jqf_resource::ResourceLimits::new(
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u32::MAX,
+            ))
+            .expect("account"),
+            &jqf_resource::ContinueControl,
+            jqf_resource::WorkMeter::try_new_v1(4096).expect("work"),
+        )
+        .expect("resources");
+        let hit = loop {
+            match parse.poll(input.as_bytes(), &mut resources).expect("poll") {
+                crate::parse::ParsePoll::Pending => {
+                    resources.try_begin_next_cooperative_entry(1).expect("work");
+                }
+                crate::parse::ParsePoll::Ready(ParseOutput::Located(hit)) => break hit,
+                crate::parse::ParsePoll::Ready(_) => panic!("expected locate"),
+            }
+        };
+        match hit {
+            LocatedHit::Element {
+                start,
+                end,
+                child_count,
+            } => {
+                assert_eq!(&input[start..end], "<c>z</c>");
+                assert_eq!(child_count, 1);
             }
             other => panic!("expected an element hit, got {other:?}"),
         }

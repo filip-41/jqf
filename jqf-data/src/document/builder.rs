@@ -393,6 +393,9 @@ pub struct AccountedDocumentBuilder<'source> {
     pub(super) span_materializer: Option<&'static dyn super::LazySpanMaterializer>,
     /// How many container spans this build committed.
     pub(super) container_spans: u32,
+    /// Last-wins Exact cache for committed container spans, in node order. Empties into
+    /// [`super::storage::DocumentStorage::span_cache`] at finish.
+    pub(super) span_cache: Vec<super::storage::SpanCache>,
     /// Authored source spans recorded out-of-band for scalars whose retained semantic carries no span (codec floats,
     /// decimals, booleans), in node order. Empties into [`super::storage::DocumentStorage::authored_spans`] at finish;
     /// a document with no such scalar pays nothing.
@@ -575,6 +578,7 @@ impl<'source> AccountedDocumentBuilder<'source> {
             facts: Vec::new(),
             span_materializer: None,
             container_spans: 0,
+            span_cache: Vec::new(),
             authored_spans: Vec::new(),
             staged_nodes: Vec::new(),
             staged_occurrences: Vec::new(),
@@ -951,6 +955,109 @@ impl<'source> AccountedDocumentBuilder<'source> {
         #[cfg(feature = "benchmark-internals")]
         self.schema_execution.record_prepared();
         Ok(node)
+    }
+
+    /// Records array cardinality and/or collect-filter hits the decoder counted while proving `node`'s container span.
+    ///
+    /// Last-wins Exact updates this row when a later duplicate key wins: the caller records the winner's counts on the
+    /// latest winning span's slot during the proving pass. Both `None` is a no-op. A non-span node, or a record for an
+    /// earlier node, is [`DataError::InvalidDocument`].
+    pub fn set_container_span_counts(
+        &mut self,
+        node: NodeId,
+        child_count: Option<u64>,
+        filter_count: Option<u64>,
+    ) -> Result<(), DataError> {
+        if child_count.is_none() && filter_count.is_none() {
+            return Ok(());
+        }
+        self.validate_node(node)?;
+        let index = node.index();
+        let semantic = match self.nodes.get(index) {
+            Some(record) => &record.semantic,
+            None => {
+                &self
+                    .staged_nodes
+                    .get(index - self.nodes.len())
+                    .ok_or(DataError::InvalidNode)?
+                    .semantic
+            }
+        };
+        if !matches!(semantic, NodeSemantic::ContainerSpan { .. }) {
+            return Err(DataError::InvalidDocument);
+        }
+        let slot = self.span_cache_slot(node)?;
+        slot.child_count = child_count;
+        slot.filter_count = filter_count;
+        Ok(())
+    }
+
+    fn span_cache_slot(&mut self, node: NodeId) -> Result<&mut super::storage::SpanCache, DataError> {
+        self.validate_node(node)?;
+        match self.span_cache.last() {
+            Some(last) if last.node == node => {}
+            Some(last) if last.node.index() >= node.index() => return Err(DataError::InvalidDocument),
+            Some(_) | None => {
+                self.span_cache
+                    .try_reserve(1)
+                    .map_err(jqf_resource::ResourceError::from)?;
+                self.span_cache.push(super::storage::SpanCache::empty(node));
+            }
+        }
+        self.span_cache.last_mut().ok_or(DataError::InvalidDocument)
+    }
+
+    /// Records a collect-probe tally the decoder counted while proving `node`'s container span.
+    pub fn set_container_span_probe_count(&mut self, node: NodeId, probe_count: Option<u64>) -> Result<(), DataError> {
+        let Some(probe_count) = probe_count else {
+            return Ok(());
+        };
+        self.span_cache_slot(node)?.probe_count = Some(probe_count);
+        Ok(())
+    }
+
+    /// Records last-wins `has(LITERAL)` presence the decoder proved while walking `node`'s container span.
+    pub fn set_container_span_has(&mut self, node: NodeId, has_present: Option<bool>) -> Result<(), DataError> {
+        let Some(has_present) = has_present else {
+            return Ok(());
+        };
+        self.span_cache_slot(node)?.has_present = Some(has_present);
+        Ok(())
+    }
+
+    /// Records last-wins object key names the decoder collected while proving `node`'s container span.
+    pub fn set_container_span_keys(
+        &mut self,
+        node: NodeId,
+        keys: Option<alloc::vec::Vec<alloc::string::String>>,
+    ) -> Result<(), DataError> {
+        let Some(keys) = keys else {
+            return Ok(());
+        };
+        self.span_cache_slot(node)?.keys = Some(keys);
+        Ok(())
+    }
+
+    /// Records `FanOut` probe/construct values the decoder captured while proving `node`'s container span.
+    pub fn set_container_span_values(
+        &mut self,
+        node: NodeId,
+        values: Option<alloc::vec::Vec<crate::Value>>,
+    ) -> Result<(), DataError> {
+        let Some(values) = values else {
+            return Ok(());
+        };
+        self.span_cache_slot(node)?.values = Some(values);
+        Ok(())
+    }
+
+    /// Records the last-wins `min`/`max` winner the decoder proved while walking `node`'s container span.
+    pub fn set_container_span_minmax(&mut self, node: NodeId, winner: Option<crate::Value>) -> Result<(), DataError> {
+        let Some(winner) = winner else {
+            return Ok(());
+        };
+        self.span_cache_slot(node)?.minmax = Some(winner);
+        Ok(())
     }
 
     /// Adds a source-backed string from a span already validated by the owning codec session, without retaining or
@@ -1797,6 +1904,7 @@ impl<'source> AccountedDocumentBuilder<'source> {
             relationship_total: arenas.relationship_total,
             span_materializer: self.span_materializer,
             container_spans: self.container_spans,
+            span_cache: self.span_cache,
             authored_spans: self.authored_spans,
         };
         let storage = match (shared_schema, inline_schema) {

@@ -1,6 +1,11 @@
 //! Exact access requirements, sealed route handles, and decode outcomes.
 //!
-//! [`AccessRequirement`] is what the binder matches. [`ErasedAccessSession`] is the opened route. Sibling:
+//! [`AccessRequirement`] is what the binder matches. Codecs see Whole|Exact
+//! only. Document codecs bind Direct Exact (slot 1). Exact with no Exact
+//! slot — an attribute or markup clause that slot cannot serve — opens Whole
+//! via `CompleteDocumentExact`. Record framers are Whole by physics. Oracle
+//! answers after locate live on [`jqf_data::Document::count_children_from`] /
+//! [`jqf_data::Document::visit_elements_from`]. Sibling:
 //! [`crate::binder`].
 
 use alloc::boxed::Box;
@@ -16,7 +21,7 @@ use crate::pattern::{AccessFootprint, AccessFootprintFingerprint, ExactPath};
 use crate::schedule::{SelectionOrigin, SelectionSchedule};
 use crate::{
     AccessGuarantees, CapabilityBundle, CodecDemand, CodecError, CodecFailureKind, CodecRunContext, DiagnosticPolicy,
-    DocumentProduct, LocatedOutcome, SourceCapabilityDemand, TopologyDemand, ValidationMode,
+    DocumentProduct, LocatedOutcome, TopologyDemand, ValidationMode,
 };
 use crate::{AccessReport, DemandClause};
 
@@ -235,8 +240,6 @@ fn minimal_semantic_demand(resources: &ResourceContext<'_>) -> Result<CodecDeman
     demand.try_insert(&DemandClause::IntrinsicTag)?;
     demand.try_insert(&DemandClause::Topology(TopologyDemand::Children))?;
     demand.try_insert(&DemandClause::Topology(TopologyDemand::Owner))?;
-    demand.try_insert(&DemandClause::Source(SourceCapabilityDemand::ByteRanges))?;
-    demand.try_insert(&DemandClause::Source(SourceCapabilityDemand::WholeSource))?;
     for role in crate::demand::ATTACHED_FACT_ROLES {
         let clause = DemandClause::try_attached_fact(role).ok_or_else(|| {
             CodecError::new(CodecFailureKind::InternalContractViolation {
@@ -272,12 +275,19 @@ pub enum FactIntent {
     Preserve,
 }
 
-/// Complete semantic requirement owned by engine planning.
+/// Complete semantic requirement owned by engine planning: Whole / Exact
+/// footprint, prune, and monotone hints. Codecs never see a shortcut job.
+/// Oracle answers after locate live on [`jqf_data::Document::count_children_from`] /
+/// [`jqf_data::Document::visit_elements_from`].
 ///
 /// Every field added here must also be copied by the provider's `residual_requirement` reconstruction — the fallback
 /// path rebuilds the requirement, and an uncopied field silently disappears there (the residual-hints receipt test in
 /// provider.rs guards the known fields).
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "canonicality_probe, type_demand, keys, and authored_spans are independent monotone hints — grouping them would hide which job armed the decode"
+)]
 pub struct AccessRequirement {
     footprint: AccessFootprint,
     schedule: SelectionSchedule,
@@ -324,6 +334,14 @@ pub struct AccessRequirement {
     /// All three of these hints may shape how a decode runs, but none enters a recycle key: what the decode delivers is
     /// identical either way, so a recycled session re-shapes per requirement.
     element: Option<jqf_data::ElementDemand>,
+    /// Packed `has(LITERAL)` key. MONOTONE; codecs may ignore it.
+    has_key: Option<jqf_data::Value>,
+    /// Packed `PATH | keys`. MONOTONE; codecs may ignore it.
+    keys: bool,
+    /// Packed `FanOut` construct fields (`map({id,score})`). MONOTONE; codecs may ignore it.
+    element_construct: Option<alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<jqf_data::CountStep>)>>,
+    /// Packed `min`/`max`/`min_by`/`max_by`. MONOTONE; codecs may ignore it.
+    minmax: Option<jqf_data::MinMaxHint>,
     /// The authored-span demand hint: whether a consumer of this decode may read the out-of-band authored-span table
     /// (`Document::node_source_span`'s fallback) — the edit, splice, and lossless-encode lanes. Unlike every other
     /// hint its safe default is TRUE: recording spans no consumer reads costs only the table, while dropping spans a
@@ -359,6 +377,10 @@ impl AccessRequirement {
             count: None,
             type_demand: false,
             element: None,
+            has_key: None,
+            keys: false,
+            element_construct: None,
+            minmax: None,
             authored_spans: true,
             fact_intent: FactIntent::None,
         }
@@ -561,6 +583,68 @@ impl AccessRequirement {
     pub fn with_element(mut self, demand: jqf_data::ElementDemand) -> Self {
         self.element = Some(demand);
         self
+    }
+
+    /// Packed `has(LITERAL)` key, when the program is a Has row.
+    #[must_use]
+    pub const fn has_key(&self) -> Option<&jqf_data::Value> {
+        self.has_key.as_ref()
+    }
+
+    /// Builder: attaches a Has key so Exact locate can record presence.
+    #[must_use]
+    pub fn with_has_key(mut self, key: jqf_data::Value) -> Self {
+        self.has_key = Some(key);
+        self
+    }
+
+    /// Whether the program is `PATH | keys`.
+    #[must_use]
+    pub const fn keys_demand(&self) -> bool {
+        self.keys
+    }
+
+    /// Builder: marks the requirement as a Keys row.
+    #[must_use]
+    pub fn with_keys_demand(mut self) -> Self {
+        self.keys = true;
+        self
+    }
+
+    /// Packed construct fields for a `FanOut` `map({id,score})` row.
+    #[must_use]
+    pub fn element_construct(&self) -> Option<&[(alloc::string::String, alloc::vec::Vec<jqf_data::CountStep>)]> {
+        self.element_construct.as_deref()
+    }
+
+    /// Builder: attaches construct fields so Exact locate can record `{id,score}` objects.
+    #[must_use]
+    pub fn with_element_construct(
+        mut self,
+        fields: alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<jqf_data::CountStep>)>,
+    ) -> Self {
+        self.element_construct = Some(fields);
+        self
+    }
+
+    /// Packed `min`/`max` hint, when the program is a `MinMax` row.
+    #[must_use]
+    pub const fn minmax(&self) -> Option<&jqf_data::MinMaxHint> {
+        self.minmax.as_ref()
+    }
+
+    /// Builder: attaches a `MinMax` hint so Exact locate can record the winner.
+    #[must_use]
+    pub fn with_minmax(mut self, hint: jqf_data::MinMaxHint) -> Self {
+        self.minmax = Some(hint);
+        self
+    }
+
+    /// Exact may publish the located span as a lazy container root: count,
+    /// element, has, keys, and minmax visit the validated last-wins range. Type is kind-only, not this.
+    #[must_use]
+    pub const fn located_skeleton(&self) -> bool {
+        self.count.is_some() || self.element.is_some() || self.has_key.is_some() || self.keys || self.minmax.is_some()
     }
 
     /// Inserts one demand clause into this requirement. Engine lowering names
@@ -1473,7 +1557,7 @@ mod tests {
 
     use super::{
         AccessInput, AccessOutcome, AccessRequirement, AccessSession, ErasedAccessSession, FactIntent, PhysicalRouteId,
-        RouteSlot, required_builder_coverage, required_coverage, requirement_wants_intrinsic_tag,
+        RouteDescription, RouteSlot, required_builder_coverage, required_coverage, requirement_wants_intrinsic_tag,
     };
     use crate::pattern::{AccessFootprint, ExactPath};
     use crate::{
@@ -1893,5 +1977,37 @@ mod tests {
         .expect("requirement");
         assert!(required_builder_coverage(&topology).topology());
         assert!(!required_builder_coverage(&topology).attached_facts());
+    }
+
+    /// Advertised unit demand is only clauses that have a producer: SemanticRoot, ValueShape, IntrinsicTag,
+    /// Topology, and catalogued AttachedFact roles. Source is not stuffed onto every route.
+    #[test]
+    fn advertised_unit_demand_has_a_producer() {
+        let resources = resources();
+        let routes = RouteDescription::try_standard_document_table(
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            &resources,
+        )
+        .expect("table");
+        assert!(!routes.is_empty());
+        for route in routes {
+            for clause in route.bundle().demand().clauses() {
+                assert!(
+                    !matches!(clause, DemandClause::Source(_)),
+                    "Source is not advertised until a producer exists: {clause:?}"
+                );
+                assert!(
+                    matches!(
+                        clause,
+                        DemandClause::SemanticRoot
+                            | DemandClause::ValueShape
+                            | DemandClause::IntrinsicTag
+                            | DemandClause::Topology(_)
+                            | DemandClause::AttachedFact { .. }
+                    ),
+                    "advertised clause must have a producer: {clause:?}"
+                );
+            }
+        }
     }
 }

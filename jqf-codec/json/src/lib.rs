@@ -94,6 +94,7 @@ pub(crate) mod edit_support {
 
 use jqf_codec_core::{CodecError, CodecFailureKind, EncodeRequest};
 
+pub(crate) use json_escape::json_simple_unescape;
 pub use json_escape::{json_escape_byte, push_json_escaped};
 pub use options::{JsonEncodeOptions, JsonIndent, VALUE_SEPARATORS};
 
@@ -128,12 +129,13 @@ mod tests {
     use alloc::vec::Vec;
     use jqf_codec_core::{
         AccessAdapter, AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, AccessResult, CodecDemand,
-        CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ErasedAccessSession, ExactPath,
+        CodecRunContext, DecodeRequest, DemandClause, DiagnosticPolicy, ErasedAccessSession, ErasedProvider, ExactPath,
         ExactSelectionRecord, ReusableAccessSession, ValidationMode,
     };
     use jqf_data::{
-        DiagnosticCoverage, DialectId, DocumentCapability, DocumentCapabilityFamily, NodeHandle, NumberView,
-        ScalarView, ValueKind,
+        CountCompare, CountDemand, CountFilter, CountLiteral, CountRow, CountStep, CountTest, CountVerdict,
+        DiagnosticCoverage, DialectId, DocumentCapability, DocumentCapabilityFamily, ElementDemand, ElementProbe,
+        ElementRow, MinMaxHint, MinMaxOp, NodeHandle, NumberView, ScalarView, Value, ValueKind,
     };
     use jqf_resource::{RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
@@ -551,6 +553,73 @@ mod tests {
             ScalarView::Number(NumberView::Integer(integer)) => integer,
             _ => panic!("expected integer"),
         }
+    }
+
+    fn container_count() -> CountDemand {
+        CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: None,
+        }
+    }
+
+    /// JSON Exact republishes `.users` as the document root. Oracle count starts
+    /// at `located.node()` with an empty path — walking PATH from that root
+    /// would re-apply `.users` inside the array. `node == root` is Exact here,
+    /// not Whole.
+    #[test]
+    fn exact_users_length_goes_through_document_oracle() {
+        let result = run(
+            br#"{"users":[1,2,3]}"#,
+            Some(&[Step::Member("users")]),
+            DiagnosticPolicy::ErrorsOnly,
+        )
+        .expect("JSON Exact decodes");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("expected selected node")
+        };
+        let document = selected.product().document();
+        assert_eq!(
+            *node,
+            document.root_handle(),
+            "JSON Exact republishes the selection as root"
+        );
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &container_count(), &mut resources)
+                .expect("oracle count"),
+            CountVerdict::Count(3)
+        );
+        let rewalk = CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("users"))],
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: None,
+        };
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &rewalk, &mut resources)
+                .expect("rewalk"),
+            CountVerdict::Decline,
+            "walking PATH again on a republished array declines"
+        );
+        let whole = run(br#"{"users":[1,2,3]}"#, None, DiagnosticPolicy::ErrorsOnly).expect("JSON Whole decodes");
+        let AccessOutcome::FullDocument(product) = whole.outcome() else {
+            panic!("expected full document")
+        };
+        assert_eq!(
+            product
+                .document()
+                .count_children_from(product.document().root_handle(), &container_count(), &mut resources)
+                .expect("Whole empty path"),
+            CountVerdict::Count(1),
+            "Whole empty path is the mapping member count"
+        );
     }
 
     #[test]
@@ -1338,6 +1407,187 @@ mod tests {
         assert!(result.is_err());
     }
 
+    fn run_count_demand<'source>(
+        bytes: &'source [u8],
+        path: &[Step<'_>],
+    ) -> Result<AccessResult<'source>, jqf_codec_core::CodecError> {
+        run_count_demand_with(bytes, path, container_count())
+    }
+
+    fn run_count_demand_with<'source>(
+        bytes: &'source [u8],
+        path: &[Step<'_>],
+        count: CountDemand,
+    ) -> Result<AccessResult<'source>, jqf_codec_core::CodecError> {
+        let mut resources = test_support::resources();
+        let registration = registration().expect("registration");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(crate::RFC8259_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )?;
+        let requirement = requirement(Some(path), DiagnosticPolicy::ErrorsOnly, &resources).with_count(count);
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources)?;
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run)
+    }
+
+    fn run_located_with<'source>(
+        bytes: &'source [u8],
+        path: &[Step<'_>],
+        attach: impl FnOnce(AccessRequirement) -> AccessRequirement,
+    ) -> Result<AccessResult<'source>, jqf_codec_core::CodecError> {
+        let mut resources = test_support::resources();
+        let registration = registration().expect("registration");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(crate::RFC8259_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )?;
+        let requirement = attach(requirement(Some(path), DiagnosticPolicy::ErrorsOnly, &resources));
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources)?;
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run)
+    }
+
+    fn id_fan_out() -> ElementDemand {
+        ElementDemand {
+            row: ElementRow::FanOut,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(alloc::vec![CountStep::ObjectKey(alloc::string::String::from("id"))]),
+            increment: None,
+            filter: None,
+        }
+    }
+
+    fn construct_fan_out() -> (
+        ElementDemand,
+        alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<CountStep>)>,
+    ) {
+        let demand = ElementDemand {
+            row: ElementRow::FanOut,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(alloc::vec::Vec::new()),
+            increment: None,
+            filter: None,
+        };
+        let fields = alloc::vec![
+            (
+                alloc::string::String::from("id"),
+                alloc::vec![CountStep::ObjectKey(alloc::string::String::from("id"))]
+            ),
+            (
+                alloc::string::String::from("score"),
+                alloc::vec![CountStep::ObjectKey(alloc::string::String::from("score"))]
+            ),
+        ];
+        (demand, fields)
+    }
+
+    fn meta_id_fan_out() -> ElementDemand {
+        ElementDemand {
+            row: ElementRow::FanOut,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(alloc::vec![
+                CountStep::ObjectKey(alloc::string::String::from("meta")),
+                CountStep::ObjectKey(alloc::string::String::from("id")),
+            ]),
+            increment: None,
+            filter: None,
+        }
+    }
+
+    fn nested_construct_fan_out() -> (
+        ElementDemand,
+        alloc::vec::Vec<(alloc::string::String, alloc::vec::Vec<CountStep>)>,
+    ) {
+        let demand = ElementDemand {
+            row: ElementRow::FanOut,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(alloc::vec::Vec::new()),
+            increment: None,
+            filter: None,
+        };
+        let fields = alloc::vec![
+            (
+                alloc::string::String::from("id"),
+                alloc::vec![CountStep::ObjectKey(alloc::string::String::from("id"))]
+            ),
+            (
+                alloc::string::String::from("nested"),
+                alloc::vec![
+                    CountStep::ObjectKey(alloc::string::String::from("a")),
+                    CountStep::ObjectKey(alloc::string::String::from("b")),
+                ]
+            ),
+        ];
+        (demand, fields)
+    }
+
+    fn index_in_probe_fan_out() -> ElementDemand {
+        ElementDemand {
+            row: ElementRow::FanOut,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(alloc::vec![
+                CountStep::ObjectKey(alloc::string::String::from("items")),
+                CountStep::ArrayIndex(0),
+            ]),
+            increment: None,
+            filter: None,
+        }
+    }
+
+    fn whole_fan_out_values(bytes: &[u8], mut demand: ElementDemand) -> alloc::vec::Vec<Value> {
+        let result = run(bytes, None, DiagnosticPolicy::ErrorsOnly).expect("whole");
+        let AccessOutcome::FullDocument(product) = result.outcome() else {
+            panic!("whole")
+        };
+        let document = product.document();
+        demand.path = alloc::vec![CountStep::ObjectKey(alloc::string::String::from("users"))];
+        let mut values = alloc::vec::Vec::new();
+        let mut resources = witness_ledger();
+        assert!(matches!(
+            document
+                .visit_elements_from(document.root_handle(), &demand, &mut resources, |value, _| {
+                    values.push(value.clone());
+                    Ok(())
+                })
+                .expect("visit"),
+            jqf_data::ElementVerdict::Completed(_)
+        ));
+        values
+    }
+
+    fn machine_i64(value: &Value) -> i64 {
+        let Value::Number(number) = value.untagged() else {
+            panic!("number")
+        };
+        number.as_machine().expect("machine integer")
+    }
+
     fn run_type_demand<'source>(
         bytes: &'source [u8],
         path: &[Step<'_>],
@@ -1414,6 +1664,553 @@ mod tests {
             assert_eq!(view.kind().expect("kind"), kind, "{member}");
             assert_eq!(selected.product().document().node_count(), 1, "{member} is kind-only");
         }
+    }
+
+    /// Scoped Exact + count hint publishes the last-wins locate span. The
+    /// validate walk records cardinality; count must not rematerialize or re-lex it.
+    #[test]
+    fn exact_count_demand_uses_the_locate_span() {
+        let result = run_count_demand(br#"{"users":[1,2,3]}"#, &[Step::Member("users")]).expect("count demand");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        let view = document.value_view(*node).expect("view");
+        assert!(
+            view.is_container_span().expect("span"),
+            "count Exact must publish the locate span, not a rematerialized tree"
+        );
+        assert_eq!(document.container_span_count(), 1);
+        assert_eq!(document.node_count(), 1, "skeleton Exact is one container-span node");
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(3),
+            "Exact count records cardinality on the proving walk"
+        );
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &container_count(), &mut resources)
+                .expect("span count"),
+            CountVerdict::Count(3)
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_empty_array_records_zero() {
+        let result = run_count_demand(br#"{"users":[]}"#, &[Step::Member("users")]).expect("empty");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert_eq!(document.container_span_child_count(*node).expect("handle"), Some(0));
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &container_count(), &mut resources)
+                .expect("empty count"),
+            CountVerdict::Count(0)
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_last_wins_replaces_the_pointer() {
+        let result =
+            run_count_demand(br#"{"users":[1],"users":[1,2,3]}"#, &[Step::Member("users")]).expect("last-wins");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span"),
+            "last-wins Exact still publishes a span, not the losing tree"
+        );
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(3),
+            "last-wins replaces the cached count with the winner"
+        );
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &container_count(), &mut resources)
+                .expect("winning span count"),
+            CountVerdict::Count(3),
+            "the later duplicate key is the Exact product"
+        );
+    }
+
+    #[test]
+    fn exact_count_demand_still_validates_unread_bytes() {
+        let result = run_count_demand(br#"{"users":[1,2,3]} false"#, &[Step::Member("users")]);
+        assert!(
+            result.is_err(),
+            "unread trailing value must still fail Exact validation"
+        );
+    }
+
+    fn active_true_filter() -> CountDemand {
+        CountDemand {
+            row: CountRow::Collect,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: Some(CountFilter {
+                path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("active"))],
+                test: CountTest::Compare {
+                    op: CountCompare::Equal,
+                    rhs: CountLiteral::Bool(true),
+                },
+            }),
+        }
+    }
+
+    /// Collect-filter Exact records hits on the proving walk. The span leaf is not required for the oracle answer.
+    #[test]
+    fn exact_filter_collect_count_records_hits_on_the_locate_walk() {
+        let result = run_count_demand_with(
+            br#"{"users":[{"active":true},{"active":false},{"active":true}]}"#,
+            &[Step::Member("users")],
+            active_true_filter(),
+        )
+        .expect("filter count");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert_eq!(document.container_span_child_count(*node).expect("handle"), Some(3));
+        assert_eq!(
+            document.container_span_filter_count(*node).expect("handle"),
+            Some(2),
+            "filter hits recorded on the last-wins array"
+        );
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &active_true_filter(), &mut resources)
+                .expect("cached filter count"),
+            CountVerdict::Count(2)
+        );
+    }
+
+    #[test]
+    fn exact_filter_collect_count_last_wins_replaces_hits() {
+        let result = run_count_demand_with(
+            br#"{"users":[{"active":true},{"active":true}],"users":[{"active":false},{"active":true}]}"#,
+            &[Step::Member("users")],
+            active_true_filter(),
+        )
+        .expect("last-wins filter");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert_eq!(
+            document.container_span_filter_count(*node).expect("handle"),
+            Some(1),
+            "the later duplicate key's filter hits replace the losing prefix"
+        );
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &active_true_filter(), &mut resources)
+                .expect("winning filter count"),
+            CountVerdict::Count(1)
+        );
+    }
+
+    fn name_collect_probe() -> CountDemand {
+        CountDemand {
+            row: CountRow::Collect,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("name"))],
+            filter: None,
+        }
+    }
+
+    /// Object `PATH | length` records last-wins unique member cardinality on the proving walk.
+    #[test]
+    fn exact_object_length_records_member_cardinality() {
+        let result = run_count_demand(br#"{"users":{"a":1,"b":2,"c":3}}"#, &[Step::Member("users")]).expect("object");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert!(
+            document
+                .value_view(*node)
+                .expect("view")
+                .is_container_span()
+                .expect("span")
+        );
+        assert_eq!(document.container_span_child_count(*node).expect("handle"), Some(3));
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &container_count(), &mut resources)
+                .expect("object count"),
+            CountVerdict::Count(3)
+        );
+    }
+
+    #[test]
+    fn exact_object_length_last_wins_unique_keys() {
+        let result = run_count_demand(br#"{"users":{"a":1,"a":2,"b":3}}"#, &[Step::Member("users")]).expect("dup");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert_eq!(
+            document.container_span_child_count(*node).expect("handle"),
+            Some(2),
+            "duplicate keys collapse under last-wins"
+        );
+    }
+
+    /// Collect probe `[.users[].name] | length` tallies on locate, not the span leaf.
+    #[test]
+    fn exact_collect_probe_records_tally_on_the_locate_walk() {
+        let result = run_count_demand_with(
+            br#"{"users":[{"name":1},{"name":2}]}"#,
+            &[Step::Member("users")],
+            name_collect_probe(),
+        )
+        .expect("probe");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        assert_eq!(document.container_span_probe_count(*node).expect("handle"), Some(2));
+        let mut resources = witness_ledger();
+        assert_eq!(
+            document
+                .count_children_from(*node, &name_collect_probe(), &mut resources)
+                .expect("cached probe"),
+            CountVerdict::Count(2)
+        );
+    }
+
+    /// `FanOut` `.id` records the probed values on locate, not the span leaf.
+    #[test]
+    fn exact_element_fan_out_records_values_on_the_locate_walk() {
+        let result = run_located_with(
+            br#"{"users":[{"id":1},{"id":2}]}"#,
+            &[Step::Member("users")],
+            |requirement| requirement.with_element(id_fan_out()),
+        )
+        .expect("fan-out");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let document = selected.product().document();
+        let values = document.container_span_values(*node).expect("handle").expect("cached");
+        assert_eq!(values.len(), 2);
+        assert_eq!(machine_i64(&values[0]), 1);
+        assert_eq!(machine_i64(&values[1]), 2);
+        let mut resources = witness_ledger();
+        let mut seen = alloc::vec::Vec::new();
+        assert!(matches!(
+            document
+                .visit_elements_from(*node, &id_fan_out(), &mut resources, |value, _| {
+                    seen.push(machine_i64(value));
+                    Ok(())
+                })
+                .expect("visit"),
+            jqf_data::ElementVerdict::Completed(2)
+        ));
+        assert_eq!(seen, [1, 2]);
+    }
+
+    #[test]
+    fn exact_element_fan_out_last_wins_and_missing_key_is_null() {
+        let result = run_located_with(
+            br#"{"users":[{"id":1}],"users":[{"n":9},{"id":2}]}"#,
+            &[Step::Member("users")],
+            |requirement| requirement.with_element(id_fan_out()),
+        )
+        .expect("last-wins");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let values = selected
+            .product()
+            .document()
+            .container_span_values(*node)
+            .expect("handle")
+            .expect("cached");
+        assert_eq!(values.len(), 2);
+        assert!(matches!(values[0].untagged(), Value::Null));
+        assert_eq!(machine_i64(&values[1]), 2);
+    }
+
+    #[test]
+    fn exact_element_fan_out_declines_a_non_object_item() {
+        let result = run_located_with(br#"{"users":[{"id":1},5]}"#, &[Step::Member("users")], |requirement| {
+            requirement.with_element(id_fan_out())
+        })
+        .expect("mixed");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        assert!(
+            selected
+                .product()
+                .document()
+                .container_span_values(*node)
+                .expect("handle")
+                .is_none(),
+            "a scalar item must leave FanOut uncached"
+        );
+    }
+
+    /// `map({id,score})` records constructed objects on locate.
+    #[test]
+    fn exact_element_construct_records_objects_on_the_locate_walk() {
+        let (demand, fields) = construct_fan_out();
+        let result = run_located_with(
+            br#"{"users":[{"id":1,"score":10},{"id":2,"n":0}]}"#,
+            &[Step::Member("users")],
+            |requirement| requirement.with_element(demand).with_element_construct(fields),
+        )
+        .expect("construct");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let values = selected
+            .product()
+            .document()
+            .container_span_values(*node)
+            .expect("handle")
+            .expect("cached");
+        assert_eq!(values.len(), 2);
+        let Value::Object(first) = values[0].untagged() else {
+            panic!("object")
+        };
+        assert_eq!(machine_i64(first.get("id").expect("id")), 1);
+        assert_eq!(machine_i64(first.get("score").expect("score")), 10);
+        let Value::Object(second) = values[1].untagged() else {
+            panic!("object")
+        };
+        assert_eq!(machine_i64(second.get("id").expect("id")), 2);
+        assert!(matches!(
+            second.get("score").expect("missing score").untagged(),
+            Value::Null
+        ));
+    }
+
+    /// Two-step `FanOut` `.meta.id` records on the locate walk and matches Whole.
+    #[test]
+    fn exact_element_fan_out_nested_object_keys_match_whole() {
+        let bytes = br#"{"users":[{"meta":{"id":1}},{"meta":{"id":2}},{"n":9}]}"#;
+        let demand = meta_id_fan_out();
+        let result = run_located_with(bytes, &[Step::Member("users")], |requirement| {
+            requirement.with_element(demand.clone())
+        })
+        .expect("nested fan-out");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let cached = selected
+            .product()
+            .document()
+            .container_span_values(*node)
+            .expect("handle")
+            .expect("cached");
+        let whole = whole_fan_out_values(bytes, demand);
+        assert_eq!(cached.len(), whole.len());
+        assert_eq!(machine_i64(&cached[0]), machine_i64(&whole[0]));
+        assert_eq!(machine_i64(&cached[1]), machine_i64(&whole[1]));
+        assert!(matches!(cached[2].untagged(), Value::Null));
+        assert!(matches!(whole[2].untagged(), Value::Null));
+    }
+
+    /// `map({id, nested: .a.b})` records constructed objects on locate and matches Whole.
+    #[test]
+    fn exact_element_construct_nested_object_keys_match_whole() {
+        let bytes = br#"{"users":[{"id":1,"a":{"b":10}},{"id":2}]}"#;
+        let (demand, fields) = nested_construct_fan_out();
+        let result = run_located_with(bytes, &[Step::Member("users")], |requirement| {
+            requirement
+                .with_element(demand.clone())
+                .with_element_construct(fields.clone())
+        })
+        .expect("nested construct");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let cached = selected
+            .product()
+            .document()
+            .container_span_values(*node)
+            .expect("handle")
+            .expect("cached");
+        let whole_elements = whole_fan_out_values(bytes, demand);
+        assert_eq!(cached.len(), 2);
+        assert_eq!(whole_elements.len(), 2);
+        let Value::Object(first) = cached[0].untagged() else {
+            panic!("object")
+        };
+        assert_eq!(machine_i64(first.get("id").expect("id")), 1);
+        assert_eq!(machine_i64(first.get("nested").expect("nested")), 10);
+        let Value::Object(second) = cached[1].untagged() else {
+            panic!("object")
+        };
+        assert_eq!(machine_i64(second.get("id").expect("id")), 2);
+        assert!(matches!(
+            second.get("nested").expect("missing nested").untagged(),
+            Value::Null
+        ));
+        let first_whole = jqf_data::owned_probe_value(
+            &whole_elements[0],
+            &ElementProbe::Path(alloc::vec![
+                CountStep::ObjectKey(alloc::string::String::from("a")),
+                CountStep::ObjectKey(alloc::string::String::from("b")),
+            ]),
+        )
+        .expect("whole nested");
+        assert_eq!(machine_i64(&first_whole), 10);
+        let second_whole = jqf_data::owned_probe_value(
+            &whole_elements[1],
+            &ElementProbe::Path(alloc::vec![
+                CountStep::ObjectKey(alloc::string::String::from("a")),
+                CountStep::ObjectKey(alloc::string::String::from("b")),
+            ]),
+        )
+        .expect("whole missing");
+        assert!(matches!(second_whole.untagged(), Value::Null));
+    }
+
+    #[test]
+    fn exact_element_fan_out_declines_index_in_probe() {
+        let result = run_located_with(
+            br#"{"users":[{"items":[1]},{"items":[2]}]}"#,
+            &[Step::Member("users")],
+            |requirement| requirement.with_element(index_in_probe_fan_out()),
+        )
+        .expect("index probe");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        assert!(
+            selected
+                .product()
+                .document()
+                .container_span_values(*node)
+                .expect("handle")
+                .is_none(),
+            "Index in a FanOut probe must leave the locate walk uncached"
+        );
+    }
+
+    /// Bare `min` records the winner on locate.
+    #[test]
+    fn exact_minmax_records_the_winner_on_the_locate_walk() {
+        let result = run_located_with(br#"{"xs":[3,1,2]}"#, &[Step::Member("xs")], |requirement| {
+            requirement.with_minmax(MinMaxHint {
+                op: MinMaxOp::Min,
+                probe: None,
+            })
+        })
+        .expect("min");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let winner = selected
+            .product()
+            .document()
+            .container_span_minmax(*node)
+            .expect("handle")
+            .expect("cached");
+        assert_eq!(machine_i64(winner), 1);
+    }
+
+    #[test]
+    fn exact_minmax_empty_array_is_null() {
+        let result = run_located_with(br#"{"xs":[]}"#, &[Step::Member("xs")], |requirement| {
+            requirement.with_minmax(MinMaxHint {
+                op: MinMaxOp::Max,
+                probe: None,
+            })
+        })
+        .expect("empty");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let winner = selected
+            .product()
+            .document()
+            .container_span_minmax(*node)
+            .expect("handle")
+            .expect("cached");
+        assert!(matches!(winner.untagged(), Value::Null));
+    }
+
+    #[test]
+    fn exact_minmax_last_wins_the_located_array() {
+        let result = run_located_with(br#"{"xs":[0],"xs":[5,2]}"#, &[Step::Member("xs")], |requirement| {
+            requirement.with_minmax(MinMaxHint {
+                op: MinMaxOp::Min,
+                probe: None,
+            })
+        })
+        .expect("last-wins");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        let winner = selected
+            .product()
+            .document()
+            .container_span_minmax(*node)
+            .expect("handle")
+            .expect("cached");
+        assert_eq!(machine_i64(winner), 2);
+    }
+
+    #[test]
+    fn exact_minmax_declines_a_non_number() {
+        let result = run_located_with(br#"{"xs":[1,"x"]}"#, &[Step::Member("xs")], |requirement| {
+            requirement.with_minmax(MinMaxHint {
+                op: MinMaxOp::Min,
+                probe: None,
+            })
+        })
+        .expect("mixed");
+        let selected = located(&result);
+        let ExactSelectionRecord::Node { node, .. } = selected.result() else {
+            panic!("node")
+        };
+        assert!(
+            selected
+                .product()
+                .document()
+                .container_span_minmax(*node)
+                .expect("handle")
+                .is_none(),
+            "a non-number must leave min/max uncached"
+        );
     }
 
     #[test]
@@ -1624,6 +2421,193 @@ mod tests {
         );
         let path = [Step::Member("v")];
         assert_adjacent_reuse_stays_stable_across_outlier_values(&bytes, Some(&path));
+    }
+
+    fn keep_member_tree(resources: &ResourceContext<'_>, names: &[&str]) -> jqf_codec_core::PruneTree {
+        let mut tree = jqf_codec_core::PruneTree::try_new(resources).expect("tree");
+        for name in names {
+            let keep = tree.try_push_node(true).expect("keep");
+            tree.try_push_key(jqf_codec_core::PruneTree::ROOT, name, keep)
+                .expect("key");
+        }
+        tree
+    }
+
+    fn adjacent_provider<'source>(
+        bytes: &'source [u8],
+        resources: &mut ResourceContext<'_>,
+    ) -> ErasedProvider<'source> {
+        registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &DialectId::try_new(crate::RFC8259_DIALECT_ID).expect("dialect"),
+                    options: None,
+                    allow_adjacent_values: true,
+                    value_separator: crate::VALUE_SEPARATORS,
+                },
+                resources,
+            )
+            .expect("provider")
+    }
+
+    struct LocatedObjectProduct {
+        debug: String,
+        has_a: bool,
+        has_b: bool,
+        diagnostics: DiagnosticCoverage,
+        consumed: u64,
+    }
+
+    fn located_object_product(result: &AccessResult<'_>, resources: &mut ResourceContext<'_>) -> LocatedObjectProduct {
+        let value = located(result)
+            .product()
+            .document()
+            .materialize_root(resources)
+            .expect("materialize");
+        let debug = alloc::format!("{value:?}");
+        let jqf_data::Value::Object(object) = &value else {
+            panic!("located product is an object: {debug}")
+        };
+        LocatedObjectProduct {
+            has_a: object.get("a").is_some(),
+            has_b: object.get("b").is_some(),
+            diagnostics: result.report().diagnostics(),
+            consumed: result.report().consumed_offset().expect("consumed"),
+            debug,
+        }
+    }
+
+    fn decode_exact_reusing<'source>(
+        provider: &mut ErasedProvider<'source>,
+        requirement: &AccessRequirement,
+        start: u64,
+        reuse: &mut ReusableAccessSession<'source>,
+        resources: &mut ResourceContext<'_>,
+    ) -> LocatedObjectProduct {
+        let handle = provider.bind(requirement).expect("bind");
+        let result = decode_ready(
+            provider
+                .open_at_reusing(&handle, start, reuse, resources)
+                .expect("Exact reuses"),
+            resources,
+        );
+        located_object_product(&result, resources)
+    }
+
+    /// Recycled Exact must honor the NEW requirement's prune, the same way a fresh `open_route` does. A stale previous
+    /// tree would keep a member the new hint omits. Adjacent Exact + `open_at_reusing` is the recycle path.
+    #[test]
+    fn a_recycled_exact_session_honors_the_new_requirement_prune() {
+        let bytes: &[u8] = br#"{"n":{"a":1,"b":2}}
+{"n":{"a":1,"b":2}}"#;
+        let path = [Step::Member("n")];
+        let mut resources = test_support::resources();
+        let mut provider = adjacent_provider(bytes, &mut resources);
+        let mut reuse = ReusableAccessSession::new();
+        let first_requirement = requirement(Some(&path), DiagnosticPolicy::ErrorsOnly, &resources)
+            .with_prune(keep_member_tree(&resources, &["a", "b"]));
+        let first = decode_exact_reusing(&mut provider, &first_requirement, 0, &mut reuse, &mut resources);
+        assert!(
+            first.has_a && first.has_b,
+            "prune A keeps a and b so a stale recycle would still show b: {}",
+            first.debug
+        );
+        let offset = first.consumed + 1;
+        let second_requirement = requirement(Some(&path), DiagnosticPolicy::ErrorsOnly, &resources)
+            .with_prune(keep_member_tree(&resources, &["a"]));
+        let recycled = decode_exact_reusing(&mut provider, &second_requirement, offset, &mut reuse, &mut resources);
+        assert!(
+            recycled.has_a && !recycled.has_b,
+            "recycle under prune B must omit b and keep a: {}",
+            recycled.debug
+        );
+
+        let start = usize::try_from(offset).expect("fixture offset fits usize");
+        let mut fresh_resources = test_support::resources();
+        let mut fresh_provider = adjacent_provider(&bytes[start..], &mut fresh_resources);
+        let fresh_requirement = requirement(Some(&path), DiagnosticPolicy::ErrorsOnly, &fresh_resources)
+            .with_prune(keep_member_tree(&fresh_resources, &["a"]));
+        let handle = fresh_provider.bind(&fresh_requirement).expect("bind fresh");
+        let fresh = located_object_product(
+            &decode_ready(
+                &mut fresh_provider
+                    .open(&handle, &mut fresh_resources)
+                    .expect("fresh Exact opens"),
+                &mut fresh_resources,
+            ),
+            &mut fresh_resources,
+        );
+        assert_eq!(recycled.diagnostics, fresh.diagnostics);
+        assert_eq!(
+            recycled.debug, fresh.debug,
+            "recycled Exact with prune B must match a non-recycle Exact with prune B"
+        );
+    }
+
+    fn run_exact_with_prune<'source>(
+        bytes: &'source [u8],
+        path: &[Step<'_>],
+        names: &[&str],
+    ) -> Result<AccessResult<'source>, jqf_codec_core::CodecError> {
+        let mut resources = test_support::resources();
+        let registration = registration().expect("registration");
+        let mut provider = registration.decoder().expect("decoder").create_provider(
+            source(bytes),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &DialectId::try_new(crate::RFC8259_DIALECT_ID).expect("dialect"),
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: crate::VALUE_SEPARATORS,
+            },
+            &mut resources,
+        )?;
+        let requirement = requirement(Some(path), DiagnosticPolicy::ErrorsOnly, &resources)
+            .with_prune(keep_member_tree(&resources, names));
+        let handle = provider.bind(&requirement).expect("bind");
+        let mut session = provider.open(&handle, &mut resources)?;
+        let mut run = CodecRunContext::new(&mut resources);
+        run.set_cooperative_credits(4_096);
+        session.decode(&mut run)
+    }
+
+    /// Exact prune omits unread siblings of the located object on rematerialize.
+    /// The validate walk still visits every byte (corrupt omitted member fails).
+    #[test]
+    fn exact_prune_omits_unread_members_of_the_located_object() {
+        let bytes = br#"{"catalog":{"id":1,"name":"x","blob":[1,2,3]}}"#;
+        let result = run_exact_with_prune(bytes, &[Step::Member("catalog")], &["id"]).expect("decode");
+        let selected = located(&result);
+        let document = selected.product().document();
+        assert_eq!(
+            document.node_count(),
+            2,
+            "located object + kept scalar; omitted siblings are not built"
+        );
+        let mut resources = test_support::resources();
+        let value = document.materialize_root(&mut resources).expect("materialize");
+        let jqf_data::Value::Object(object) = &value else {
+            panic!("located product is an object: {value:?}")
+        };
+        assert!(object.get("id").is_some(), "kept member");
+        assert!(object.get("name").is_none(), "unread name is omitted");
+        assert!(object.get("blob").is_none(), "unread blob is omitted");
+
+        run_exact_with_prune(
+            br#"{"catalog":{"id":1,"name":"x","blob":[}"#,
+            &[Step::Member("catalog")],
+            &["id"],
+        )
+        .expect_err("omitted members still validate");
+        run_exact_with_prune(br#"{"catalog":{"id":1}} false"#, &[Step::Member("catalog")], &["id"])
+            .expect_err("trailing junk must still fail Exact validation");
     }
 
     #[test]

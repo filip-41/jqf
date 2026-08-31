@@ -27,7 +27,10 @@ fn type_lowers_whole_document_with_the_hint() {
         program.program.split().is_whole_document(),
         "type must be whole-document split"
     );
-    assert!(program.type_demand(), "type must carry the type demand");
+    assert!(
+        matches!(program.shortcut(), Shortcut::Type(_)),
+        "type must carry the type demand"
+    );
     let requirement = program.try_requirement(&resources).expect("lowers");
     assert!(requirement.footprint().is_whole(), "type must lower whole");
     assert!(requirement.type_demand(), "requirement must carry the hint");
@@ -70,12 +73,17 @@ fn type_question_declines_and_path_type_exact_locates() {
     );
     for source in ["type?", "[.a] | type", "type, ."] {
         let program = try_compile_program(source, policy, CompileOptions::new(), &resources).expect("compiles");
-        assert!(!program.type_demand(), "{source} must not be a type row");
+        assert!(
+            !matches!(program.shortcut(), Shortcut::Type(_)),
+            "{source} must not be a type row"
+        );
     }
     let path_type = try_compile_program(".a | type", policy, CompileOptions::new(), &resources).expect("compiles");
-    assert!(path_type.type_demand(), "PATH | type is a type row");
+    let Shortcut::Type(path) = path_type.shortcut() else {
+        panic!("PATH | type is a type row");
+    };
     assert_eq!(
-        path_type.type_demand_path().expect("path"),
+        path.as_slice(),
         &[jqf_data::CountStep::ObjectKey(alloc::string::String::from("a"))][..]
     );
     let requirement = path_type.try_requirement(&resources).expect("lowers");
@@ -95,7 +103,7 @@ fn slice_then_type_does_not_lower_as_bare_root_type() {
     );
     let program = try_compile_program(".[1:3] | type", policy, CompileOptions::new(), &resources).expect("compiles");
     assert!(
-        !program.type_demand(),
+        !matches!(program.shortcut(), Shortcut::Type(_)),
         "a trailing slice is not a type row: empty-path plus range would type the root"
     );
     let requirement = program.try_requirement(&resources).expect("lowers");

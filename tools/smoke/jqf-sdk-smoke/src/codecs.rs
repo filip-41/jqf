@@ -10,7 +10,9 @@ use crate::harness::{
     OracleOutcome, OracleRoute, PartialSink, failure_class, probe_source, program_for, resources, run,
 };
 use jqf_codec_core::{
-    AccessFootprintKind, AccessResultKind, DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode,
+    AccessAdapter, AccessFootprint, AccessFootprintKind, AccessGuarantees, AccessOutcome, AccessRequirement,
+    AccessResultKind, CodecDemand, DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ExactSelectionRecord,
+    PreservationRequest, ValidationMode,
 };
 use jqf_data::{DialectId, FormatId, Value};
 use jqf_engine::{CodecRequirementPolicy, CompiledProgram};
@@ -22,8 +24,6 @@ const TWO_SLOT_INVENTORY: [(u32, AccessFootprintKind, AccessResultKind); 2] = [
     (0, AccessFootprintKind::Whole, AccessResultKind::CompleteDocument),
     (1, AccessFootprintKind::Exact, AccessResultKind::Located),
 ];
-const ONE_SLOT_INVENTORY: [(u32, AccessFootprintKind, AccessResultKind); 1] =
-    [(0, AccessFootprintKind::Whole, AccessResultKind::CompleteDocument)];
 
 #[allow(
     clippy::too_many_arguments,
@@ -111,7 +111,7 @@ pub(crate) fn assert_codec_route_inventories() -> Result<(), String> {
             "inventory.jqft",
             false,
             [].as_slice(),
-            ONE_SLOT_INVENTORY.as_slice(),
+            TWO_SLOT_INVENTORY.as_slice(),
         ),
         (
             "cbor-seq",
@@ -171,7 +171,7 @@ pub(crate) fn assert_codec_route_inventories() -> Result<(), String> {
             "inventory.jsonc",
             false,
             [].as_slice(),
-            ONE_SLOT_INVENTORY.as_slice(),
+            TWO_SLOT_INVENTORY.as_slice(),
         ),
         (
             "json5",
@@ -181,7 +181,7 @@ pub(crate) fn assert_codec_route_inventories() -> Result<(), String> {
             "inventory.json5",
             false,
             [].as_slice(),
-            ONE_SLOT_INVENTORY.as_slice(),
+            TWO_SLOT_INVENTORY.as_slice(),
         ),
         (
             "cbor",
@@ -201,7 +201,7 @@ pub(crate) fn assert_codec_route_inventories() -> Result<(), String> {
             "inventory.jqfjson",
             false,
             [].as_slice(),
-            ONE_SLOT_INVENTORY.as_slice(),
+            TWO_SLOT_INVENTORY.as_slice(),
         ),
     ] {
         assert_route_inventory(
@@ -214,6 +214,104 @@ pub(crate) fn assert_codec_route_inventories() -> Result<(), String> {
             separators,
             expected,
         )?;
+    }
+    assert_exact_member_binds_slot_1(
+        "YAML",
+        jqf_codec_yaml::registration(),
+        jqf_codec_yaml::YAML_CORE_DIALECT_ID,
+        b"a: 1\nb: 2\n",
+        "a",
+    )?;
+    assert_exact_member_binds_slot_1(
+        "TOML",
+        jqf_codec_toml::registration_1_0(),
+        jqf_codec_toml::TOML_1_0_DIALECT_ID,
+        b"a = 1\nb = 2\n",
+        "a",
+    )?;
+    Ok(())
+}
+
+/// Slot 1 Direct Exact: a member path binds Located, adapter none, not the whole-document fallback.
+fn assert_exact_member_binds_slot_1(
+    label: &str,
+    registration: Result<jqf_codec_core::CodecRegistration<'static>, jqf_codec_core::RegistrationError>,
+    dialect: &str,
+    bytes: &[u8],
+    member: &str,
+) -> Result<(), String> {
+    let mut resources = resources();
+    let registration = registration.map_err(|error| format!("{label} registration: {error:?}"))?;
+    let dialect_id = DialectId::try_new(dialect).map_err(|error| error.to_string())?;
+    let mut provider = registration
+        .decoder()
+        .expect("decoder")
+        .create_provider(
+            ResolvedSource::new(SourceRef::new(SourceId::new(99), SourceKind::Input), "exact", bytes, 0),
+            DecodeRequest {
+                validation: ValidationMode::Strict,
+                diagnostics: DiagnosticPolicy::ErrorsOnly,
+                dialect: &dialect_id,
+                options: None,
+                allow_adjacent_values: false,
+                value_separator: &[],
+            },
+            &mut resources,
+        )
+        .map_err(|error| format!("{label} provider: {:?}", error.kind()))?;
+    let mut demand = CodecDemand::try_new(&resources);
+    demand
+        .try_insert(&DemandClause::SemanticRoot)
+        .map_err(|error| format!("{label} demand: {error:?}"))?;
+    demand
+        .try_insert(&DemandClause::ValueShape)
+        .map_err(|error| format!("{label} demand: {error:?}"))?;
+    let mut path = ExactPath::try_new(&resources);
+    path.try_push_semantic_member(member, &resources)
+        .map_err(|error| format!("{label} path: {error:?}"))?;
+    let requirement = AccessRequirement::try_exact(
+        AccessFootprint::try_exact(path, &resources),
+        demand,
+        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+        &resources,
+    )
+    .map_err(|error| format!("{label} requirement: {error:?}"))?;
+    let handle = provider
+        .bind(&requirement)
+        .map_err(|error| format!("{label} exact bind: {error:?}"))?;
+    if handle.slot().get() != 1 {
+        return Err(format!(
+            "{label} Exact bind must use slot 1, got {}",
+            handle.slot().get()
+        ));
+    }
+    if handle.demand_fallback() {
+        return Err(format!(
+            "{label} Exact bind must not be the whole-document demand fallback"
+        ));
+    }
+    let mut session = provider
+        .open(&handle, &mut resources)
+        .map_err(|error| format!("{label} open: {:?}", error.kind()))?;
+    let mut run = jqf_codec_core::CodecRunContext::new(&mut resources);
+    run.set_cooperative_credits(4_096);
+    let result = session
+        .decode(&mut run)
+        .map_err(|error| format!("{label} decode: {:?}", error.kind()))?;
+    if result.report().adapter() != AccessAdapter::None {
+        return Err(format!(
+            "{label} Exact adapter must be None, got {:?}",
+            result.report().adapter()
+        ));
+    }
+    let AccessOutcome::Located(located) = result.outcome() else {
+        return Err(format!("{label} Exact must be Located, got {:?}", result.outcome()));
+    };
+    if !matches!(located.result(), ExactSelectionRecord::Node { .. }) {
+        return Err(format!(
+            "{label} Exact member must be a node, got {:?}",
+            located.result()
+        ));
     }
     Ok(())
 }
@@ -247,7 +345,7 @@ pub(crate) fn assert_flat_route_inventory() -> Result<(), String> {
             "inventory.flat",
             false,
             &[],
-            &ONE_SLOT_INVENTORY,
+            &TWO_SLOT_INVENTORY,
         )?;
     }
     Ok(())
@@ -625,7 +723,7 @@ pub(crate) fn assert_mismatch_policy(
         // The program's OWN requirement (its pushdown split must agree with
         // the decode): under lenient that is the pushed-down forward
         // requirement, under warn/strict the whole-document root — exactly
-        // the pair `CompiledProgram::try_requirement`/`try_run` keep in step.
+        // the pair `CompiledProgram::try_requirement`/`execute` keep in step.
         let requirement = program
             .try_requirement(&resources)
             .map_err(|error| format!("cannot lower program requirement: {:?}", error.kind()))?;

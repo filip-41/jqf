@@ -26,8 +26,7 @@ use std::path::{Path, PathBuf};
 
 use jqf_builtins::selector::SelectorBudget;
 use jqf_codec_core::{
-    AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext, DecodeRequest, DemandClause,
-    DiagnosticPolicy, DocumentProduct, ValidationMode,
+    AccessOutcome, CodecRunContext, DecodeRequest, DiagnosticPolicy, DocumentProduct, ValidationMode,
 };
 use jqf_data::DialectId;
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
@@ -71,19 +70,15 @@ fn decode(bytes: &[u8]) -> Result<DocumentProduct<'_>, String> {
             &mut resources,
         )
         .map_err(|error| format!("provider: {error:?}"))?;
-    let mut demand = CodecDemand::try_new(&resources);
-    demand
-        .try_insert(&DemandClause::SemanticRoot)
-        .map_err(|error| format!("demand root: {error:?}"))?;
-    demand
-        .try_insert(&DemandClause::ValueShape)
-        .map_err(|error| format!("demand shape: {error:?}"))?;
-    let requirement = AccessRequirement::try_whole(
-        demand,
-        AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
-        &resources,
-    )
-    .map_err(|error| format!("requirement: {error:?}"))?;
+    // Identity omits topology. `xpath/1` packs topology and attached facts;
+    // the suite walks both.
+    let policy = jqf_engine::CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
+    let program =
+        jqf_engine::try_compile_program("xpath(\"//*\")", policy, jqf_engine::CompileOptions::new(), &resources)
+            .map_err(|error| format!("compile xpath: {error:?}"))?;
+    let requirement = program
+        .try_requirement(&resources)
+        .map_err(|error| format!("requirement: {error:?}"))?;
     let handle = provider
         .bind(&requirement)
         .map_err(|error| format!("bind: {error:?}"))?;

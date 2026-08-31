@@ -58,8 +58,8 @@ pub enum DemandClause {
     /// Exact topology relation. First producer: markup `.@` selectors, so a codec records child/owner topology only
     /// when a selector needs it.
     Topology(TopologyDemand),
-    /// Exact source capability. First producer: the canonical-identity lane and lazy span materializers declaring their
-    /// retained-source re-reads explicitly instead of assuming them.
+    /// Exact source capability. No production path inserts this clause; routes must not advertise it until a producer
+    /// exists. Canonical-identity echo uses the per-requirement canonicality probe, not this clause.
     Source(SourceCapabilityDemand),
     /// Exact expanded-name markup attribute. First producer: `.&name` lower- ing, letting XML/HTML skip building
     /// attribute maps nobody selects.

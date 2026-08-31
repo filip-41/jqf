@@ -15,12 +15,16 @@ use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use jqf_codec_core::{CodecError, CodecFailureKind};
+use jqf_codec_core::{
+    CodecError, CodecFailureKind, CodecRunContext, DocumentProduct, PRUNE_ALL, PruneLookup, PruneRef, PruneTree,
+};
 use jqf_data::{
-    AccountedDocumentBuilder, AccountedSemanticNode, BuilderCoverage, DataError, DocumentSchemaRecipe, FactPayload,
+    AccountedDocumentBuilder, AccountedSemanticNode, BuilderCoverage, ContainerSpanKind, DataError,
+    DocumentSchemaRecipe, DocumentSourceBindingPoll, DocumentSourceBindingStage, FactPayload, LazySpanMaterializer,
     LocalOwnerRef, NodeId,
 };
 use jqf_resource::ResourceContext;
+use jqf_source::ResolvedSource;
 
 use crate::locate::LocatedHit;
 use crate::value::{ContentEvent, Tree};
@@ -146,6 +150,8 @@ pub(crate) fn build_document_with_content(
         attach_content,
         attach_attrs,
         &mut flat,
+        None,
+        PRUNE_ALL,
     )?;
     if tree.had_doctype {
         // The deterministic encoder's preflight rejects doctype-bearing
@@ -177,7 +183,7 @@ pub(crate) fn fresh_builder(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "one element walk: builder, tree, coverage flags, and the flat-text buffer are the whole shape"
+    reason = "one element walk: builder, tree, coverage flags, prune, and the flat-text buffer are the whole shape"
 )]
 fn build_node(
     builder: &mut AccountedDocumentBuilder<'static>,
@@ -188,6 +194,8 @@ fn build_node(
     attach_content: bool,
     attach_attrs: bool,
     flat: &mut String,
+    prune: Option<&PruneLookup>,
+    prune_id: u32,
 ) -> Result<(NodeId, (usize, usize)), CodecError> {
     let _depth = resources.enter_nesting_owned().map_err(CodecError::from)?;
     let element = &tree.elements[index];
@@ -307,6 +315,11 @@ fn build_node(
                 add_leaf(builder, PI_KIND, AccountedSemanticNode::String(&spelling), resources)?
             }
             ContentEvent::Element(child_index) => {
+                let child_element = &tree.elements[*child_index];
+                let local = tree.intern.get(child_element.name.local).as_bytes();
+                let Some(child_prune) = PruneRef::root(prune).at(prune_id).member(local) else {
+                    continue;
+                };
                 let (child_id, _) = build_node(
                     builder,
                     tree,
@@ -316,6 +329,8 @@ fn build_node(
                     attach_content,
                     attach_attrs,
                     flat,
+                    prune,
+                    child_prune,
                 )?;
                 child_id
             }
@@ -401,20 +416,81 @@ pub(crate) fn build_from_hit(
     bytes: &[u8],
     hit: &LocatedHit,
     resources: &mut ResourceContext<'_>,
+    prune: Option<&PruneLookup>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     match hit {
-        LocatedHit::Element { start, end } => {
+        LocatedHit::Element { start, end, .. } => {
             let tree = parse_span_tree(&bytes[*start..*end], resources)?;
-            build_subtree_document(&tree, tree.root, resources)
+            build_subtree_document(&tree, tree.root, resources, prune)
         }
         LocatedHit::Leaf { kind, value } => {
             let mut builder = fresh_route_builder(resources)?;
             let root = add_leaf(&mut builder, kind, AccountedSemanticNode::String(value), resources)?;
             Ok((builder, root))
         }
-        LocatedHit::Range { .. } => Err(decline_located_range()),
+        LocatedHit::Range => Err(decline_located_range()),
         LocatedHit::Missing { .. } | LocatedHit::TypeMismatch { .. } => Err(locate_contract()),
     }
+}
+
+/// Publishes a located element as a lazy array span. The locate parse already
+/// proved `[start, end)` one complete element and counted its direct children.
+#[allow(
+    unsafe_code,
+    reason = "span admission and source attach are unsafe by jqf-data; the locate parse proved this range"
+)]
+pub(crate) fn publish_located_skeleton<'source>(
+    source: ResolvedSource<'source>,
+    start: usize,
+    end: usize,
+    child_count: u64,
+    context: &mut CodecRunContext<'_, '_>,
+) -> Result<DocumentProduct<'source>, CodecError> {
+    let bytes = source
+        .bytes()
+        .get(start..end)
+        .ok_or_else(|| jqf_codec_core::data_contract("XML located span is out of range"))?;
+    let base = source
+        .base_offset()
+        .saturating_add(u64::try_from(start).unwrap_or(u64::MAX));
+    let sub = ResolvedSource::new(source.source(), source.label(), bytes, base);
+    let recipe = xml_schema_recipe().map_err(map_data)?;
+    let (mut builder, schema) =
+        AccountedDocumentBuilder::try_new_prepared_with_coverage(&recipe, BuilderCoverage::minimal_semantic())
+            .map_err(map_data)?;
+    builder.bind_span_materializer(&crate::lazy::XML_SPAN_MATERIALIZER as &dyn LazySpanMaterializer);
+    let mut stage = DocumentSourceBindingStage::new(sub).map_err(map_data)?;
+    let binding = loop {
+        // SAFETY: codec-core holds this session's source unchanged; `sub` is
+        // the element extent the locate parse recorded on that authority.
+        match unsafe { stage.poll(sub, context.resources()) }.map_err(map_data)? {
+            DocumentSourceBindingPoll::Pending => context.replenish_work()?,
+            DocumentSourceBindingPoll::Ready(binding) => break binding,
+        }
+    };
+    builder.bind_source(binding).map_err(map_data)?;
+    let span = jqf_source::Span::from_usize(0, bytes.len());
+    let kind = schema
+        .node_kind(0)
+        .ok_or_else(|| jqf_codec_core::data_contract("XML skeleton schema has no element kind"))?;
+    // SAFETY: the locate parse proved `[start, end)` one complete element.
+    let root = unsafe {
+        builder.add_prepared_bound_container_span_node(
+            &schema,
+            kind,
+            span,
+            ContainerSpanKind::Array,
+            context.resources(),
+        )
+    }
+    .map_err(map_data)?;
+    builder
+        .set_container_span_counts(root, Some(child_count), None)
+        .map_err(map_data)?;
+    let document = builder.finish(root, context.resources()).map_err(map_data)?;
+    let document =
+        unsafe { document.with_borrowed_source_from_bound_authority(sub, context.resources()) }.map_err(map_data)?;
+    DocumentProduct::try_new(document, context.resources())
 }
 
 fn parse_span_tree(bytes: &[u8], resources: &mut ResourceContext<'_>) -> Result<Tree, CodecError> {
@@ -447,10 +523,24 @@ pub(crate) fn build_subtree_document(
     tree: &Tree,
     element: usize,
     resources: &mut ResourceContext<'_>,
+    prune: Option<&PruneLookup>,
 ) -> Result<(AccountedDocumentBuilder<'static>, NodeId), CodecError> {
     let mut builder = fresh_route_builder(resources)?;
     let mut flat = String::new();
-    let root = build_node(&mut builder, tree, element, resources, false, true, true, &mut flat)?.0;
+    let prune_id = prune.map_or(PRUNE_ALL, |_| PruneTree::ROOT);
+    let root = build_node(
+        &mut builder,
+        tree,
+        element,
+        resources,
+        false,
+        true,
+        true,
+        &mut flat,
+        prune,
+        prune_id,
+    )?
+    .0;
     Ok((builder, root))
 }
 
@@ -816,5 +906,202 @@ mod coverage_tests {
                 .any(|(name, value)| name == "href" && value == "https://ex"),
             ".&href must keep attrs"
         );
+    }
+}
+
+#[cfg(test)]
+mod exact_prune_tests {
+    use super::{CONTENT_FACT, NAME_FACT};
+    use jqf_codec_core::{
+        AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecRunContext,
+        DecodeRequest, DemandClause, DiagnosticPolicy, ExactPath, ExactSelectionRecord, PruneTree, ValidationMode,
+    };
+    use jqf_data::{DialectId, Document, NodeId, Value};
+    use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
+    use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
+
+    static CONTROL: ContinueControl = ContinueControl;
+
+    const FAT: &[u8] = b"<doc><section><span>keep</span><p>unread nested junk</p></section></doc>";
+
+    fn resources() -> ResourceContext<'static> {
+        ResourceContext::new(
+            RequestAccount::try_new(ResourceLimits::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u32::MAX))
+                .expect("account"),
+            &CONTROL,
+            WorkMeter::try_new_v1(4_096).expect("work"),
+        )
+        .expect("resources")
+    }
+
+    fn source(bytes: &[u8]) -> ResolvedSource<'_> {
+        ResolvedSource::new(
+            SourceRef::new(SourceId::new(1), SourceKind::Input),
+            "test.xml",
+            bytes,
+            0,
+        )
+    }
+
+    fn demand(resources: &ResourceContext<'_>) -> CodecDemand {
+        let mut demand = CodecDemand::try_new(resources);
+        demand.try_insert(&DemandClause::SemanticRoot).expect("semantic root");
+        demand.try_insert(&DemandClause::ValueShape).expect("value shape");
+        demand
+    }
+
+    fn exact_section_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
+        let mut path = ExactPath::try_new(resources);
+        path.try_push_semantic_member("section", resources).expect("section");
+        let footprint = AccessFootprint::try_exact(path, resources);
+        AccessRequirement::try_exact(
+            footprint,
+            demand,
+            AccessGuarantees::strict(DiagnosticPolicy::ErrorsOnly),
+            resources,
+        )
+        .expect("requirement")
+    }
+
+    fn keep_member_tree(name: &str, resources: &ResourceContext<'_>) -> PruneTree {
+        let mut tree = PruneTree::try_new(resources).expect("tree");
+        let keep = tree.try_push_node(true).expect("keep");
+        tree.try_push_key(PruneTree::ROOT, name, keep).expect("key");
+        tree
+    }
+
+    fn try_decode_exact<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<jqf_codec_core::DocumentProduct<'bytes>, jqf_codec_core::CodecError> {
+        let dialect = DialectId::try_new(crate::XML_DOCUMENT_DIALECT_ID).expect("dialect");
+        let mut provider = crate::registration()
+            .expect("registration")
+            .decoder()
+            .expect("decoder")
+            .create_provider(
+                source(bytes),
+                DecodeRequest {
+                    validation: ValidationMode::Strict,
+                    diagnostics: DiagnosticPolicy::ErrorsOnly,
+                    dialect: &dialect,
+                    options: None,
+                    allow_adjacent_values: false,
+                    value_separator: &[],
+                },
+                resources,
+            )?;
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources)?;
+        let mut run = CodecRunContext::new(resources);
+        run.set_cooperative_credits(4_096);
+        let result = session.decode(&mut run)?;
+        let AccessOutcome::Located(located) = result.outcome() else {
+            panic!("expected Located, got {:?}", result.outcome());
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            panic!(
+                "Exact must republish the located element as root, got {:?}",
+                located.result()
+            );
+        };
+        assert_eq!(
+            *node,
+            located.product().document().root_handle(),
+            "native Exact republishes the selection as root"
+        );
+        located.product().try_clone().map_err(|_| {
+            jqf_codec_core::CodecError::new(jqf_codec_core::CodecFailureKind::InternalContractViolation {
+                contract: "test product clone",
+            })
+        })
+    }
+
+    fn decode_exact<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> jqf_codec_core::DocumentProduct<'bytes> {
+        try_decode_exact(bytes, requirement, resources).expect("decode")
+    }
+
+    fn named_elements(document: &Document<'_>) -> alloc::vec::Vec<alloc::string::String> {
+        let mut names = alloc::vec::Vec::new();
+        for index in 0..document.node_count() {
+            let Some(node) = NodeId::try_from_index(index) else {
+                break;
+            };
+            for fact_id in document.owner_fact_ids(node) {
+                let fact = document.fact(*fact_id).expect("fact");
+                if fact.role().as_str() != NAME_FACT {
+                    continue;
+                }
+                if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                    names.push(alloc::string::String::from(text));
+                }
+            }
+        }
+        names
+    }
+
+    fn content_of(document: &Document<'_>, node: NodeId) -> alloc::string::String {
+        for fact_id in document.owner_fact_ids(node) {
+            let fact = document.fact(*fact_id).expect("fact");
+            if fact.role().as_str() != CONTENT_FACT {
+                continue;
+            }
+            if let jqf_data::FactPayloadView::Text(text) = fact.payload() {
+                return alloc::string::String::from(text);
+            }
+        }
+        panic!("missing content fact");
+    }
+
+    /// Exact prune omits unread named child elements of the located subtree. Parse still ran over the omitted sibling.
+    #[test]
+    fn exact_prune_omits_unread_members_of_the_located_element() {
+        let mut resources = resources();
+        let pruned_requirement =
+            exact_section_requirement(demand(&resources), &resources).with_prune(keep_member_tree("span", &resources));
+        let pruned = decode_exact(FAT, &pruned_requirement, &mut resources);
+        let pruned_names = named_elements(pruned.document());
+        assert_eq!(
+            pruned_names,
+            ["section", "span"],
+            "located section republished as root keeps only the span child element"
+        );
+        let Value::Array(items) = pruned.document().materialize_root(&mut resources).expect("materialize") else {
+            panic!("located section is an array");
+        };
+        assert_eq!(items.len(), 1, "omitted p is not an array item: {items:?}");
+        assert!(
+            !content_of(pruned.document(), pruned.document().root()).contains("unread"),
+            "omitted p text must not fold into .@content"
+        );
+
+        let full = decode_exact(
+            FAT,
+            &exact_section_requirement(demand(&resources), &resources),
+            &mut resources,
+        );
+        let full_names = named_elements(full.document());
+        assert!(
+            full_names.iter().any(|name| name == "span") && full_names.iter().any(|name| name == "p"),
+            "unpruned Exact of the same bytes still has both span and p: {full_names:?}"
+        );
+        assert!(
+            pruned.document().node_count() < full.document().node_count(),
+            "pruned node count {} must be smaller than unpruned {}",
+            pruned.document().node_count(),
+            full.document().node_count()
+        );
+
+        try_decode_exact(
+            b"<doc><section><span>keep</span><p></section></doc>",
+            &pruned_requirement,
+            &mut resources,
+        )
+        .expect_err("corrupt omitted sibling still fails XML validation");
     }
 }

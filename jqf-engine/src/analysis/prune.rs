@@ -20,10 +20,10 @@
 //!
 //! - No structure-only ("shell") tier: `length`/`keys`/`type` on a document
 //!   value keep its subtree whole instead of a skeleton.
-//! - A static `.[i]` index, a dynamic `.[$k]` member, and `..` keep their
-//!   container whole. Arrays NEVER omit elements (omission would shift
-//!   indices and counts); pruning inside an array happens per element
-//!   through the shared element node.
+//! - A static `.[i]` index shares the every-child element node: arrays NEVER
+//!   omit elements (omission would shift indices and counts), so prune is
+//!   inside each element. A dynamic `.[$k]` member and `..` still keep their
+//!   container whole.
 //! - Scalars at kept positions are always delivered verbatim, so type errors
 //!   and truthiness reads on them are identical to the floor's.
 //! - `input`/`inputs` (and every `~cursor` engine binding) decline the ROOT
@@ -392,7 +392,11 @@ impl<'program> Walker<'program> {
                                 path.push(Seg::Key(name.clone()));
                             }
                         }
-                        StepAccess::Each => {
+                        // `.[]` and a static index share the every-child node:
+                        // arrays never omit elements, so prune is inside each
+                        // child. A later field step can name members of that
+                        // child without keeping the whole container.
+                        StepAccess::Each | StepAccess::Index(_) => {
                             for path in &mut paths {
                                 path.push(Seg::Element);
                             }
@@ -428,13 +432,9 @@ impl<'program> Walker<'program> {
                             self.consume(&paths);
                             paths = Vec::new();
                         }
-                        // Static indices shift under omission, and descent and
-                        // the non-JSON accessors read below any nameable
-                        // boundary: keep the container whole (v1 widening).
-                        StepAccess::Index(_)
-                        | StepAccess::Descend
-                        | StepAccess::NodeAccessor(_)
-                        | StepAccess::Attribute(_) => {
+                        // Descent and the non-JSON accessors read below any
+                        // nameable boundary: keep the container whole.
+                        StepAccess::Descend | StepAccess::NodeAccessor(_) | StepAccess::Attribute(_) => {
                             self.consume(&paths);
                             paths = Vec::new();
                         }
@@ -759,7 +759,8 @@ mod tests {
         let policy = CodecRequirementPolicy::new(ValidationMode::Strict, DiagnosticPolicy::ErrorsOnly);
         let program =
             try_compile_program(source, policy, CompileOptions::new(), &resources).expect("probe program compiles");
-        program.prune_tree().map(render)
+        let (tree, _) = super::prune_trees(program.program.nodes(), program.program.root(), program.program.slots());
+        tree.as_ref().map(render)
     }
 
     #[test]
@@ -854,13 +855,22 @@ mod tests {
     }
 
     #[test]
-    fn static_index_widens_its_container() {
-        // v1: omitting array elements would shift indices, so `products` stays
-        // whole; the iterated-but-unread `orders` elements keep only their
-        // SPINE (count preserved, members pruned).
+    fn static_index_prunes_inside_each_element() {
+        // Arrays never omit elements, so a static index shares the element
+        // node instead of keeping `products` whole. Unread members of each
+        // product still prune; index 3 still hits the same element.
         assert_eq!(
             tree_of(". as $d | [.orders[] | $d.products[3].id] | add").as_deref(),
-            Some("{orders:{[]:{}},products:*}")
+            Some("{orders:{[]:{}},products:{[]:{id:*}}}")
+        );
+    }
+
+    #[test]
+    fn root_and_indexed_construct_name_the_kept_fields() {
+        assert_eq!(tree_of("{id,score}").as_deref(), Some("{id:*,score:*}"));
+        assert_eq!(
+            tree_of(".users[0] | {id,score}").as_deref(),
+            Some("{users:{[]:{id:*,score:*}}}")
         );
     }
 

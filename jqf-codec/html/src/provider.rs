@@ -98,10 +98,7 @@ impl InputProvider for HtmlProvider {
     ) -> Result<ErasedAccessSession<'source>, CodecError> {
         let source = input.source();
         if slot == RouteSlot::new(0) {
-            let exact = !requirement.footprint().is_whole() && !requirement.schedule().is_empty_complete();
-            if exact || requirement.result() != AccessResultKind::CompleteDocument {
-                return Err(mismatch());
-            }
+            requirement.expect_whole(AccessResultKind::CompleteDocument)?;
             // Empty-path count or Whole bare-root `type` licenses the
             // measure-skeleton decode: after WHATWG recover the session serves
             // the document element as an array of cheap child nodes — the same
@@ -113,13 +110,22 @@ impl InputProvider for HtmlProvider {
                 Ok(session)
             });
         }
-        let path = requirement.footprint().exact_path().ok_or_else(mismatch)?;
-        let origin = requirement.schedule().singleton_origin().ok_or_else(mismatch)?;
         if slot == RouteSlot::new(1) {
-            if requirement.result() != AccessResultKind::Located {
-                return Err(mismatch());
-            }
-            let session = crate::scoped::NativeScopedSession::try_new(source, path.steps(), origin, self.fragment)?;
+            let (path, origin) = requirement.expect_exact(AccessResultKind::Located)?;
+            // Re-anchored Exact prune: omit unread child elements of the located subtree. Recover still runs on every
+            // byte first; only the subtree materialize drops unobservable named children.
+            let prune = requirement
+                .prune()
+                .and_then(jqf_codec_core::PruneLookup::from_transport);
+            let coverage = required_builder_coverage(requirement);
+            let session = crate::scoped::NativeScopedSession::try_new(
+                source,
+                path.steps(),
+                origin,
+                self.fragment,
+                prune,
+                coverage,
+            )?;
             return ErasedAccessSession::try_new_source_with_route(source, crate::SCOPED_PHYSICAL_ROUTE_ID, || {
                 Ok(session)
             });

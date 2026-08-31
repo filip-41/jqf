@@ -675,18 +675,11 @@ impl JsonParseState {
             return Ok(false);
         }
         let decoded = match bytes[cursor] {
-            b'"' => '"',
-            b'\\' => '\\',
             b'/' => {
                 // The escape disqualifier, exactly as the slow arm: the reference renders `\/` as `/`.
                 self.source_canonical = false;
                 '/'
             }
-            b'b' => '\u{0008}',
-            b'f' => '\u{000c}',
-            b'n' => '\n',
-            b'r' => '\r',
-            b't' => '\t',
             b'u' => {
                 // The escape disqualifier fires on the SPELLING, before the digits are judged — the slow arm's order,
                 // and idempotent with the replay's own clear on fallback.
@@ -738,7 +731,10 @@ impl JsonParseState {
                 state.cursor = end;
                 return Ok(true);
             }
-            _ => return Ok(false),
+            other => match crate::json_simple_unescape(other) {
+                Some(ch) => ch,
+                None => return Ok(false),
+            },
         };
         push_char(staged, decoded);
         state.cursor = cursor + 1;
@@ -1152,7 +1148,6 @@ impl JsonParseState {
                             text: None,
                             escape: EscapeState::Plain,
                             had_escape: false,
-                            utf8_carry: crate::byte_scan::Utf8Carry::EMPTY,
                         });
                         break 'batch Ok(true);
                     } else if self.grammar.json5 && matches!(byte, Some(b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z')) {
@@ -1204,7 +1199,6 @@ impl JsonParseState {
                             text: None,
                             escape: EscapeState::Plain,
                             had_escape: false,
-                            utf8_carry: crate::byte_scan::Utf8Carry::EMPTY,
                         });
                         break 'batch Ok(true);
                     }
@@ -1524,7 +1518,6 @@ impl JsonParseState {
                                     text: None,
                                     escape: EscapeState::Plain,
                                     had_escape: false,
-                                    utf8_carry: crate::byte_scan::Utf8Carry::EMPTY,
                                 });
                                 break 'batch Ok(true);
                             }
@@ -1539,7 +1532,6 @@ impl JsonParseState {
                                 text: None,
                                 escape: EscapeState::Plain,
                                 had_escape: false,
-                                utf8_carry: crate::byte_scan::Utf8Carry::EMPTY,
                             });
                             break 'batch Ok(true);
                         }
@@ -2339,8 +2331,8 @@ impl JsonParseState {
                             // is an invalid sequence.
                             if !self.utf8_proved {
                                 // A structural stop (`"` / `\` / C0) is its own window: a leftover carry from an
-                                // earlier escape-separated run must not poison this one. Work-grant cuts persist
-                                // `state.utf8_carry`; this arm is the structural stop.
+                                // earlier escape-separated run must not poison this one. This arm is the structural
+                                // stop; work-grant cuts start a fresh carry.
                                 let mut carry = crate::byte_scan::Utf8Carry::EMPTY;
                                 if let Some(position) = crate::byte_scan::utf8_first_invalid(
                                     &source.bytes()[state.cursor..content_end],
@@ -2379,19 +2371,12 @@ impl JsonParseState {
                     // through the `\\` arm, which detached it.
                     let decoded_text = staged.as_mut().ok_or_else(data_contract)?;
                     match byte {
-                        b'"' => push_char(decoded_text, '"'),
-                        b'\\' => push_char(decoded_text, '\\'),
                         b'/' => {
                             // The escape disqualifier: the reference renders `\/` as `/`, so the escaped spelling is
                             // never its render.
                             self.source_canonical = false;
                             push_char(decoded_text, '/');
                         }
-                        b'b' => push_char(decoded_text, '\u{0008}'),
-                        b'f' => push_char(decoded_text, '\u{000c}'),
-                        b'n' => push_char(decoded_text, '\n'),
-                        b'r' => push_char(decoded_text, '\r'),
-                        b't' => push_char(decoded_text, '\t'),
                         b'\'' if self.grammar.json5 => {
                             // JSON5 allows the `\'` escape in BOTH quote kinds.
                             push_char(decoded_text, '\'');
@@ -2461,14 +2446,17 @@ impl JsonParseState {
                             }
                             continue;
                         }
-                        _ => {
-                            return Err(invalid(
-                                source,
-                                state.cursor - 1,
-                                diag::INVALID_ESCAPE,
-                                diag::MSG_INVALID_ESCAPE,
-                            ));
-                        }
+                        other => match crate::json_simple_unescape(other) {
+                            Some(ch) => push_char(decoded_text, ch),
+                            None => {
+                                return Err(invalid(
+                                    source,
+                                    state.cursor - 1,
+                                    diag::INVALID_ESCAPE,
+                                    diag::MSG_INVALID_ESCAPE,
+                                ));
+                            }
+                        },
                     }
                     state.escape = EscapeState::Plain;
                 }

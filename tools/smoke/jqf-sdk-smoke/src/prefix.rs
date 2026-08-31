@@ -6,21 +6,18 @@
 //! drive's failure accounting. Projection/explain live in [`crate::projection`].
 
 use crate::harness::{
-    CONTROL, FaultMode, FaultSink, ManyProducer, PartialSink, ToggleControl, execute_root, json_dialect, program_for,
-    resources, resources_with, run,
+    CONTROL, FaultMode, FaultSink, PartialSink, ToggleControl, execute_root, json_dialect, program_for, resources,
+    resources_with, run,
 };
 use jqf_codec_core::{
-    AccessAdapter, AccessResultKind, DecodeRequest, DiagnosticPolicy, PreservationOutcome, PreservationRequest,
-    ValidationMode,
+    AccessAdapter, AccessResultKind, DecodeRequest, DiagnosticPolicy, ExactPath, PortableStep, PreservationOutcome,
+    PreservationRequest, ValidationMode,
 };
-use jqf_data::{DiagnosticCoverage, DialectId, FormatId, Value};
+use jqf_data::{DiagnosticCoverage, DialectId, FormatId};
 use jqf_engine::{
     CodecRequirementPolicy, StaticForwardStep, try_lower_forward_requirement, try_lower_root_requirement,
 };
-use jqf_sdk::{
-    CodecCatalog, FacadeFraming, OrderedEncodingPolicy, PipelineDisposition, PipelinePolicy, PublicationStatus,
-    encode_ordered,
-};
+use jqf_sdk::{CodecCatalog, FacadeFraming, PipelineDisposition, PipelinePolicy, PublicationStatus};
 use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
 /// One maximal-prefix row: `source` must push down to `bare` and publish `expected`.
@@ -589,9 +586,11 @@ pub(crate) fn assert_comma_pipe_equivalence(
     Ok(())
 }
 
-/// `.a[].b` is an element row: it lowers the whole-document requirement with
-/// an element hint so the span skeleton survives. Bare `.a` stays the scoped
-/// forward route. Byte output differs (fan-out vs the located array).
+/// `.a[].b` is an element row with a nonempty PATH: finish Exact-locates the
+/// container `.a`, carries the element hint, and packs a lazy frontier so the
+/// span skeleton survives. Empty `.[]` stays Whole. Bare `.a` is the same
+/// Exact footprint without the hint. Byte output differs (fan-out vs the
+/// located array).
 pub(crate) fn assert_prefix_pushdown_route_contrast(
     catalog: CodecCatalog<'_, '_>,
     format: &FormatId,
@@ -611,13 +610,15 @@ pub(crate) fn assert_prefix_pushdown_route_contrast(
         .try_requirement(&bare_resources)
         .map_err(|error| format!("bare requirement: {:?}", error.kind()))?;
 
-    // The fan-out row is an element row, so its requirement is the lazy
-    // whole-document one with the element demand hint (the codec's span
-    // skeleton must survive for the document-core consumer to iterate it).
-    // The bare prefix keeps the scoped located route.
-    if !fan_requirement.footprint().is_whole()
-        || fan_requirement.result() != AccessResultKind::CompleteDocument
+    // Packed Element Exact: Exact footprint of `.a`, Located, element hint,
+    // lazy frontier 1 (FanOut). Bare `.a` is Exact of `.a` with no hint.
+    let fan_steps: &[PortableStep] = fan_requirement.footprint().exact_path().map_or(&[], ExactPath::steps);
+    if fan_requirement.footprint().is_whole()
+        || fan_requirement.result() != AccessResultKind::Located
         || fan_requirement.element().is_none()
+        || fan_requirement.lazy_frontier() != 1
+        || fan_steps.len() != 1
+        || !matches!(&fan_steps[0], PortableStep::SemanticMember(m) if m == "a")
         || bare_requirement.footprint().is_whole()
         || bare_requirement.result() != AccessResultKind::Located
         || bare_requirement.element().is_some()
@@ -659,14 +660,11 @@ pub(crate) fn assert_prefix_pushdown_route_contrast(
         &mut bare_sink,
     )?;
 
-    // the fan-out row takes the LAZY WHOLE-DOCUMENT route with
-    // the element demand hint (the codec's span skeleton survives for the
-    // document-core consumer), where the bare prefix keeps the scoped located
-    // route. The consumer fans `.a` out and projects `.b` (`1`, then `2`),
-    // byte-identical to the old scoped route's publication.
+    // Exact of `.a` fires the scoped route for both. The consumer fans the
+    // located container out and projects `.b` (`1`, then `2`).
     let fan_route = fan_report.access_route();
     let bare_route = bare_report.access_route();
-    if fan_route.route() != jqf_codec_json::FULL_PHYSICAL_ROUTE_ID
+    if fan_route.route() != jqf_codec_json::SCOPED_PHYSICAL_ROUTE_ID
         || bare_route.route() != jqf_codec_json::SCOPED_PHYSICAL_ROUTE_ID
         || fan_report.disposition() != PipelineDisposition::Emitted
         || fan_sink.bytes != b"1\n2\n"
@@ -838,73 +836,6 @@ pub(crate) fn assert_authoritative_empty_diagnostics(
     Ok(())
 }
 
-pub(crate) fn assert_ordered_many(
-    catalog: CodecCatalog<'_, '_>,
-    format: &FormatId,
-    dialect: &DialectId,
-) -> Result<(), String> {
-    let mut resources = resources();
-    let mut producer = ManyProducer {
-        items: vec![
-            Value::try_string("one").map_err(|error| format!("text: {error:?}"))?,
-            Value::Bool(true),
-            Value::Null,
-        ]
-        .into_iter(),
-        pending: true,
-    };
-    let mut sink = PartialSink {
-        bytes: Vec::new(),
-        boundaries: Vec::new(),
-        reports: Vec::new(),
-    };
-    let report = encode_ordered(
-        catalog,
-        &mut producer,
-        format,
-        dialect,
-        OrderedEncodingPolicy {
-            diagnostics: DiagnosticPolicy::ErrorsOnly,
-            preservation: PreservationRequest::Report,
-            options: None,
-            cooperative_credits: 7,
-            split: None,
-            flush_each_item: false,
-        },
-        FacadeFraming::item_suffix(b"\n"),
-        &mut resources,
-        &mut sink,
-    )
-    .map_err(|error| format!("ordered producer: {error:?}"))?;
-    if sink.bytes != b"\"one\"\ntrue\nnull\n"
-        || sink.boundaries != [(true, 0), (false, 0), (true, 1), (false, 1), (true, 2), (false, 2)]
-        || sink.reports.len() != 3
-        || sink.reports[0].codec_bytes() != 5
-        || sink.reports[1].codec_bytes() != 4
-        || sink.reports[2].codec_bytes() != 4
-        || sink.reports.iter().any(|item| item.framing_bytes() != 1)
-        || sink.reports.iter().any(|item| {
-            item.physical_encoder() != jqf_codec_json::ENCODE_PHYSICAL_ROUTE_ID
-                || !matches!(
-                    item.preservation(),
-                    Some(preservation)
-                        if preservation.semantic_values() == PreservationOutcome::Exact
-                            && preservation.tags_and_facts() == PreservationOutcome::Exact
-                            && preservation.ordering() == PreservationOutcome::Exact
-                            && preservation.presentation() == PreservationOutcome::Normalized
-                )
-        })
-        || report.publication()
-            != (PublicationStatus::Complete {
-                items: 3,
-                published_bytes: 16,
-            })
-    {
-        return Err(format!("ordered many mismatch: {report:?}"));
-    }
-    Ok(())
-}
-
 pub(crate) fn assert_adversarial_boundaries(
     catalog: CodecCatalog<'_, '_>,
     format: &FormatId,
@@ -964,7 +895,121 @@ pub(crate) fn assert_adversarial_boundaries(
     }
 
     assert_output_limit(catalog, format, dialect, policy)?;
-    assert_publication_cancellation(catalog, format, dialect)?;
+    assert_ordered_many(catalog, format, dialect, policy)?;
+    assert_publication_cancellation(catalog, format, dialect, policy)?;
+    Ok(())
+}
+
+/// Live `encode_one` through `execute`: three constant items, partial sink writes, ordered framing.
+fn assert_ordered_many(
+    catalog: CodecCatalog<'_, '_>,
+    format: &FormatId,
+    dialect: &DialectId,
+    policy: CodecRequirementPolicy,
+) -> Result<(), String> {
+    let mut resources = resources();
+    let requirement =
+        try_lower_root_requirement(policy, Some(0), &resources).map_err(|error| format!("{:?}", error.kind()))?;
+    let mut sink = PartialSink {
+        bytes: Vec::new(),
+        boundaries: Vec::new(),
+        reports: Vec::new(),
+    };
+    let program = program_for(r#""one", true, null"#, &resources)?;
+    let report = execute_root(
+        catalog,
+        b"null",
+        &requirement,
+        &program,
+        format,
+        dialect,
+        &mut resources,
+        &mut sink,
+    )
+    .map_err(|error| format!("ordered many: {error:?}"))?;
+    if sink.bytes != b"\"one\"\ntrue\nnull\n"
+        || sink.boundaries != [(true, 0), (false, 0), (true, 1), (false, 1), (true, 2), (false, 2)]
+        || sink.reports.len() != 3
+        || sink.reports[0].codec_bytes() != 5
+        || sink.reports[1].codec_bytes() != 4
+        || sink.reports[2].codec_bytes() != 4
+        || sink.reports.iter().any(|item| item.framing_bytes() != 1)
+        || sink.reports.iter().any(|item| {
+            item.physical_encoder() != jqf_codec_json::ENCODE_PHYSICAL_ROUTE_ID
+                || !matches!(
+                    item.preservation(),
+                    Some(preservation)
+                        if preservation.semantic_values() == PreservationOutcome::Exact
+                            && preservation.tags_and_facts() == PreservationOutcome::Exact
+                            && preservation.ordering() == PreservationOutcome::Exact
+                            && preservation.presentation() == PreservationOutcome::Normalized
+                )
+        })
+        || report.publication()
+            != (PublicationStatus::Complete {
+                items: 3,
+                published_bytes: 16,
+            })
+    {
+        return Err(format!(
+            "ordered many mismatch: bytes={:?} boundaries={:?} reports={} publication={:?}",
+            sink.bytes,
+            sink.boundaries,
+            sink.reports.len(),
+            report.publication()
+        ));
+    }
+    Ok(())
+}
+
+/// Live `encode_one` through `execute`: host cancel during a write or after framing must stop publication.
+fn assert_publication_cancellation(
+    catalog: CodecCatalog<'_, '_>,
+    format: &FormatId,
+    dialect: &DialectId,
+    policy: CodecRequirementPolicy,
+) -> Result<(), String> {
+    for (control, mode, expected_bytes) in [
+        (ToggleControl(core::sync::atomic::AtomicBool::new(false)), 0_u8, 1_u64),
+        (ToggleControl(core::sync::atomic::AtomicBool::new(false)), 1_u8, 5_u64),
+    ] {
+        let mut resources = resources_with(&control, u64::MAX, 7);
+        let requirement =
+            try_lower_root_requirement(policy, Some(0), &resources).map_err(|error| format!("{:?}", error.kind()))?;
+        let fault = if mode == 0 {
+            FaultMode::CancelAfterWrite(&control)
+        } else {
+            FaultMode::CancelAfterFraming(&control, 4)
+        };
+        let mut sink = FaultSink {
+            mode: fault,
+            bytes: Vec::new(),
+        };
+        let program = program_for(".", &resources)?;
+        let Err(error) = execute_root(
+            catalog,
+            b"true",
+            &requirement,
+            &program,
+            format,
+            dialect,
+            &mut resources,
+            &mut sink,
+        ) else {
+            return Err("cancellation must stop publication".into());
+        };
+        if !format!("{error:?}").contains("Cancelled")
+            || resources.snapshot().output_bytes() != expected_bytes
+            || resources.snapshot().output_reserved_bytes() != 0
+            || error.publication()
+                != Some(PublicationStatus::InProgress {
+                    completed_items: 0,
+                    published_bytes: expected_bytes,
+                })
+        {
+            return Err(format!("publication cancellation mismatch: {error:?}"));
+        }
+    }
     Ok(())
 }
 
@@ -1006,63 +1051,6 @@ pub(crate) fn assert_output_limit(
             })
     {
         return Err(format!("output limit mismatch: {error:?}"));
-    }
-    Ok(())
-}
-
-pub(crate) fn assert_publication_cancellation(
-    catalog: CodecCatalog<'_, '_>,
-    format: &FormatId,
-    dialect: &DialectId,
-) -> Result<(), String> {
-    for (control, mode, expected_bytes) in [
-        (ToggleControl(core::sync::atomic::AtomicBool::new(false)), 0_u8, 1_u64),
-        (ToggleControl(core::sync::atomic::AtomicBool::new(false)), 1_u8, 5_u64),
-    ] {
-        let mut resources = resources_with(&control, u64::MAX, 7);
-        let mut producer = ManyProducer {
-            items: vec![Value::Bool(true)].into_iter(),
-            pending: false,
-        };
-        let fault = if mode == 0 {
-            FaultMode::CancelAfterWrite(&control)
-        } else {
-            FaultMode::CancelAfterFraming(&control, 4)
-        };
-        let mut sink = FaultSink {
-            mode: fault,
-            bytes: Vec::new(),
-        };
-        let Err(error) = encode_ordered(
-            catalog,
-            &mut producer,
-            format,
-            dialect,
-            OrderedEncodingPolicy {
-                diagnostics: DiagnosticPolicy::ErrorsOnly,
-                preservation: PreservationRequest::None,
-                options: None,
-                cooperative_credits: 7,
-                split: None,
-                flush_each_item: false,
-            },
-            FacadeFraming::item_suffix(b"\n"),
-            &mut resources,
-            &mut sink,
-        ) else {
-            return Err("cancellation must stop publication".into());
-        };
-        if !format!("{error:?}").contains("Cancelled")
-            || resources.snapshot().output_bytes() != expected_bytes
-            || resources.snapshot().output_reserved_bytes() != 0
-            || error.publication()
-                != (PublicationStatus::InProgress {
-                    completed_items: 0,
-                    published_bytes: expected_bytes,
-                })
-        {
-            return Err(format!("publication cancellation mismatch: {error:?}"));
-        }
     }
     Ok(())
 }

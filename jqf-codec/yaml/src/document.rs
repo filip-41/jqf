@@ -1516,9 +1516,9 @@ mod tests {
 
     use jqf_codec_core::{
         AccessFootprint, AccessGuarantees, AccessOutcome, AccessRequirement, CodecDemand, CodecError, CodecFailureKind,
-        DemandClause, DiagnosticPolicy, ErasedProvider, ExactPath, PruneTree, ValidationMode,
+        DemandClause, DiagnosticPolicy, ErasedProvider, ExactPath, ExactSelectionRecord, PruneTree, ValidationMode,
     };
-    use jqf_data::{FactKindId, FactPayloadView, FactRoleId, Value};
+    use jqf_data::{CountDemand, CountRow, CountStep, CountVerdict, FactKindId, FactPayloadView, FactRoleId, Value};
     use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
     use jqf_source::{ResolvedSource, SourceId, SourceKind, SourceRef};
 
@@ -1604,6 +1604,38 @@ mod tests {
                 contract: "test product clone",
             })
         })
+    }
+
+    fn decode_located_node<'bytes>(
+        bytes: &'bytes [u8],
+        requirement: &AccessRequirement,
+        resources: &mut ResourceContext<'_>,
+    ) -> Result<(jqf_codec_core::DocumentProduct<'bytes>, jqf_data::NodeHandle), CodecError> {
+        let registration = crate::registration().expect("registration");
+        let decoder = registration.decoder().expect("decoder");
+        let mut provider: ErasedProvider = decoder.create_provider(source(bytes), simple_request(), resources)?;
+        let handle = provider.bind(requirement).expect("bind");
+        let mut session = provider.open(&handle, resources)?;
+        let mut context = jqf_codec_core::CodecRunContext::new(resources);
+        context.set_cooperative_credits(4_096);
+        let result = session.decode(&mut context)?;
+        let AccessOutcome::Located(located) = result.outcome() else {
+            return Err(CodecError::new(CodecFailureKind::InternalContractViolation {
+                contract: "test expected located outcome",
+            }));
+        };
+        let ExactSelectionRecord::Node { node, .. } = located.result() else {
+            return Err(CodecError::new(CodecFailureKind::InternalContractViolation {
+                contract: "test expected located node",
+            }));
+        };
+        let node = *node;
+        let product = located.product().try_clone().map_err(|_error| {
+            CodecError::new(CodecFailureKind::InternalContractViolation {
+                contract: "test product clone",
+            })
+        })?;
+        Ok((product, node))
     }
 
     fn whole_requirement(demand: CodecDemand, resources: &ResourceContext<'_>) -> AccessRequirement {
@@ -2084,6 +2116,63 @@ mod tests {
         let error = decode_requirement_product(b"catalog:\n  id: 1\n  name: [\n", &requirement, &mut resources)
             .expect_err("omitted members still validate");
         assert_eq!(error.kind(), CodecFailureKind::InvalidInput);
+    }
+
+    fn yaml_container_count() -> CountDemand {
+        CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec::Vec::new(),
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: None,
+        }
+    }
+
+    /// YAML native Exact publishes a subtree whose root is `.users`. Oracle
+    /// count starts at `located.node()` with an empty path. Whole of the same
+    /// bytes keeps the mapping: empty-path count is 1. `node == root` on the
+    /// Exact product is not Whole.
+    #[test]
+    fn exact_users_length_goes_through_document_oracle() {
+        let mut resources = resources();
+        let requirement = exact_member_requirement("users", CodecDemand::try_new(&resources), &resources);
+        let (product, node) =
+            decode_located_node(b"users:\n- 1\n- 2\n- 3\n", &requirement, &mut resources).expect("YAML Exact decodes");
+        let document = product.document();
+        assert_eq!(
+            node,
+            document.root_handle(),
+            "YAML native Exact republishes the subtree as root"
+        );
+        assert_eq!(
+            document
+                .count_children_from(node, &yaml_container_count(), &mut resources)
+                .expect("oracle count"),
+            CountVerdict::Count(3)
+        );
+        let rewalk = CountDemand {
+            row: CountRow::Container,
+            path: alloc::vec![CountStep::ObjectKey(alloc::string::String::from("users"))],
+            range: None,
+            probe: alloc::vec::Vec::new(),
+            filter: None,
+        };
+        assert_eq!(
+            document
+                .count_children_from(document.root_handle(), &rewalk, &mut resources)
+                .expect("rewalk"),
+            CountVerdict::Decline,
+            "walking PATH again on a republished sequence declines"
+        );
+        let whole = decode_product(b"users:\n- 1\n- 2\n- 3\n", &mut resources).expect("YAML Whole decodes");
+        assert_eq!(
+            whole
+                .document()
+                .count_children_from(whole.document().root_handle(), &yaml_container_count(), &mut resources)
+                .expect("Whole empty path"),
+            CountVerdict::Count(1),
+            "Whole empty path is the mapping member count"
+        );
     }
 
     #[test]

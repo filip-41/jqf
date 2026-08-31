@@ -16,7 +16,7 @@ fn json_dialect() -> &'static DialectId {
 
 use jqf_codec_core::{DecodeRequest, DiagnosticPolicy, PreservationRequest, ValidationMode};
 use jqf_data::{DialectId, FormatId};
-use jqf_engine::{CodecRequirementPolicy, CompileOptions, try_compile_program};
+use jqf_engine::{CodecRequirementPolicy, CompileOptions, HostIo, try_compile_program};
 use jqf_resource::{ContinueControl, RequestAccount, ResourceContext, ResourceLimits, WorkMeter};
 use jqf_sdk::{
     CodecCatalog, EncodedItemReport, FacadeFraming, Input, ItemSink, Outcome, PipelinePolicy, PublicationStatus,
@@ -107,8 +107,8 @@ fn run_locate(
     let compiled =
         try_compile_program(program_source, policy, CompileOptions::new(), &resources).expect("program compiles");
     assert!(
-        compiled.range_locate_eligible(),
-        "{program_source} must be range-locate eligible"
+        compiled.host_io() == HostIo::SpanCut,
+        "{program_source} must pack HostIo::SpanCut"
     );
     let requirement = compiled
         .try_range_locate_requirement(&resources)
@@ -297,7 +297,7 @@ fn a_computed_constant_bound_is_byte_identical_to_its_authored_literal() {
     let resources = resources(64 << 20, 4_096);
     let compiled =
         try_compile_program(".catalog[(1*2):]", policy, CompileOptions::new(), &resources).expect("compiles");
-    assert!(!compiled.range_locate_eligible());
+    assert_ne!(compiled.host_io(), HostIo::SpanCut);
 }
 
 #[test]

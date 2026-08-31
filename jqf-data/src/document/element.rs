@@ -1,7 +1,8 @@
 //! Walk a container one element at a time, without building the whole tree.
 //!
-//! Sibling of [`super::count`]: same skeleton, same fail-closed decline. Yields each element's probe value to a
-//! caller-owned visitor. A span-backed container asks [`crate::LazySpanMaterializer::visit_span_elements`].
+//! Sibling of [`super::count`]: same skeleton, same fail-closed decline. [`Document::visit_elements_from`] yields each
+//! element's probe value to a caller-owned visitor (see [`Document::count_children_from`] for the start-handle law). A
+//! span-backed container asks [`crate::LazySpanMaterializer::visit_span_elements`].
 //!
 //! [`ElementRow::FanOut`] visits every element or none — a pre-pass checks the probe first so a mid-stream decline
 //! cannot leave a published prefix. [`ElementRow::ReduceFold`] may decline mid-fold; the fold has published nothing
@@ -98,11 +99,31 @@ impl<'document> Document<'document> {
     where
         F: FnMut(&Value, &mut ResourceContext<'_>) -> Result<(), DataError>,
     {
+        self.visit_elements_from(self.root_handle(), demand, resources, visit)
+    }
+
+    /// [`Self::visit_elements`] starting at `start`, then walking [`ElementDemand::path`].
+    ///
+    /// Exact-locate callers pass the located node and an empty path. See [`Document::count_children_from`] for the
+    /// start-handle law.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::visit_elements`].
+    pub fn visit_elements_from<F>(
+        &self,
+        start: crate::NodeHandle,
+        demand: &super::ElementDemand,
+        resources: &mut ResourceContext<'_>,
+        visit: F,
+    ) -> Result<ElementVerdict, DataError>
+    where
+        F: FnMut(&Value, &mut ResourceContext<'_>) -> Result<(), DataError>,
+    {
         // A document without semantic nodes cannot be navigated.
-        let Ok(root) = self.value_view(self.root_handle()) else {
+        let Ok(mut view) = self.value_view(start) else {
             return Ok(ElementVerdict::Decline);
         };
-        let mut view = root;
         for step in &demand.path {
             match step {
                 CountStep::ObjectKey(key) => {
@@ -149,6 +170,19 @@ impl<'document> Document<'document> {
     where
         F: FnMut(&Value, &mut ResourceContext<'_>) -> Result<(), DataError>,
     {
+        if demand.row == super::ElementRow::FanOut
+            && demand.range.is_none()
+            && demand.filter.is_none()
+            && let Some(values) = self.cached_span_values(view.node())
+        {
+            let mut visit = visit;
+            let mut n = 0u64;
+            for value in values {
+                visit(value, resources)?;
+                n = n.saturating_add(1);
+            }
+            return Ok(ElementVerdict::Completed(n));
+        }
         let Some((text, container, materializer)) = self.span_leaf_input(view, demand.range.is_some())? else {
             return Ok(ElementVerdict::Decline);
         };
@@ -905,5 +939,94 @@ mod tests {
             let value = probe_value(&document, view, probe, &mut resources).expect("value");
             assert_eq!(admitted, value.is_some(), "document probe {probe:?}");
         }
+    }
+
+    /// Exact-locate visits from the located node, not the document root.
+    ///
+    /// Named-child Exact keeps the full graph. An empty-path visit from
+    /// `{users: [null, null, null]}` iterates the mapping (one member). From
+    /// the `users` node it iterates three items. The trait is the protocol
+    /// execute already hits.
+    #[test]
+    fn visit_from_a_child_node_does_not_iterate_the_document_root() {
+        let mut resources = unlimited_resources();
+        let mut builder = crate::AccountedDocumentBuilder::try_new("test", None).expect("builder");
+        let root = builder
+            .add_node(
+                "test.object",
+                crate::AccountedSemanticNode::Object {
+                    member_role: "test.member",
+                },
+                None,
+                &resources,
+            )
+            .expect("root");
+        let users = builder
+            .add_node(
+                "test.array",
+                crate::AccountedSemanticNode::Array { item_role: "test.item" },
+                None,
+                &resources,
+            )
+            .expect("users");
+        for _ in 0..3 {
+            let item = builder
+                .add_node("test.null", crate::AccountedSemanticNode::Null, None, &resources)
+                .expect("item");
+            builder
+                .add_occurrence(crate::LocalOwnerRef::Node(users), "test.item", None, item, &resources)
+                .expect("item occurrence");
+        }
+        builder
+            .add_occurrence(
+                crate::LocalOwnerRef::Node(root),
+                "test.member",
+                Some(crate::AccountedOccurrenceKey::Text("users")),
+                users,
+                &resources,
+            )
+            .expect("users member");
+        let document = builder.finish(root, &resources).expect("document");
+        let users_view = document
+            .value_view(document.root_handle())
+            .expect("root view")
+            .object()
+            .expect("object kind")
+            .expect("object")
+            .get("users")
+            .expect("users member");
+        let users_handle = document.node_handle(users_view.node()).expect("users handle");
+        let empty = ElementDemand {
+            row: ElementRow::FanOut,
+            path: Vec::new(),
+            range: None,
+            probe: ElementProbe::Path(Vec::new()),
+            increment: None,
+            filter: None,
+        };
+        let mut from_root = 0u64;
+        let root_verdict = document
+            .visit_elements(&empty, &mut resources, |_, _| {
+                from_root += 1;
+                Ok(())
+            })
+            .expect("root visit");
+        assert_eq!(root_verdict, ElementVerdict::Completed(1));
+        assert_eq!(from_root, 1, "empty path from the mapping is one member");
+
+        let mut from_child = 0u64;
+        let child_verdict = document
+            .visit_elements_from(users_handle, &empty, &mut resources, |_, _| {
+                from_child += 1;
+                Ok(())
+            })
+            .expect("child visit");
+        assert_eq!(child_verdict, ElementVerdict::Completed(3));
+        assert_eq!(from_child, 3, "empty path from the located array is three items");
+        assert_ne!(
+            users_handle,
+            document.root_handle(),
+            "named-child Exact is not identified by node == root"
+        );
     }
 }

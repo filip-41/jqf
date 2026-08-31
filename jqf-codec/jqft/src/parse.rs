@@ -11,6 +11,10 @@
 //!
 //! The parser is ITERATIVE (an explicit container stack), so document nesting depth costs heap, not call stack — a
 //! deeply nested jqft document cannot overflow the request thread's stack.
+//!
+//! Exact access uses a locate mode of this same machine: every byte is still validated (unread siblings, trailing
+//! content, last-value-wins later keys), but off-path nodes are not attached. [`crate::scoped`] re-parses only the
+//! located span as the product root.
 
 use alloc::borrow::ToOwned;
 use alloc::format;
@@ -19,18 +23,19 @@ use alloc::vec::Vec;
 
 use jqf_codec_core::byte_scan::{StopSet, StringContent, Ws, prefix_len};
 use jqf_codec_core::{
-    AccessInput, AccessOutcome, AccessResult, CodecError, CodecFailureKind, CodecRunContext, DocumentProduct,
+    AccessInput, AccessOutcome, AccessResult, CodecError, CodecFailureKind, CodecRunContext, DocumentProduct, OwnedStep,
 };
 use jqf_data::{
     AccountedDocumentBuilder, AccountedDocumentFinalizer, AccountedIntrinsicTag, AccountedOccurrenceKey,
-    AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, DataError, DiagnosticCoverage,
-    DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, DocumentTextId, FactPayload, LocalDate,
-    LocalOwnerRef, LocalTime, NodeId, TagId,
+    AccountedSemanticNode, AuthoritativeEmptyFamilies, BuilderCoverage, ContainerSpanKind, DataError,
+    DiagnosticCoverage, DocumentCapabilityFamily, DocumentCapacity, DocumentFinalizationPoll, DocumentTextId,
+    FactPayload, LocalDate, LocalOwnerRef, LocalTime, NodeId, TagId, ValueKind,
 };
 use jqf_resource::{ResourceContext, WorkAdmission};
 use jqf_source::ResolvedSource;
 
 use crate::error;
+use crate::locate::{Container, LocateOpen, PathLocator};
 use crate::provider::{self, JqftKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,11 +70,17 @@ enum Frame {
         owner: NodeId,
         /// Whether at least one item was attached (a leading comma is an error; a trailing comma is a jqft feature).
         has_items: bool,
+        /// Locate role of this container: see [`LocateOpen`].
+        locate: LocateOpen,
+        child_count: u64,
     },
     Object {
         owner: NodeId,
         /// The decoded key awaiting its value (set between `:` and the value).
         pending_key: Option<DocumentTextId>,
+        /// Locate role of this container: see [`LocateOpen`].
+        locate: LocateOpen,
+        child_count: u64,
     },
     /// A markup node (`<name &attr="v" children…>`, the angle form of the markup grammar): the owner is an ARRAY of its
     /// ordered children (the array model — children are reached by `.[]`, never a `.@children` fact), and the
@@ -79,6 +90,9 @@ enum Frame {
         name: String,
         attributes: Vec<(String, String)>,
         content: String,
+        /// Locate role of this container (markup is an array of children): see [`LocateOpen`].
+        locate: LocateOpen,
+        child_count: u64,
     },
 }
 
@@ -147,6 +161,12 @@ pub(crate) struct JqftParseState {
     document_end: usize,
     /// Decoded string / key scratch (reused across tokens).
     scratch: Vec<u8>,
+    /// Whether completed values are attached to the builder. Locate pass 1 is skip-build.
+    materialize: bool,
+    /// Exact-path observation, present only on the locate pass.
+    locator: Option<PathLocator>,
+    /// Start offsets of in-flight values, parallel to locate nesting (the current value is last).
+    value_starts: Vec<usize>,
 }
 
 /// One own-line comment awaiting its owner: the text and the frame depth at which it was read (see
@@ -241,6 +261,7 @@ impl JqftParseState {
         self.published = false;
         self.document_end = 0;
         self.scratch.clear();
+        self.value_starts.clear();
     }
 
     pub(crate) fn try_new(
@@ -249,9 +270,50 @@ impl JqftParseState {
         allow_adjacent_values: bool,
         coverage: BuilderCoverage,
     ) -> Self {
-        // The header is a stream-start fact: a reopened session (the SDK's adjacent-value sequence drive opens each
-        // document at its own offset) never sees the header again.
-        let at_stream_start = source.base_offset() == 0;
+        let step = Self::start_step(kind, source.base_offset() == 0);
+        Self::init(kind, allow_adjacent_values, coverage, step, true, None)
+    }
+
+    /// Locate pass: the same grammar as [`Self::try_new`], skip-build, recording the exact-path span.
+    pub(crate) fn try_new_locate(
+        source: ResolvedSource<'_>,
+        kind: JqftKind,
+        allow_adjacent_values: bool,
+        coverage: BuilderCoverage,
+        steps: Vec<OwnedStep>,
+    ) -> Self {
+        let step = Self::start_step(kind, source.base_offset() == 0);
+        Self::init(
+            kind,
+            allow_adjacent_values,
+            coverage,
+            step,
+            false,
+            Some(PathLocator::new(steps)),
+        )
+    }
+
+    /// Materialize pass: one value with no header (a located span, or a jqfjson envelope).
+    pub(crate) fn try_new_value(kind: JqftKind, coverage: BuilderCoverage) -> Self {
+        Self::init(kind, false, coverage, Step::Value, true, None)
+    }
+
+    fn start_step(kind: JqftKind, at_stream_start: bool) -> Step {
+        if kind.is_jqft() && at_stream_start {
+            Step::Header
+        } else {
+            Step::Value
+        }
+    }
+
+    fn init(
+        kind: JqftKind,
+        allow_adjacent_values: bool,
+        coverage: BuilderCoverage,
+        step: Step,
+        materialize: bool,
+        locator: Option<PathLocator>,
+    ) -> Self {
         Self {
             kind,
             schema_prefix: kind.schema_prefix(),
@@ -261,11 +323,7 @@ impl JqftParseState {
             // a reused session binds the NEW value's source. Entering the Seal phase with a missing stage would be a
             // contract violation.
             phase: Phase::Parse,
-            step: if kind.is_jqft() && at_stream_start {
-                Step::Header
-            } else {
-                Step::Value
-            },
+            step,
             frames: Vec::new(),
             pending_tags: Vec::new(),
             pending_leading_comments: Vec::new(),
@@ -283,6 +341,36 @@ impl JqftParseState {
             allow_adjacent_values,
             document_end: 0,
             scratch: Vec::new(),
+            materialize,
+            locator,
+            value_starts: Vec::new(),
+        }
+    }
+
+    pub(crate) fn document_end(&self) -> usize {
+        self.document_end
+    }
+
+    /// Validates the document without attaching off-path nodes and returns the exact-path observation.
+    pub(crate) fn poll_locate(
+        &mut self,
+        source: ResolvedSource<'_>,
+        context: &mut CodecRunContext<'_, '_>,
+    ) -> Result<crate::locate::Located, CodecError> {
+        loop {
+            match self.phase {
+                Phase::Parse => {
+                    let progress = self.parse_step(source, context.resources())?;
+                    if !progress {
+                        context.replenish_work()?;
+                    }
+                }
+                Phase::Finalize => {
+                    let locator = self.locator.as_mut().ok_or_else(data_contract)?;
+                    return locator.take();
+                }
+                Phase::Seal | Phase::Publish => return Err(data_contract()),
+            }
         }
     }
 }
@@ -370,6 +458,148 @@ impl jqf_codec_core::AccessSession for JqftParseState {
 }
 
 impl JqftParseState {
+    fn dummy_node() -> NodeId {
+        NodeId::try_from_index(0).expect("zero is a valid dense id")
+    }
+
+    fn begin_located_value(&mut self) {
+        if self.locator.is_some() {
+            self.value_starts.push(self.cursor);
+        }
+    }
+
+    fn at_tag_payload(&self) -> bool {
+        self.pending_tags.iter().any(|(depth, _)| *depth == self.frames.len())
+    }
+
+    fn locate_on_key(&mut self, key: &str) {
+        if let Some(locator) = &mut self.locator {
+            locator.on_key(key, self.frames.len());
+        }
+    }
+
+    fn locate_open_container(&mut self, container: Container) -> LocateOpen {
+        match &mut self.locator {
+            Some(locator) => locator.on_container_open(container, self.frames.len()),
+            None => LocateOpen::Skip,
+        }
+    }
+
+    fn locate_span_start(&mut self) -> Option<usize> {
+        self.locator.as_ref()?;
+        Some(self.value_starts.pop().unwrap_or(self.cursor))
+    }
+
+    fn locate_finish_container(&mut self, scanning: bool) -> Result<(), CodecError> {
+        let Some(start) = self.locate_span_start() else {
+            return Ok(());
+        };
+        match &mut self.locator {
+            Some(locator) => locator.finish_container(start, self.cursor, scanning, self.frames.len()),
+            None => Ok(()),
+        }
+    }
+
+    fn locate_finish_hit(&mut self, child_count: u64, container: ContainerSpanKind) {
+        let Some(start) = self.locate_span_start() else {
+            return;
+        };
+        if let Some(locator) = &mut self.locator {
+            locator.finish_hit(start, self.cursor, child_count, container, self.frames.len());
+        }
+    }
+
+    fn locate_finish_scalar(&mut self, kind: ValueKind) {
+        let Some(start) = self.locate_span_start() else {
+            return;
+        };
+        if let Some(locator) = &mut self.locator {
+            locator.finish_scalar(start, self.cursor, kind, self.frames.len());
+        }
+    }
+
+    fn locate_finish_open(
+        &mut self,
+        locate: LocateOpen,
+        child_count: u64,
+        container: ContainerSpanKind,
+    ) -> Result<(), CodecError> {
+        match locate {
+            LocateOpen::Hit => {
+                self.locate_finish_hit(child_count, container);
+                Ok(())
+            }
+            LocateOpen::Scan => self.locate_finish_container(true),
+            LocateOpen::Skip => self.locate_finish_container(false),
+        }
+    }
+
+    fn value_kind_of(semantic: &AccountedSemanticNode<'_>) -> ValueKind {
+        match semantic {
+            AccountedSemanticNode::Bool(_) => ValueKind::Bool,
+            AccountedSemanticNode::Integer(_)
+            | AccountedSemanticNode::Decimal { .. }
+            | AccountedSemanticNode::Float(_) => ValueKind::Number,
+            AccountedSemanticNode::String(_) | AccountedSemanticNode::SourceString(_) => ValueKind::String,
+            AccountedSemanticNode::Bytes(_) => ValueKind::Bytes,
+            AccountedSemanticNode::LocalDate(_) => ValueKind::LocalDate,
+            AccountedSemanticNode::LocalTime(_) => ValueKind::LocalTime,
+            AccountedSemanticNode::LocalDateTime(_) => ValueKind::LocalDateTime,
+            AccountedSemanticNode::OffsetDateTime(_) => ValueKind::OffsetDateTime,
+            AccountedSemanticNode::Array { .. } => ValueKind::Array,
+            AccountedSemanticNode::Object { .. } => ValueKind::Object,
+            AccountedSemanticNode::Null | AccountedSemanticNode::Unrepresentable => ValueKind::Null,
+        }
+    }
+
+    fn drop_tags_at_depth(&mut self) {
+        let depth = self.frames.len();
+        self.pending_tags.retain(|(d, _)| *d != depth);
+    }
+
+    fn advance_after_value(&mut self) -> bool {
+        self.drop_tags_at_depth();
+        match self.frames.last_mut() {
+            None => {
+                self.step = Step::Trailing;
+            }
+            Some(Frame::Array {
+                has_items,
+                locate,
+                child_count,
+                ..
+            }) => {
+                *has_items = true;
+                if *locate == LocateOpen::Hit {
+                    *child_count = child_count.saturating_add(1);
+                }
+                self.step = Step::ArrayCommaOrEnd;
+            }
+            Some(Frame::Object {
+                pending_key,
+                locate,
+                child_count,
+                ..
+            }) => {
+                let _ = pending_key.take();
+                if *locate == LocateOpen::Hit {
+                    *child_count = child_count.saturating_add(1);
+                }
+                self.step = Step::ObjectCommaOrEnd;
+            }
+            Some(Frame::Markup {
+                locate, child_count, ..
+            }) => {
+                if *locate == LocateOpen::Hit {
+                    *child_count = child_count.saturating_add(1);
+                }
+                self.step = Step::MarkupBody;
+            }
+        }
+        self.last_node = None;
+        true
+    }
+
     /// Longest prefix of `bytes` that is JSON whitespace (space, tab, LF, CR) — the jqft whitespace set is
     /// byte-identical to json's `Ws` set.
     ///
@@ -463,7 +693,7 @@ impl JqftParseState {
                 if text.starts_with(' ') {
                     text = &text[1..];
                 }
-                if self.coverage.attached_facts() {
+                if self.materialize && self.coverage.attached_facts() {
                     if newline_seen {
                         self.pending_leading_comments.push(PendingComment {
                             text: String::from(text),
@@ -524,21 +754,34 @@ impl JqftParseState {
         let Some(byte) = source.bytes().get(self.cursor).copied() else {
             return Err(self.expected_value(source));
         };
+        // A trailing comma's array close is not a value. Recording a locate start here would steal the array's span.
+        if byte == b']' && self.kind.is_jqft() && matches!(self.frames.last(), Some(Frame::Array { .. })) {
+            return self.close_array(source, resources);
+        }
+        if !self.at_tag_payload() {
+            self.begin_located_value();
+        }
         match byte {
             b'{' => {
+                let locate = self.locate_open_container(Container::Object);
                 let owner = self.open_object(resources)?;
                 self.frames.push(Frame::Object {
                     owner,
                     pending_key: None,
+                    locate,
+                    child_count: 0,
                 });
                 self.step = Step::ObjectKeyOrEnd;
                 Ok(true)
             }
             b'[' => {
+                let locate = self.locate_open_container(Container::Array);
                 let owner = self.open_array(resources)?;
                 self.frames.push(Frame::Array {
                     owner,
                     has_items: false,
+                    locate,
+                    child_count: 0,
                 });
                 self.step = Step::ArrayValueOrEnd;
                 Ok(true)
@@ -549,11 +792,6 @@ impl JqftParseState {
                     this.add_scalar(source, AccountedSemanticNode::String(value), resources)
                 })?;
                 self.attach(source, node, resources)
-            }
-            // A trailing comma's array close (jqft only): after a `,` the next significant byte may be `]`. Object
-            // trailing commas close from `ObjectKeyOrEnd`, not here — `{a: }` is a missing value.
-            b']' if self.kind.is_jqft() && matches!(self.frames.last(), Some(Frame::Array { .. })) => {
-                self.close_array(source, resources)
             }
             b'@' if self.kind.is_jqft() => self.step_tag(source),
             b'<' if self.kind.is_jqft() => {
@@ -648,6 +886,9 @@ impl JqftParseState {
 
     fn open_array(&mut self, resources: &mut ResourceContext<'_>) -> Result<NodeId, CodecError> {
         self.cursor += 1;
+        if !self.materialize {
+            return Ok(Self::dummy_node());
+        }
         let prefix = self.schema_prefix;
         let semantic = AccountedSemanticNode::Array {
             item_role: provider::role_for(prefix, "array"),
@@ -661,6 +902,9 @@ impl JqftParseState {
 
     fn open_object(&mut self, resources: &mut ResourceContext<'_>) -> Result<NodeId, CodecError> {
         self.cursor += 1;
+        if !self.materialize {
+            return Ok(Self::dummy_node());
+        }
         let prefix = self.schema_prefix;
         let semantic = AccountedSemanticNode::Object {
             member_role: provider::role_for(prefix, "object"),
@@ -678,6 +922,10 @@ impl JqftParseState {
         semantic: AccountedSemanticNode<'_>,
         resources: &mut ResourceContext<'_>,
     ) -> Result<NodeId, CodecError> {
+        self.locate_finish_scalar(Self::value_kind_of(&semantic));
+        if !self.materialize {
+            return Ok(Self::dummy_node());
+        }
         let _ = source;
         let prefix = self.schema_prefix;
         let builder = self.builder()?;
@@ -699,6 +947,9 @@ impl JqftParseState {
         mut node: NodeId,
         resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
+        if !self.materialize {
+            return Ok(self.advance_after_value());
+        }
         // Tag layers: the FIRST tag read is the OUTERMOST. The builder's tag-layer law: a kindless node carrying a
         // non-core intrinsic tag owns exactly one keyless payload occurrence. The tags wrap only the value that
         // completes at the depth where they were read — a container's elements complete deeper and pass through
@@ -751,11 +1002,11 @@ impl JqftParseState {
         // the inline-comment owner.
         let parent = match self.frames.last_mut() {
             None => Parent::Root,
-            Some(Frame::Array { owner, has_items }) => {
+            Some(Frame::Array { owner, has_items, .. }) => {
                 *has_items = true;
                 Parent::Array(*owner)
             }
-            Some(Frame::Object { owner, pending_key }) => Parent::Object(*owner, pending_key.take()),
+            Some(Frame::Object { owner, pending_key, .. }) => Parent::Object(*owner, pending_key.take()),
             Some(Frame::Markup { owner, .. }) => Parent::Markup(*owner),
         };
         let prefix = self.schema_prefix;
@@ -879,9 +1130,16 @@ impl JqftParseState {
         resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
         self.cursor += 1;
-        let Some(Frame::Array { owner, .. }) = self.frames.pop() else {
+        let Some(Frame::Array {
+            owner,
+            locate,
+            child_count,
+            ..
+        }) = self.frames.pop()
+        else {
             return Err(data_contract());
         };
+        self.locate_finish_open(locate, child_count, ContainerSpanKind::Array)?;
         self.attach(source, owner, resources)
     }
 
@@ -891,9 +1149,16 @@ impl JqftParseState {
         resources: &mut ResourceContext<'_>,
     ) -> Result<bool, CodecError> {
         self.cursor += 1;
-        let Some(Frame::Object { owner, .. }) = self.frames.pop() else {
+        let Some(Frame::Object {
+            owner,
+            locate,
+            child_count,
+            ..
+        }) = self.frames.pop()
+        else {
             return Err(data_contract());
         };
+        self.locate_finish_open(locate, child_count, ContainerSpanKind::Object)?;
         self.attach(source, owner, resources)
     }
 
@@ -941,19 +1206,25 @@ impl JqftParseState {
                 "namespaced markup names are reserved for the XML vertical",
             ));
         }
-        let prefix = self.schema_prefix;
-        let semantic = AccountedSemanticNode::Array {
-            item_role: provider::role_for(prefix, "markup"),
+        let locate = self.locate_open_container(Container::Array);
+        let owner = if self.materialize {
+            let prefix = self.schema_prefix;
+            let semantic = AccountedSemanticNode::Array {
+                item_role: provider::role_for(prefix, "markup"),
+            };
+            self.builder()?
+                .add_node(provider::kind_for(prefix, &semantic), semantic, None, resources)
+                .map_err(map_data)?
+        } else {
+            Self::dummy_node()
         };
-        let owner = self
-            .builder()?
-            .add_node(provider::kind_for(prefix, &semantic), semantic, None, resources)
-            .map_err(map_data)?;
         self.frames.push(Frame::Markup {
             owner,
             name: String::from(name),
             attributes: Vec::new(),
             content: String::new(),
+            locate,
+            child_count: 0,
         });
         self.step = Step::MarkupBody;
         Ok(true)
@@ -969,37 +1240,39 @@ impl JqftParseState {
         match bytes.get(self.cursor).copied() {
             Some(b'>') => self.close_markup(source, resources),
             Some(b'<') => {
+                self.begin_located_value();
                 self.cursor += 1;
                 self.step = Step::MarkupName;
                 Ok(true)
             }
             Some(b'"') => {
+                self.begin_located_value();
                 self.scan_string(source)?;
                 let node = self.with_scratch(|this, value| {
-                    if let Some(Frame::Markup { content, .. }) = this.frames.last_mut() {
+                    if this.materialize
+                        && let Some(Frame::Markup { content, .. }) = this.frames.last_mut()
+                    {
                         content.push_str(value);
                     }
                     this.add_scalar(source, AccountedSemanticNode::String(value), resources)
                 })?;
-                let prefix = self.schema_prefix;
-                let owner = match self.frames.last_mut() {
-                    Some(Frame::Markup { owner, .. }) => *owner,
-                    _ => return Err(data_contract()),
-                };
-                self.builder()?
-                    .add_occurrence(
-                        LocalOwnerRef::Node(owner),
-                        provider::role_for(prefix, "markup"),
-                        None,
-                        node,
-                        resources,
-                    )
-                    .map_err(map_data)?;
-                // A string child is a completed node: it owns same-line inline comments on its own line. Pending
-                // own-line comments are NOT consumed here — inside a markup body they attach to the markup NODE at its
-                // close (a comment between `<p` and its content documents the element, not its first text run), which
-                // is the position the canonical form can spell.
-                self.last_node = Some(node);
+                if self.materialize {
+                    let prefix = self.schema_prefix;
+                    let owner = match self.frames.last_mut() {
+                        Some(Frame::Markup { owner, .. }) => *owner,
+                        _ => return Err(data_contract()),
+                    };
+                    self.builder()?
+                        .add_occurrence(
+                            LocalOwnerRef::Node(owner),
+                            provider::role_for(prefix, "markup"),
+                            None,
+                            node,
+                            resources,
+                        )
+                        .map_err(map_data)?;
+                    self.last_node = Some(node);
+                }
                 self.step = Step::MarkupBody;
                 Ok(true)
             }
@@ -1106,6 +1379,9 @@ impl JqftParseState {
         self.scan_string(source)?;
         let name = self.markup_pending_attr.take().ok_or_else(data_contract)?;
         self.with_scratch(|this, value| {
+            if !this.materialize {
+                return Ok(());
+            }
             let Some(Frame::Markup { attributes, .. }) = this.frames.last_mut() else {
                 return Err(data_contract());
             };
@@ -1129,10 +1405,16 @@ impl JqftParseState {
             name,
             attributes,
             content,
+            locate,
+            child_count,
         }) = self.frames.pop()
         else {
             return Err(data_contract());
         };
+        self.locate_finish_open(locate, child_count, ContainerSpanKind::Array)?;
+        if !self.materialize {
+            return self.attach(source, owner, resources);
+        }
         let attach_facts = self.coverage.attached_facts();
         let builder = self.builder()?;
         if attach_facts {
@@ -1437,6 +1719,10 @@ impl JqftParseState {
         resources: &ResourceContext<'_>,
     ) -> Result<(), CodecError> {
         let _ = source;
+        self.locate_on_key(key);
+        if !self.materialize {
+            return Ok(());
+        }
         let stored = self.builder()?.store_text(key, resources).map_err(map_data)?;
         if let Some(Frame::Object { pending_key, .. }) = self.frames.last_mut() {
             *pending_key = Some(stored);
@@ -2232,7 +2518,7 @@ pub(crate) fn map_data(error: DataError) -> CodecError {
     jqf_codec_core::map_data(error, "jqft builder rejected document construction")
 }
 
-fn data_contract() -> CodecError {
+pub(crate) fn data_contract() -> CodecError {
     error::data_contract()
 }
 

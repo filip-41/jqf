@@ -263,6 +263,20 @@ pub(crate) fn compile_failure(error: &EngineCompileError, source: &str) -> CliFa
     }
 }
 
+/// Maps a `try_requirement` / `try_whole_document_requirement` refusal onto the CLI exit class.
+///
+/// Ledger Resource is the same ceiling as compile-arena [`EngineCompileError::Resource`] and
+/// [`CliFailure::Codec`] Resource: exit 5. An internal contract violation is a compile bug (exit 3).
+pub(crate) fn requirement_failure(error: &jqf_codec_core::CodecError) -> CliFailure {
+    match error.kind() {
+        jqf_codec_core::CodecFailureKind::Resource(resource) => CliFailure::Codec {
+            kind: jqf_codec_core::CodecFailureKind::Resource(resource),
+            diagnostic: None,
+        },
+        _ => CliFailure::compile(format!("cannot lower program requirement: {}", error.kind())),
+    }
+}
+
 /// The caret block under a compile rejection: the source line the span starts on, then a caret line under the offending
 /// columns. Byte-column alignment — exact for the ASCII programs people type; a multibyte or tab column can land the
 /// caret a cell off, never crash. A line longer than the window is cut around the caret with `…` markers.
@@ -409,12 +423,47 @@ pub(crate) fn render_pipeline_failure<SinkError: fmt::Display>(
 
 #[cfg(test)]
 mod tests {
-    use super::render_codec_diagnostic;
+    use super::{CliFailure, ExitClass, render_codec_diagnostic, requirement_failure};
     use jqf_codec_core::{CodecError, CodecFailureKind};
+    use jqf_resource::ResourceError;
     use jqf_source::{Diagnostic, DiagnosticSource, Label, Namespace, Severity, SourceId, SourceKind, SourceRef, Span};
 
-    /// Message payloads render unquoted (finding 3): the 043-W4 law removed Debug enum names, and the message strings
-    /// must not keep Debug quoting.
+    /// `try_requirement` Resource is the codec resource class (exit 5), not compile (exit 3).
+    #[test]
+    fn requirement_resource_is_exit_5_not_compile() {
+        let failure = requirement_failure(&CodecError::from(ResourceError::AllocationFailed));
+        assert_eq!(failure.exit_code(), 5, "ledger refusal is the resource class");
+        assert!(matches!(
+            failure,
+            CliFailure::Codec {
+                kind: CodecFailureKind::Resource(ResourceError::AllocationFailed),
+                diagnostic: None,
+            }
+        ));
+    }
+
+    /// An internal contract violation while charging the packed plan is a compile bug (exit 3).
+    #[test]
+    fn requirement_icv_stays_compile() {
+        let failure = requirement_failure(&CodecError::new(CodecFailureKind::InternalContractViolation {
+            contract: "codec pushdown prefix contains a non-static step",
+        }));
+        assert_eq!(failure.exit_code(), 3, "ICV stays the compile class");
+        match failure {
+            CliFailure::Message {
+                class: ExitClass::Compile,
+                message,
+            } => {
+                assert!(
+                    message.contains("cannot lower program requirement"),
+                    "ICV keeps the requirement-lowering frame, got {message}"
+                );
+            }
+            _ => panic!("ICV must not leave the compile class"),
+        }
+    }
+
+    /// Message payloads render unquoted: Debug enum names stay out of the user-facing string.
     #[test]
     fn diagnostic_messages_render_unquoted() {
         let input = SourceRef::new(SourceId::new(0), SourceKind::Input);
