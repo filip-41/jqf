@@ -1,9 +1,9 @@
 # Selectors: CSS, XPath, JSONPath
 
-Three query languages are implemented as builtins: `css` and `xpath` evaluate against
-recovered [markup documents](html.md) and `jsonpath` evaluates against any value.
-All three are ordinary builtins and their results pipe into the rest of the
-program.
+Three query languages are implemented as builtins: `css` against HTML
+documents, `xpath` against XML documents, and `jsonpath` against any
+value. All three are ordinary builtins and their results pipe into the
+rest of the program. See [HTML and XML](html.md).
 
 ## `css(SELECTOR)`
 
@@ -25,7 +25,7 @@ $ printf '<html><body><ul><li><a href="/a">A</a></li><li><a href="/b">B</a></li>
 
 ## `xpath(EXPR)`
 
-A closed XPath subset over XML and HTML documents: absolute and relative paths,
+A closed XPath subset over XML documents: absolute and relative paths,
 `//`, `.` and `..`, the element axes (child, descendant, descendant-or-self,
 parent, self), wildcards, unions, and predicates — positions, `position()` /
 `last()`, comparisons, `count()`, `concat()`, `string-length()`, `name()`.

@@ -15,9 +15,11 @@ pub fn execute<S: ItemSink>(request: Request<'_, '_, '_>, sink: &mut S)
     -> Result<Outcome, Failure>
 ```
 
-A request names a compiled program, an input (`Whole` bytes, a `Streaming`
-reader, or `Records`), a codec catalog, formats and dialects, policy, and a
-`ResourceContext`. The sketch (from `jqf-sdk/examples/compile_execute.rs`):
+A request names a compiled program, an input (`Whole` bytes, a
+`Streaming` reader, or `Records`), the access requirement the program
+lowers, a codec catalog, formats and dialects, policy, and a
+`ResourceContext`. The sketch (from
+`jqf-sdk/examples/compile_execute.rs`):
 
 ```rust
 let registration = jqf_codec_json::registration()?;
@@ -36,11 +38,13 @@ let program = try_compile_program(
     CompileOptions::new(),
     &resources,
 )?;
+let requirement = program.try_requirement(&resources)?;
 let outcome = execute(
     Request::new(&program, Input::Whole(input))
         .with_catalog(catalog)
         .with_format(format(), dialect())
         .with_output_format(format(), dialect())
+        .with_requirement(&requirement)
         .with_resources(&mut resources),
     &mut sink,
 )?;

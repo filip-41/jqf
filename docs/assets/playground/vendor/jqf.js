@@ -95,7 +95,7 @@ export class Jqf {
         return JSON.parse(jqf_formats());
     }
 
-    /** Version string like "jqf-wasm 0.1.0". */
+    /** Version string like "jqf-wasm 0.1.1". */
     version() {
         return jqf_version();
     }

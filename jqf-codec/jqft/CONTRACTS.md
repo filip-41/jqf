@@ -134,9 +134,11 @@ declines to the whole-document floor, never wrong bytes.
   `jqfb.canonical@1`. Edit. Codec inter-item bytes (a facade newline
   would corrupt the footer).
 
-The text formats advertise one access slot, whole-document complete. A
-richer demand is served by core's whole-route fallbacks. jqfb advertises
-whole-document complete and an exact/located subtree walk.
+The text formats advertise Whole/`CompleteDocument` and
+Exact/`Located`. Direct Exact locates on the one validating pass and
+republishes the selection as root; count and element keep a last-wins
+span pointer. jqfb advertises the same pair; its Exact slot is the
+node-table walk.
 
 ## Boundaries
 

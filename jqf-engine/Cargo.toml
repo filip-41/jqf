@@ -31,7 +31,7 @@ ext-redact = ["jqf-builtins/ext-redact"]
 # Direct (non-workspace-inherited) dep so `default-features = false` is honored:
 # cargo 1.96 forbids overriding default-features on a workspace-inherited dep
 # (the workspace entry stays clean for the CLI-side consumers).
-jqf-builtins = { path = "../jqf-builtins", version = "0.1.0", default-features = false }
+jqf-builtins = { path = "../jqf-builtins", version = "0.1.1", default-features = false }
 jqf-codec-core = { workspace = true }
 jqf-data = { workspace = true }
 jqf-resource = { workspace = true }

@@ -34,7 +34,7 @@ deterministic (mtime zero).
 
 Not feature-gated, always registered:
 
-- **Selectors** — `css/1`, `xpath/1` over markup documents.
+- **Selectors** — `css/1` over HTML, `xpath/1` over XML.
 - **Diff** — `diff/2`, the same records `--diff` prints.
 - **Pointers** — `json_pointer/1..2` (RFC 6901 get/set).
 - **Facts** — `tag/0`, `json_facts/0`. See [Facts](facts.md).

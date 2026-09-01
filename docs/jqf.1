@@ -1,4 +1,4 @@
-.TH JQF 1 "" "jqf" "jqf-0.1.0"
+.TH JQF 1 "" "jqf" "jqf-0.1.1"
 .SH NAME
 jqf \- a jq-compatible document processor
 .SH SYNOPSIS
@@ -568,7 +568,8 @@ cost of a partial write on failure.
 .TP
 .B --no-atomic
 Write file destinations directly instead of atomically. A failed run
-can then leave a partial file; requires --output or --in-place.
+can then leave a partial file; requires --output, --in-place, or
+--split-exp.
 .TP
 .B --list-builtins
 Print every registered builtin as name/arity, one per line, sorted —

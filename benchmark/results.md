@@ -2,9 +2,9 @@
 
 These numbers are a local snapshot for guidance, not a published result.
 
-- jqf: pgo · `fb1212d508bd90c59dcccb72f23a5fdc75e737a4`
-- time: 2026-08-30T16:43:52Z
-- diagnostics: `jqf: build=pgo profile=e0e45a21.cdb907a9.aarch64-apple-darwin.9b60b845 allocator=mimalloc platform=aarch64-macos pcores=6 ecores=12 pcore_source=detected`
+- jqf: pgo · `12293e9be9eef7f96dcee5b1d47a9c61869a7b4a`
+- time: 2026-09-01T06:45:47Z
+- diagnostics: `jqf: build=pgo profile=e0e45a21.970d2302.aarch64-apple-darwin.a2de6ca8 allocator=mimalloc platform=aarch64-macos pcores=6 ecores=12 pcore_source=detected`
 - jq: 1.8.2
 - jaq: 3.1.1
 - gojq: 0.12.19
@@ -27,792 +27,792 @@ These numbers are a local snapshot for guidance, not a published result.
 
 | tool | wall | rss | n |
 | --- | --- | --- | --- |
-| jqf-serial | 1.08× (median 1.00×) | 0.97× (median 1.00×) | 678 |
-| jq | 2.66× (median 2.41×) | 1.35× (median 1.25×) | 406 |
-| jaq | 1.51× (median 1.34×) | 1.60× (median 1.11×) | 622 |
-| gojq | 2.17× (median 2.18×) | 2.10× (median 1.97×) | 492 |
-| yq | 4.70× (median 3.93×) | 9.67× (median 7.65×) | 363 |
-| dasel | 2.57× (median 2.90×) | 3.50× (median 2.91×) | 96 |
-| mlr | 1.29× (median 1.72×) | 6.76× (median 7.40×) | 56 |
+| jqf-serial | 1.09× (median 1.00×) | 0.96× (median 1.00×) | 678 |
+| jq | 2.65× (median 2.61×) | 1.48× (median 1.27×) | 406 |
+| jaq | 1.54× (median 1.36×) | 1.74× (median 1.25×) | 598 |
+| gojq | 2.22× (median 2.25×) | 2.30× (median 2.28×) | 492 |
+| yq | 4.67× (median 3.97×) | 10.51× (median 7.71×) | 358 |
+| dasel | 2.70× (median 3.21×) | 4.01× (median 3.84×) | 96 |
+| mlr | 1.25× (median 1.65×) | 6.78× (median 7.37×) | 56 |
 
 document = json/yaml/toml. streaming = ndjson/csv records.
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 0.99× (median 1.00×) | 1.00× (median 1.00×) | 552 | 1.60× (median 1.06×) | 0.83× (median 1.00×) | 126 |
-| jq | 2.43× (median 2.24×) | 2.14× (median 1.98×) | 336 | 4.14× (median 3.93×) | 0.15× (median 0.22×) | 70 |
-| jaq | 1.40× (median 1.32×) | 1.81× (median 1.43×) | 552 | 2.64× (median 2.56×) | 0.63× (median 0.60×) | 70 |
-| gojq | 2.03× (median 2.12×) | 2.40× (median 2.31×) | 433 | 3.59× (median 3.68×) | 0.80× (median 1.18×) | 59 |
-| yq | 4.49× (median 3.76×) | 9.24× (median 7.47×) | 333 | 7.78× (median 7.02×) | 15.95× (median 15.26×) | 30 |
-| dasel | 2.57× (median 2.90×) | 3.50× (median 2.91×) | 96 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 1.29× (median 1.72×) | 6.76× (median 7.40×) | 56 |
+| jqf-serial | 0.99× (median 1.00×) | 1.00× (median 1.00×) | 552 | 1.62× (median 1.09×) | 0.83× (median 1.00×) | 126 |
+| jq | 2.44× (median 2.40×) | 2.39× (median 2.11×) | 336 | 3.90× (median 3.55×) | 0.15× (median 0.22×) | 70 |
+| jaq | 1.44× (median 1.34×) | 1.99× (median 1.56×) | 528 | 2.55× (median 2.59×) | 0.63× (median 0.61×) | 70 |
+| gojq | 2.08× (median 2.22×) | 2.65× (median 2.59×) | 433 | 3.57× (median 3.59×) | 0.81× (median 1.19×) | 59 |
+| yq | 4.48× (median 3.90×) | 10.11× (median 7.61×) | 328 | 7.36× (median 6.93×) | 16.13× (median 15.08×) | 30 |
+| dasel | 2.70× (median 3.21×) | 4.01× (median 3.84×) | 96 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.25× (median 1.65×) | 6.78× (median 7.37×) | 56 |
 
 ## geomean vs jqf · 100
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 1.00× (median 1.01×) | 1.00× (median 1.00×) | 84 | 1.00× (median 1.02×) | 1.01× (median 1.01×) | 18 |
-| jq | 1.06× (median 1.06×) | 0.63× (median 0.58×) | 48 | 1.09× (median 1.08×) | 0.56× (median 0.56×) | 10 |
-| jaq | 1.02× (median 1.02×) | 0.89× (median 0.87×) | 84 | 1.00× (median 1.02×) | 0.84× (median 0.83×) | 10 |
-| gojq | 1.10× (median 1.09×) | 1.36× (median 1.31×) | 66 | 1.06× (median 1.08×) | 1.37× (median 1.38×) | 10 |
-| yq | 2.63× (median 2.19×) | 5.95× (median 6.20×) | 65 | 2.21× (median 2.31×) | 4.80× (median 4.80×) | 6 |
-| dasel | 1.36× (median 1.43×) | 2.37× (median 2.36×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 2.00× (median 2.11×) | 6.74× (median 6.70×) | 8 |
+| jqf-serial | 0.99× (median 0.99×) | 1.00× (median 1.00×) | 84 | 1.06× (median 1.03×) | 1.00× (median 1.00×) | 18 |
+| jq | 1.06× (median 1.06×) | 0.63× (median 0.58×) | 48 | 1.11× (median 1.15×) | 0.55× (median 0.55×) | 10 |
+| jaq | 0.98× (median 0.96×) | 0.89× (median 0.86×) | 80 | 1.02× (median 1.00×) | 0.81× (median 0.81×) | 10 |
+| gojq | 1.12× (median 1.06×) | 1.40× (median 1.34×) | 66 | 1.19× (median 1.12×) | 1.38× (median 1.38×) | 10 |
+| yq | 2.58× (median 2.20×) | 6.03× (median 6.27×) | 62 | 2.16× (median 1.99×) | 4.73× (median 4.62×) | 6 |
+| dasel | 1.39× (median 1.36×) | 2.45× (median 2.59×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.92× (median 1.89×) | 6.70× (median 6.68×) | 8 |
 
 ## geomean vs jqf · 1k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 0.99× (median 1.00×) | 1.00× (median 1.00×) | 84 | 1.11× (median 1.06×) | 0.85× (median 1.00×) | 18 |
-| jq | 1.50× (median 1.37×) | 1.05× (median 0.76×) | 48 | 1.68× (median 1.61×) | 0.38× (median 0.41×) | 10 |
-| jaq | 1.13× (median 1.12×) | 1.18× (median 0.94×) | 84 | 1.19× (median 1.16×) | 0.63× (median 0.68×) | 10 |
-| gojq | 1.43× (median 1.27×) | 1.70× (median 1.44×) | 64 | 1.58× (median 1.50×) | 1.40× (median 1.61×) | 9 |
-| yq | 4.45× (median 2.73×) | 7.24× (median 7.24×) | 58 | 5.65× (median 7.37×) | 7.67× (median 8.37×) | 6 |
-| dasel | 1.99× (median 1.91×) | 3.16× (median 2.55×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 2.09× (median 2.10×) | 7.12× (median 7.19×) | 8 |
+| jqf-serial | 1.00× (median 0.99×) | 1.00× (median 1.00×) | 84 | 1.07× (median 1.05×) | 0.85× (median 1.00×) | 18 |
+| jq | 1.51× (median 1.31×) | 1.06× (median 0.75×) | 48 | 1.60× (median 1.53×) | 0.37× (median 0.41×) | 10 |
+| jaq | 1.15× (median 1.13×) | 1.21× (median 0.94×) | 80 | 1.12× (median 1.12×) | 0.61× (median 0.66×) | 10 |
+| gojq | 1.50× (median 1.34×) | 1.76× (median 1.48×) | 64 | 1.51× (median 1.38×) | 1.40× (median 1.59×) | 9 |
+| yq | 3.96× (median 2.64×) | 7.37× (median 7.26×) | 56 | 5.15× (median 7.03×) | 8.01× (median 8.90×) | 6 |
+| dasel | 2.06× (median 2.39×) | 3.46× (median 3.67×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.90× (median 1.93×) | 7.07× (median 7.11×) | 8 |
 
 ## geomean vs jqf · 5k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 0.96× (median 1.00×) | 1.00× (median 1.00×) | 84 | 1.21× (median 1.00×) | 0.82× (median 1.00×) | 18 |
-| jq | 2.01× (median 1.63×) | 1.73× (median 1.27×) | 48 | 2.61× (median 2.74×) | 0.27× (median 0.34×) | 10 |
-| jaq | 1.28× (median 1.28×) | 1.61× (median 1.16×) | 84 | 1.69× (median 1.62×) | 0.61× (median 0.66×) | 10 |
-| gojq | 1.90× (median 1.76×) | 2.14× (median 2.05×) | 64 | 2.09× (median 1.55×) | 1.47× (median 2.28×) | 8 |
-| yq | 3.80× (median 3.24×) | 9.06× (median 7.83×) | 50 | 12.37× (median 16.19×) | 15.24× (median 18.14×) | 6 |
-| dasel | 2.66× (median 2.77×) | 3.61× (median 3.19×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 1.72× (median 1.72×) | 7.32× (median 7.17×) | 8 |
+| jqf-serial | 0.97× (median 0.97×) | 1.00× (median 1.00×) | 84 | 1.25× (median 1.08×) | 0.83× (median 1.00×) | 18 |
+| jq | 2.08× (median 1.70×) | 1.83× (median 1.27×) | 48 | 2.49× (median 2.62×) | 0.27× (median 0.34×) | 10 |
+| jaq | 1.32× (median 1.30×) | 1.71× (median 1.27×) | 80 | 1.64× (median 1.74×) | 0.61× (median 0.67×) | 10 |
+| gojq | 1.93× (median 1.75×) | 2.29× (median 2.21×) | 64 | 2.07× (median 1.55×) | 1.49× (median 2.28×) | 8 |
+| yq | 3.88× (median 3.44×) | 9.88× (median 9.75×) | 50 | 11.59× (median 15.85×) | 15.79× (median 18.35×) | 6 |
+| dasel | 2.67× (median 3.17×) | 4.28× (median 4.23×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.77× (median 1.68×) | 7.27× (median 7.12×) | 8 |
 
 ## geomean vs jqf · 25k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 1.01× (median 1.00×) | 0.99× (median 1.00×) | 84 | 1.79× (median 1.96×) | 0.79× (median 0.79×) | 18 |
-| jq | 3.03× (median 2.78×) | 2.77× (median 3.61×) | 48 | 5.72× (median 6.85×) | 0.14× (median 0.19×) | 10 |
-| jaq | 1.57× (median 1.47×) | 2.16× (median 1.94×) | 84 | 3.29× (median 3.50×) | 0.60× (median 0.59×) | 10 |
-| gojq | 2.46× (median 2.39×) | 2.68× (median 3.17×) | 64 | 5.13× (median 4.13×) | 0.88× (median 1.49×) | 8 |
-| yq | 5.06× (median 4.80×) | 10.24× (median 8.35×) | 46 | 8.47× (median 6.35×) | 19.82× (median 18.23×) | 3 |
-| dasel | 3.23× (median 3.49×) | 4.06× (median 4.29×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 1.22× (median 1.42×) | 6.83× (median 7.92×) | 8 |
+| jqf-serial | 1.00× (median 1.00×) | 0.99× (median 1.00×) | 84 | 1.82× (median 2.21×) | 0.81× (median 0.80×) | 18 |
+| jq | 3.01× (median 3.06×) | 3.15× (median 3.62×) | 48 | 5.53× (median 6.33×) | 0.14× (median 0.19×) | 10 |
+| jaq | 1.61× (median 1.48×) | 2.42× (median 2.05×) | 80 | 3.27× (median 3.37×) | 0.61× (median 0.58×) | 10 |
+| gojq | 2.53× (median 2.56×) | 3.01× (median 3.22×) | 64 | 5.10× (median 4.19×) | 0.90× (median 1.51×) | 8 |
+| yq | 5.10× (median 5.05×) | 11.31× (median 11.55×) | 46 | 8.53× (median 6.15×) | 19.56× (median 18.19×) | 3 |
+| dasel | 3.47× (median 3.62×) | 4.76× (median 4.59×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.16× (median 1.42×) | 6.94× (median 8.03×) | 8 |
 
 ## geomean vs jqf · 50k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 1.01× (median 1.00×) | 1.00× (median 1.00×) | 84 | 2.01× (median 2.48×) | 0.78× (median 0.89×) | 18 |
-| jq | 3.41× (median 3.22×) | 3.59× (median 6.05×) | 48 | 7.48× (median 9.28×) | 0.09× (median 0.13×) | 10 |
-| jaq | 1.63× (median 1.59×) | 2.43× (median 2.07×) | 84 | 4.14× (median 4.21×) | 0.59× (median 0.52×) | 10 |
-| gojq | 2.66× (median 2.68×) | 3.15× (median 3.42×) | 64 | 6.79× (median 5.80×) | 0.62× (median 1.11×) | 8 |
-| yq | 5.35× (median 4.99×) | 11.22× (median 9.69×) | 43 | 12.40× (median 8.01×) | 33.37× (median 30.46×) | 3 |
-| dasel | 3.43× (median 3.72×) | 4.03× (median 4.21×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 1.04× (median 1.36×) | 6.78× (median 8.04×) | 8 |
+| jqf-serial | 1.00× (median 1.00×) | 1.00× (median 1.00×) | 84 | 2.02× (median 2.44×) | 0.79× (median 0.89×) | 18 |
+| jq | 3.46× (median 3.53×) | 4.14× (median 6.07×) | 48 | 6.84× (median 7.69×) | 0.09× (median 0.14×) | 10 |
+| jaq | 1.71× (median 1.59×) | 2.77× (median 2.46×) | 80 | 4.05× (median 4.01×) | 0.59× (median 0.53×) | 10 |
+| gojq | 2.73× (median 2.71×) | 3.55× (median 3.72×) | 64 | 6.68× (median 5.44×) | 0.63× (median 1.16×) | 8 |
+| yq | 5.52× (median 5.00×) | 12.53× (median 11.44×) | 43 | 11.72× (median 7.06×) | 33.32× (median 30.73×) | 3 |
+| dasel | 3.71× (median 3.76×) | 4.80× (median 4.59×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 1.03× (median 1.37×) | 6.82× (median 8.35×) | 8 |
 
 ## geomean vs jqf · 100k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 0.97× (median 0.99×) | 1.00× (median 1.00×) | 84 | 2.27× (median 3.27×) | 0.77× (median 0.93×) | 18 |
-| jq | 3.68× (median 3.79×) | 4.09× (median 6.24×) | 48 | 9.45× (median 10.93×) | 0.06× (median 0.09×) | 10 |
-| jaq | 1.67× (median 1.63×) | 2.60× (median 2.11×) | 84 | 5.28× (median 5.36×) | 0.59× (median 0.54×) | 10 |
-| gojq | 2.74× (median 2.82×) | 3.37× (median 3.74×) | 64 | 8.92× (median 8.60×) | 0.42× (median 0.79×) | 8 |
-| yq | 5.61× (median 5.13×) | 11.97× (median 9.55×) | 43 | 15.70× (median 9.18×) | 56.13× (median 52.61×) | 3 |
-| dasel | 3.58× (median 3.77×) | 4.14× (median 4.47×) | 16 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 0.87× (median 1.27×) | 6.55× (median 8.18×) | 8 |
+| jqf-serial | 0.98× (median 1.00×) | 1.00× (median 1.00×) | 84 | 2.27× (median 2.96×) | 0.77× (median 0.94×) | 18 |
+| jq | 3.76× (median 3.73×) | 4.93× (median 8.10×) | 48 | 8.25× (median 9.80×) | 0.06× (median 0.10×) | 10 |
+| jaq | 1.80× (median 1.79×) | 3.06× (median 3.04×) | 80 | 4.89× (median 5.02×) | 0.58× (median 0.55×) | 10 |
+| gojq | 2.86× (median 2.93×) | 3.92× (median 4.14×) | 64 | 8.30× (median 7.54×) | 0.42× (median 0.82×) | 8 |
+| yq | 5.92× (median 5.10×) | 13.73× (median 9.95×) | 43 | 13.89× (median 8.46×) | 56.24× (median 51.52×) | 3 |
+| dasel | 3.91× (median 3.96×) | 5.00× (median 4.74×) | 16 | n/a | n/a | 0 |
+| mlr | n/a | n/a | 0 | 0.84× (median 1.19×) | 6.59× (median 8.09×) | 8 |
 
 ## geomean vs jqf · 200k
 
 | tool | document wall | document rss | n | streaming wall | streaming rss | n |
 | --- | --- | --- | --- | --- | --- | --- |
-| jqf-serial | 0.99× (median 0.99×) | 1.00× (median 1.00×) | 48 | 2.44× (median 4.01×) | 0.77× (median 0.96×) | 18 |
-| jq | 4.06× (median 3.98×) | 4.45× (median 6.45×) | 48 | 10.66× (median 12.03×) | 0.04× (median 0.06×) | 10 |
-| jaq | 1.95× (median 1.93×) | 3.66× (median 6.47×) | 48 | 6.09× (median 5.98×) | 0.60× (median 0.56×) | 10 |
-| gojq | 2.91× (median 2.95×) | 3.72× (median 4.81×) | 47 | 10.81× (median 10.23×) | 0.28× (median 0.60×) | 8 |
-| yq | 9.52× (median 9.83×) | 18.62× (median 21.33×) | 28 | 20.47× (median 9.85×) | 90.96× (median 81.93×) | 3 |
+| jqf-serial | 0.99× (median 1.00×) | 1.00× (median 1.00×) | 48 | 2.51× (median 4.13×) | 0.78× (median 0.96×) | 18 |
+| jq | 4.03× (median 4.06×) | 5.59× (median 8.17×) | 48 | 9.88× (median 10.96×) | 0.04× (median 0.07×) | 10 |
+| jaq | 2.00× (median 1.98×) | 4.60× (median 8.17×) | 48 | 5.83× (median 5.43×) | 0.61× (median 0.58×) | 10 |
+| gojq | 3.00× (median 3.16×) | 4.68× (median 6.19×) | 47 | 10.24× (median 9.52×) | 0.27× (median 0.60×) | 8 |
+| yq | 9.65× (median 9.44×) | 23.24× (median 31.94×) | 28 | 20.15× (median 9.83×) | 90.67× (median 82.98×) | 3 |
 | dasel | n/a | n/a | 0 | n/a | n/a | 0 |
-| mlr | n/a | n/a | 0 | 0.73× (median 1.07×) | 6.06× (median 7.72×) | 8 |
+| mlr | n/a | n/a | 0 | 0.74× (median 0.98×) | 6.15× (median 7.74×) | 8 |
 
 ## results
 
 | case | jqf | jqf-serial | jq | jaq | gojq | yq | dasel | mlr |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| csv-broad-100-count | 9.37 ms / 4.9 MB | 9.23 ms / 4.9 MB | n/a | n/a | n/a | 30.1 ms / 31 MB | n/a | 19.8 ms / 33 MB |
-| csv-broad-100-first-id | 9.42 ms / 4.7 MB | 9.49 ms / 4.8 MB | n/a | n/a | n/a | 28.8 ms / 26 MB | n/a | 18.8 ms / 33 MB |
-| csv-broad-100-high-count | 11.6 ms / 5.0 MB | 12.9 ms / 5.0 MB | n/a | n/a | n/a | 34.2 ms / 27 MB | n/a | 21.5 ms / 33 MB |
-| csv-broad-100-sum-score | 16.0 ms / 4.9 MB | 12.8 ms / 5.0 MB | n/a | n/a | n/a | n/a | n/a | 24.2 ms / 33 MB |
-| csv-broad-1k-count | 9.88 ms / 5.5 MB | 10.5 ms / 5.5 MB | n/a | n/a | n/a | 126 ms / 70 MB | n/a | 21.0 ms / 41 MB |
-| csv-broad-1k-first-id | 10.1 ms / 5.4 MB | 9.23 ms / 5.4 MB | n/a | n/a | n/a | 122 ms / 63 MB | n/a | 19.7 ms / 41 MB |
-| csv-broad-1k-high-count | 9.85 ms / 5.6 MB | 10.1 ms / 5.6 MB | n/a | n/a | n/a | 133 ms / 67 MB | n/a | 21.7 ms / 41 MB |
-| csv-broad-1k-sum-score | 10.3 ms / 5.5 MB | 10.9 ms / 5.6 MB | n/a | n/a | n/a | n/a | n/a | 20.7 ms / 41 MB |
-| csv-broad-5k-count | 16.9 ms / 8.2 MB | 16.5 ms / 8.2 MB | n/a | n/a | n/a | 515 ms / 229 MB | n/a | 30.2 ms / 65 MB |
-| csv-broad-5k-first-id | 9.27 ms / 8.0 MB | 11.4 ms / 8.0 MB | n/a | n/a | n/a | 528 ms / 232 MB | n/a | 23.5 ms / 50 MB |
-| csv-broad-5k-high-count | 20.5 ms / 8.2 MB | 21.3 ms / 8.3 MB | n/a | n/a | n/a | 575 ms / 259 MB | n/a | 31.8 ms / 66 MB |
-| csv-broad-5k-sum-score | 18.9 ms / 8.2 MB | 17.9 ms / 8.2 MB | n/a | n/a | n/a | n/a | n/a | 31.3 ms / 66 MB |
-| csv-broad-25k-count | 37.7 ms / 22 MB | 39.0 ms / 22 MB | n/a | n/a | n/a | excluded | n/a | 72.6 ms / 158 MB |
-| csv-broad-25k-first-id | 13.3 ms / 21 MB | 14.0 ms / 21 MB | n/a | n/a | n/a | excluded | n/a | 24.2 ms / 50 MB |
-| csv-broad-25k-high-count | 53.2 ms / 22 MB | 51.9 ms / 22 MB | n/a | n/a | n/a | excluded | n/a | 73.7 ms / 175 MB |
-| csv-broad-25k-sum-score | 50.5 ms / 22 MB | 50.2 ms / 22 MB | n/a | n/a | n/a | n/a | n/a | 73.0 ms / 166 MB |
-| csv-broad-50k-count | 62.8 ms / 38 MB | 61.6 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 120 ms / 283 MB |
-| csv-broad-50k-first-id | 16.0 ms / 38 MB | 16.0 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 23.8 ms / 50 MB |
-| csv-broad-50k-high-count | 92.9 ms / 38 MB | 91.7 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 123 ms / 326 MB |
-| csv-broad-50k-sum-score | 87.9 ms / 38 MB | 88.6 ms / 38 MB | n/a | n/a | n/a | n/a | n/a | 123 ms / 289 MB |
-| csv-broad-100k-count | 114 ms / 72 MB | 111 ms / 72 MB | n/a | n/a | n/a | excluded | n/a | 224 ms / 534 MB |
-| csv-broad-100k-first-id | 20.6 ms / 71 MB | 20.3 ms / 71 MB | n/a | n/a | n/a | excluded | n/a | 23.9 ms / 49 MB |
-| csv-broad-100k-high-count | 166 ms / 72 MB | 171 ms / 72 MB | n/a | n/a | n/a | excluded | n/a | 228 ms / 607 MB |
-| csv-broad-100k-sum-score | 163 ms / 72 MB | 163 ms / 72 MB | n/a | n/a | n/a | n/a | n/a | 225 ms / 566 MB |
-| csv-broad-200k-count | 215 ms / 139 MB | 212 ms / 139 MB | n/a | n/a | n/a | excluded | n/a | 421 ms / 1053 MB |
-| csv-broad-200k-first-id | 30.0 ms / 138 MB | 28.9 ms / 138 MB | n/a | n/a | n/a | excluded | n/a | 24.4 ms / 50 MB |
-| csv-broad-200k-high-count | 322 ms / 139 MB | 321 ms / 139 MB | n/a | n/a | n/a | excluded | n/a | 426 ms / 1079 MB |
-| csv-broad-200k-sum-score | 308 ms / 139 MB | 315 ms / 139 MB | n/a | n/a | n/a | n/a | n/a | 417 ms / 1062 MB |
-| csv-narrow-100-count | 9.59 ms / 4.8 MB | 9.09 ms / 4.8 MB | n/a | n/a | n/a | 14.6 ms / 19 MB | n/a | 20.3 ms / 32 MB |
-| csv-narrow-100-first-id | 8.37 ms / 4.6 MB | 9.26 ms / 4.7 MB | n/a | n/a | n/a | 14.1 ms / 20 MB | n/a | 18.4 ms / 32 MB |
-| csv-narrow-100-high-count | 9.00 ms / 4.9 MB | 9.10 ms / 4.9 MB | n/a | n/a | n/a | 14.3 ms / 19 MB | n/a | 19.5 ms / 32 MB |
-| csv-narrow-100-sum-score | 9.39 ms / 4.8 MB | 10.1 ms / 4.8 MB | n/a | n/a | n/a | n/a | n/a | 20.5 ms / 32 MB |
-| csv-narrow-1k-count | 8.79 ms / 4.8 MB | 8.66 ms / 4.8 MB | n/a | n/a | n/a | 20.8 ms / 22 MB | n/a | 19.7 ms / 33 MB |
-| csv-narrow-1k-first-id | 7.93 ms / 4.6 MB | 8.78 ms / 4.7 MB | n/a | n/a | n/a | 21.0 ms / 23 MB | n/a | 17.5 ms / 33 MB |
-| csv-narrow-1k-high-count | 9.67 ms / 4.9 MB | 9.84 ms / 4.9 MB | n/a | n/a | n/a | 24.1 ms / 25 MB | n/a | 20.1 ms / 33 MB |
-| csv-narrow-1k-sum-score | 10.1 ms / 4.8 MB | 12.2 ms / 4.9 MB | n/a | n/a | n/a | n/a | n/a | 19.4 ms / 33 MB |
-| csv-narrow-5k-count | 11.6 ms / 4.8 MB | 11.4 ms / 4.9 MB | n/a | n/a | n/a | 47.9 ms / 37 MB | n/a | 20.7 ms / 35 MB |
-| csv-narrow-5k-first-id | 10.4 ms / 4.7 MB | 9.09 ms / 4.7 MB | n/a | n/a | n/a | 45.0 ms / 39 MB | n/a | 19.0 ms / 33 MB |
-| csv-narrow-5k-high-count | 13.2 ms / 4.9 MB | 13.0 ms / 5.0 MB | n/a | n/a | n/a | 53.9 ms / 39 MB | n/a | 18.8 ms / 35 MB |
-| csv-narrow-5k-sum-score | 13.7 ms / 4.9 MB | 12.9 ms / 4.9 MB | n/a | n/a | n/a | n/a | n/a | 19.0 ms / 35 MB |
-| csv-narrow-25k-count | 23.3 ms / 5.0 MB | 23.3 ms / 5.1 MB | n/a | n/a | n/a | 148 ms / 90 MB | n/a | 19.7 ms / 42 MB |
-| csv-narrow-25k-first-id | 9.51 ms / 4.9 MB | 8.98 ms / 4.9 MB | n/a | n/a | n/a | 152 ms / 89 MB | n/a | 19.3 ms / 33 MB |
-| csv-narrow-25k-high-count | 32.3 ms / 5.1 MB | 34.2 ms / 5.2 MB | n/a | n/a | n/a | 193 ms / 123 MB | n/a | 22.3 ms / 46 MB |
-| csv-narrow-25k-sum-score | 31.8 ms / 5.1 MB | 30.5 ms / 5.1 MB | n/a | n/a | n/a | n/a | n/a | 19.2 ms / 44 MB |
-| csv-narrow-50k-count | 35.8 ms / 5.3 MB | 35.9 ms / 5.4 MB | n/a | n/a | n/a | 287 ms / 162 MB | n/a | 21.3 ms / 52 MB |
-| csv-narrow-50k-first-id | 8.11 ms / 5.1 MB | 9.08 ms / 5.2 MB | n/a | n/a | n/a | 287 ms / 151 MB | n/a | 18.7 ms / 32 MB |
-| csv-narrow-50k-high-count | 57.0 ms / 5.4 MB | 54.0 ms / 5.4 MB | n/a | n/a | n/a | 383 ms / 224 MB | n/a | 24.5 ms / 59 MB |
-| csv-narrow-50k-sum-score | 52.0 ms / 5.3 MB | 52.5 ms / 5.4 MB | n/a | n/a | n/a | n/a | n/a | 23.6 ms / 56 MB |
-| csv-narrow-100k-count | 60.3 ms / 5.8 MB | 57.9 ms / 5.9 MB | n/a | n/a | n/a | 553 ms / 283 MB | n/a | 25.9 ms / 72 MB |
-| csv-narrow-100k-first-id | 9.55 ms / 5.7 MB | 10.1 ms / 5.7 MB | n/a | n/a | n/a | 550 ms / 298 MB | n/a | 18.7 ms / 33 MB |
-| csv-narrow-100k-high-count | 101 ms / 5.9 MB | 99.2 ms / 5.9 MB | n/a | n/a | n/a | 736 ms / 411 MB | n/a | 29.1 ms / 70 MB |
-| csv-narrow-100k-sum-score | 92.0 ms / 5.9 MB | 91.9 ms / 5.9 MB | n/a | n/a | n/a | n/a | n/a | 29.1 ms / 68 MB |
-| csv-narrow-200k-count | 108 ms / 7.0 MB | 108 ms / 7.0 MB | n/a | n/a | n/a | 1063 ms / 554 MB | n/a | 33.6 ms / 77 MB |
-| csv-narrow-200k-first-id | 9.88 ms / 6.8 MB | 10.0 ms / 6.9 MB | n/a | n/a | n/a | 1068 ms / 557 MB | n/a | 18.9 ms / 33 MB |
-| csv-narrow-200k-high-count | 187 ms / 7.1 MB | 187 ms / 7.1 MB | n/a | n/a | n/a | 1507 ms / 816 MB | n/a | 39.5 ms / 107 MB |
-| csv-narrow-200k-sum-score | 171 ms / 7.0 MB | 171 ms / 7.0 MB | n/a | n/a | n/a | n/a | n/a | 37.8 ms / 97 MB |
-| ndjson-broad-100-first-id | 6.83 ms / 4.7 MB | 7.16 ms / 4.7 MB | 8.51 ms / 2.7 MB | 7.46 ms / 4.0 MB | 7.71 ms / 6.7 MB | n/a | n/a | n/a |
-| ndjson-broad-100-identity | 8.33 ms / 4.8 MB | 7.90 ms / 4.8 MB | 10.6 ms / 2.7 MB | 10.2 ms / 4.0 MB | 8.22 ms / 6.9 MB | n/a | n/a | n/a |
-| ndjson-broad-100-score | 6.93 ms / 4.8 MB | 7.16 ms / 4.8 MB | 7.38 ms / 2.7 MB | 7.30 ms / 4.0 MB | 8.06 ms / 6.7 MB | n/a | n/a | n/a |
-| ndjson-broad-100-select-id | 6.85 ms / 4.8 MB | 6.73 ms / 4.9 MB | 7.47 ms / 2.7 MB | 7.38 ms / 4.0 MB | 8.25 ms / 6.8 MB | n/a | n/a | n/a |
-| ndjson-broad-100-select-score | 8.07 ms / 4.9 MB | 8.33 ms / 4.9 MB | 13.2 ms / 2.7 MB | 7.81 ms / 4.0 MB | 8.27 ms / 7.1 MB | n/a | n/a | n/a |
-| ndjson-broad-1k-first-id | 8.58 ms / 9.5 MB | 9.13 ms / 5.7 MB | 18.2 ms / 2.7 MB | 9.95 ms / 4.9 MB | 16.1 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-broad-1k-identity | 8.89 ms / 12 MB | 11.4 ms / 5.7 MB | 36.1 ms / 2.7 MB | 14.4 ms / 4.9 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-1k-score | 8.09 ms / 9.3 MB | 9.67 ms / 5.7 MB | 16.3 ms / 2.7 MB | 11.2 ms / 4.9 MB | 16.5 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-broad-1k-select-id | 7.90 ms / 10 MB | 9.91 ms / 5.8 MB | 16.9 ms / 2.7 MB | 11.1 ms / 5.0 MB | 16.9 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-broad-1k-select-score | 9.32 ms / 12 MB | 14.4 ms / 5.8 MB | 38.2 ms / 2.7 MB | 13.9 ms / 5.0 MB | 20.2 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-broad-5k-first-id | 10.5 ms / 19 MB | 20.9 ms / 10 MB | 54.2 ms / 2.7 MB | 26.5 ms / 9.2 MB | 50.3 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-5k-identity | 13.5 ms / 26 MB | 28.8 ms / 10 MB | 153 ms / 2.7 MB | 44.7 ms / 9.2 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-5k-score | 12.1 ms / 18 MB | 19.3 ms / 10 MB | 53.6 ms / 2.6 MB | 27.1 ms / 9.2 MB | 51.4 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-broad-5k-select-id | 12.8 ms / 18 MB | 23.3 ms / 10 MB | 52.6 ms / 2.7 MB | 25.0 ms / 9.3 MB | 47.1 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-5k-select-score | 17.0 ms / 23 MB | 46.7 ms / 10 MB | 139 ms / 2.8 MB | 45.1 ms / 9.3 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-25k-first-id | 21.5 ms / 40 MB | 67.5 ms / 32 MB | 227 ms / 2.7 MB | 100 ms / 31 MB | 216 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-25k-identity | 27.0 ms / 69 MB | 114 ms / 32 MB | 670 ms / 2.7 MB | 193 ms / 31 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-25k-score | 21.1 ms / 41 MB | 69.8 ms / 32 MB | 231 ms / 2.7 MB | 104 ms / 31 MB | 220 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-25k-select-id | 21.4 ms / 41 MB | 80.7 ms / 32 MB | 229 ms / 2.7 MB | 98.4 ms / 31 MB | 199 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-25k-select-score | 40.9 ms / 66 MB | 203 ms / 32 MB | 631 ms / 2.7 MB | 198 ms / 31 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-50k-first-id | 31.2 ms / 66 MB | 130 ms / 59 MB | 448 ms / 2.7 MB | 195 ms / 58 MB | 416 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-50k-identity | 43.4 ms / 115 MB | 219 ms / 59 MB | 1384 ms / 2.7 MB | 367 ms / 58 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-50k-score | 31.0 ms / 66 MB | 125 ms / 59 MB | 445 ms / 2.7 MB | 196 ms / 58 MB | 414 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-50k-select-id | 33.2 ms / 67 MB | 152 ms / 59 MB | 449 ms / 2.7 MB | 189 ms / 58 MB | 394 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-50k-select-score | 71.8 ms / 104 MB | 396 ms / 59 MB | 1262 ms / 2.7 MB | 380 ms / 58 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-100k-first-id | 51.9 ms / 122 MB | 249 ms / 113 MB | 890 ms / 2.7 MB | 378 ms / 112 MB | 822 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-100k-identity | 72.6 ms / 184 MB | 427 ms / 113 MB | 2638 ms / 2.7 MB | 728 ms / 112 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-100k-score | 50.4 ms / 121 MB | 248 ms / 113 MB | 890 ms / 2.7 MB | 384 ms / 112 MB | 829 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-broad-100k-select-id | 58.8 ms / 120 MB | 297 ms / 113 MB | 892 ms / 2.7 MB | 363 ms / 112 MB | 758 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-broad-100k-select-score | 126 ms / 194 MB | 769 ms / 113 MB | 2478 ms / 2.7 MB | 751 ms / 112 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-200k-first-id | 94.3 ms / 230 MB | 473 ms / 221 MB | 1764 ms / 2.7 MB | 760 ms / 220 MB | 1640 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-broad-200k-identity | 141 ms / 387 MB | 829 ms / 221 MB | 5235 ms / 2.7 MB | 1433 ms / 220 MB | disagreed | n/a | n/a | n/a |
-| ndjson-broad-200k-score | 90.6 ms / 231 MB | 483 ms / 221 MB | 1744 ms / 2.7 MB | 746 ms / 220 MB | 1682 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-broad-200k-select-id | 103 ms / 228 MB | 578 ms / 221 MB | 1765 ms / 2.6 MB | 721 ms / 220 MB | 1507 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-broad-200k-select-score | 246 ms / 359 MB | 1550 ms / 221 MB | 4906 ms / 2.7 MB | 1512 ms / 220 MB | disagreed | n/a | n/a | n/a |
-| ndjson-narrow-100-first-id | 5.60 ms / 4.6 MB | 6.10 ms / 4.6 MB | 6.41 ms / 2.6 MB | 6.15 ms / 3.9 MB | 5.66 ms / 6.0 MB | n/a | n/a | n/a |
-| ndjson-narrow-100-identity | 5.43 ms / 4.5 MB | 5.72 ms / 4.5 MB | 5.47 ms / 2.6 MB | 5.39 ms / 3.9 MB | 5.72 ms / 6.0 MB | n/a | n/a | n/a |
-| ndjson-narrow-100-score | 5.50 ms / 4.6 MB | 5.97 ms / 4.6 MB | 5.37 ms / 2.6 MB | 5.06 ms / 3.9 MB | 6.04 ms / 6.0 MB | n/a | n/a | n/a |
-| ndjson-narrow-100-select-id | 6.74 ms / 4.7 MB | 5.83 ms / 4.7 MB | 5.54 ms / 2.6 MB | 5.25 ms / 3.9 MB | 5.64 ms / 6.1 MB | n/a | n/a | n/a |
-| ndjson-narrow-100-select-score | 6.68 ms / 4.7 MB | 5.69 ms / 4.7 MB | 5.89 ms / 2.6 MB | 5.87 ms / 3.9 MB | 7.35 ms / 6.1 MB | n/a | n/a | n/a |
-| ndjson-narrow-1k-first-id | 6.21 ms / 4.7 MB | 6.23 ms / 4.7 MB | 6.04 ms / 2.6 MB | 5.88 ms / 3.9 MB | 7.80 ms / 7.5 MB | n/a | n/a | n/a |
-| ndjson-narrow-1k-identity | 6.70 ms / 4.5 MB | 6.81 ms / 4.5 MB | 6.90 ms / 2.6 MB | 6.57 ms / 3.9 MB | 10.1 ms / 7.6 MB | n/a | n/a | n/a |
-| ndjson-narrow-1k-score | 5.87 ms / 4.7 MB | 6.27 ms / 4.7 MB | 6.06 ms / 2.6 MB | 6.03 ms / 3.9 MB | 6.99 ms / 7.6 MB | n/a | n/a | n/a |
-| ndjson-narrow-1k-select-id | 6.86 ms / 4.7 MB | 7.18 ms / 4.7 MB | 6.52 ms / 2.6 MB | 6.58 ms / 3.9 MB | 8.43 ms / 8.2 MB | n/a | n/a | n/a |
-| ndjson-narrow-1k-select-score | 6.74 ms / 4.8 MB | 8.46 ms / 4.8 MB | 8.06 ms / 2.6 MB | 7.85 ms / 3.9 MB | 8.23 ms / 8.6 MB | n/a | n/a | n/a |
-| ndjson-narrow-5k-first-id | 9.83 ms / 4.8 MB | 9.58 ms / 4.8 MB | 9.50 ms / 2.6 MB | 12.6 ms / 4.0 MB | 12.7 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-narrow-5k-identity | 7.92 ms / 4.7 MB | 8.05 ms / 4.7 MB | 10.8 ms / 2.6 MB | 9.28 ms / 4.0 MB | 13.2 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-narrow-5k-score | 8.83 ms / 4.8 MB | 8.86 ms / 4.8 MB | 8.97 ms / 2.6 MB | 11.2 ms / 4.0 MB | 12.6 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-narrow-5k-select-id | 8.86 ms / 4.8 MB | 8.81 ms / 4.8 MB | 9.02 ms / 2.6 MB | 8.66 ms / 4.0 MB | 9.74 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-narrow-5k-select-score | 9.59 ms / 4.9 MB | 9.44 ms / 4.9 MB | 11.8 ms / 2.6 MB | 9.88 ms / 4.0 MB | 13.8 ms / 11 MB | n/a | n/a | n/a |
-| ndjson-narrow-25k-first-id | 10.6 ms / 7.4 MB | 23.1 ms / 5.2 MB | 21.6 ms / 2.6 MB | 22.3 ms / 4.4 MB | 38.7 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-narrow-25k-identity | 9.48 ms / 8.1 MB | 18.1 ms / 5.1 MB | 29.7 ms / 2.6 MB | 22.8 ms / 4.4 MB | 41.5 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-narrow-25k-score | 10.8 ms / 7.5 MB | 21.6 ms / 5.3 MB | 21.8 ms / 2.7 MB | 22.5 ms / 4.4 MB | 38.9 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-narrow-25k-select-id | 10.7 ms / 7.3 MB | 24.6 ms / 5.3 MB | 22.1 ms / 2.6 MB | 17.9 ms / 4.5 MB | 23.6 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-25k-select-score | 11.8 ms / 8.5 MB | 25.3 ms / 5.3 MB | 34.7 ms / 2.6 MB | 27.6 ms / 4.5 MB | 45.8 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-narrow-50k-first-id | 14.0 ms / 10 MB | 38.0 ms / 5.9 MB | 38.6 ms / 2.6 MB | 40.8 ms / 5.0 MB | 76.8 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-50k-identity | 12.6 ms / 11 MB | 28.8 ms / 5.8 MB | 63.2 ms / 2.7 MB | 39.0 ms / 5.0 MB | 77.0 ms / 12 MB | n/a | n/a | n/a |
-| ndjson-narrow-50k-score | 15.5 ms / 10 MB | 41.2 ms / 5.9 MB | 39.2 ms / 2.6 MB | 39.3 ms / 5.0 MB | 71.0 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-50k-select-id | 14.7 ms / 9.5 MB | 39.8 ms / 5.9 MB | 39.2 ms / 2.6 MB | 30.4 ms / 5.1 MB | 41.0 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-50k-select-score | 16.6 ms / 12 MB | 48.5 ms / 6.0 MB | 63.0 ms / 2.7 MB | 52.0 ms / 5.1 MB | 83.4 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-100k-first-id | 18.5 ms / 13 MB | 68.9 ms / 7.0 MB | 70.0 ms / 2.6 MB | 73.5 ms / 6.2 MB | 135 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-100k-identity | 16.0 ms / 16 MB | 52.3 ms / 6.9 MB | 107 ms / 2.6 MB | 74.8 ms / 6.2 MB | 146 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-100k-score | 20.4 ms / 13 MB | 69.5 ms / 7.0 MB | 72.1 ms / 2.6 MB | 73.7 ms / 6.2 MB | 134 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-100k-select-id | 22.1 ms / 12 MB | 72.1 ms / 7.1 MB | 72.9 ms / 2.6 MB | 57.1 ms / 6.3 MB | 75.2 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-narrow-100k-select-score | 19.9 ms / 16 MB | 87.3 ms / 7.1 MB | 117 ms / 2.7 MB | 94.8 ms / 6.3 MB | 160 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-200k-first-id | 30.4 ms / 18 MB | 133 ms / 9.5 MB | 134 ms / 2.7 MB | 142 ms / 8.7 MB | 261 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-narrow-200k-identity | 28.1 ms / 23 MB | 103 ms / 9.4 MB | 196 ms / 2.7 MB | 147 ms / 8.7 MB | 298 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-narrow-200k-score | 28.4 ms / 18 MB | 133 ms / 9.5 MB | 133 ms / 2.7 MB | 141 ms / 8.7 MB | 267 ms / 13 MB | n/a | n/a | n/a |
-| ndjson-narrow-200k-select-id | 32.4 ms / 16 MB | 141 ms / 9.5 MB | 138 ms / 2.6 MB | 110 ms / 8.7 MB | 152 ms / 14 MB | n/a | n/a | n/a |
-| ndjson-narrow-200k-select-score | 31.8 ms / 21 MB | 169 ms / 9.6 MB | 217 ms / 2.7 MB | 184 ms / 8.7 MB | 313 ms / 13 MB | n/a | n/a | n/a |
-| toml-broad-100-count | 9.70 ms / 6.2 MB | 9.89 ms / 6.2 MB | n/a | 10.8 ms / 5.5 MB | n/a | 147 ms / 39 MB | 11.8 ms / 13 MB | n/a |
-| toml-broad-100-descent | 10.1 ms / 6.4 MB | 10.2 ms / 6.3 MB | n/a | 9.88 ms / 5.6 MB | n/a | 152 ms / 37 MB | n/a | n/a |
-| toml-broad-100-exact-name | 8.56 ms / 4.9 MB | 9.33 ms / 4.9 MB | n/a | 10.6 ms / 5.3 MB | n/a | 151 ms / 38 MB | 12.3 ms / 13 MB | n/a |
-| toml-broad-100-first-id | 8.61 ms / 4.9 MB | 9.39 ms / 4.9 MB | n/a | 11.4 ms / 5.4 MB | n/a | 154 ms / 39 MB | 12.4 ms / 13 MB | n/a |
-| toml-broad-100-identity | 9.66 ms / 6.2 MB | 10.8 ms / 6.2 MB | n/a | 11.8 ms / 5.4 MB | n/a | 150 ms / 45 MB | 14.7 ms / 15 MB | n/a |
-| toml-broad-100-ids | 9.19 ms / 6.1 MB | 10.6 ms / 6.1 MB | n/a | 10.1 ms / 5.4 MB | n/a | 145 ms / 43 MB | n/a | n/a |
-| toml-broad-100-keys-publish | 9.34 ms / 5.0 MB | 9.11 ms / 5.0 MB | n/a | 9.97 ms / 5.6 MB | n/a | disagreed | n/a | n/a |
-| toml-broad-100-nested-dept | 9.16 ms / 4.9 MB | 9.98 ms / 4.9 MB | n/a | 11.3 ms / 5.3 MB | n/a | 156 ms / 37 MB | 12.1 ms / 13 MB | n/a |
-| toml-broad-100-type-path | 10.2 ms / 7.1 MB | 9.81 ms / 7.0 MB | n/a | 10.5 ms / 5.4 MB | n/a | disagreed | n/a | n/a |
-| toml-broad-1k-count | 16.7 ms / 20 MB | 18.2 ms / 21 MB | n/a | 24.1 ms / 15 MB | n/a | excluded | 32.2 ms / 32 MB | n/a |
-| toml-broad-1k-descent | 21.3 ms / 21 MB | 22.5 ms / 21 MB | n/a | 32.4 ms / 17 MB | n/a | excluded | n/a | n/a |
-| toml-broad-1k-exact-name | 18.8 ms / 6.5 MB | 19.6 ms / 6.5 MB | n/a | 29.1 ms / 15 MB | n/a | excluded | 35.4 ms / 33 MB | n/a |
-| toml-broad-1k-first-id | 15.3 ms / 6.5 MB | 13.8 ms / 6.5 MB | n/a | 25.6 ms / 15 MB | n/a | excluded | 33.8 ms / 32 MB | n/a |
-| toml-broad-1k-identity | 20.5 ms / 21 MB | 22.2 ms / 21 MB | n/a | 32.3 ms / 15 MB | n/a | excluded | 61.9 ms / 44 MB | n/a |
-| toml-broad-1k-ids | 17.0 ms / 18 MB | 19.8 ms / 18 MB | n/a | 26.9 ms / 15 MB | n/a | excluded | n/a | n/a |
-| toml-broad-1k-keys-publish | 16.3 ms / 6.5 MB | 15.4 ms / 6.5 MB | n/a | 25.6 ms / 15 MB | n/a | excluded | n/a | n/a |
-| toml-broad-1k-nested-dept | 18.8 ms / 6.5 MB | 15.3 ms / 6.5 MB | n/a | 25.9 ms / 15 MB | n/a | excluded | 34.7 ms / 32 MB | n/a |
-| toml-broad-1k-type-path | 26.7 ms / 26 MB | 25.6 ms / 26 MB | n/a | 26.4 ms / 15 MB | n/a | excluded | n/a | n/a |
-| toml-broad-5k-count | 53.1 ms / 78 MB | 54.3 ms / 78 MB | n/a | 87.7 ms / 70 MB | n/a | excluded | 106 ms / 107 MB | n/a |
-| toml-broad-5k-descent | 61.3 ms / 78 MB | 61.8 ms / 78 MB | n/a | 102 ms / 78 MB | n/a | excluded | n/a | n/a |
-| toml-broad-5k-exact-name | 44.6 ms / 14 MB | 35.9 ms / 14 MB | n/a | 85.4 ms / 70 MB | n/a | excluded | 113 ms / 107 MB | n/a |
-| toml-broad-5k-first-id | 36.8 ms / 14 MB | 35.9 ms / 14 MB | n/a | 87.5 ms / 70 MB | n/a | excluded | 111 ms / 106 MB | n/a |
-| toml-broad-5k-identity | 57.2 ms / 78 MB | 58.9 ms / 78 MB | n/a | 107 ms / 70 MB | n/a | excluded | 215 ms / 162 MB | n/a |
-| toml-broad-5k-ids | 56.1 ms / 68 MB | 57.0 ms / 68 MB | n/a | 85.6 ms / 70 MB | n/a | excluded | n/a | n/a |
-| toml-broad-5k-keys-publish | 37.4 ms / 14 MB | 37.5 ms / 14 MB | n/a | 87.8 ms / 70 MB | n/a | excluded | n/a | n/a |
-| toml-broad-5k-nested-dept | 35.7 ms / 14 MB | 36.3 ms / 14 MB | n/a | 87.9 ms / 70 MB | n/a | excluded | 110 ms / 109 MB | n/a |
-| toml-broad-5k-type-path | 85.1 ms / 113 MB | 82.0 ms / 113 MB | n/a | 87.1 ms / 70 MB | n/a | excluded | n/a | n/a |
-| toml-broad-25k-count | 207 ms / 320 MB | 205 ms / 304 MB | n/a | 380 ms / 285 MB | n/a | excluded | 470 ms / 522 MB | n/a |
-| toml-broad-25k-descent | 249 ms / 321 MB | 248 ms / 305 MB | n/a | 460 ms / 332 MB | n/a | excluded | n/a | n/a |
-| toml-broad-25k-exact-name | 133 ms / 50 MB | 129 ms / 49 MB | n/a | 381 ms / 284 MB | n/a | excluded | 466 ms / 504 MB | n/a |
-| toml-broad-25k-first-id | 134 ms / 50 MB | 133 ms / 49 MB | n/a | 385 ms / 284 MB | n/a | excluded | 467 ms / 510 MB | n/a |
-| toml-broad-25k-identity | 242 ms / 302 MB | 238 ms / 305 MB | n/a | 474 ms / 284 MB | n/a | excluded | 998 ms / 810 MB | n/a |
-| toml-broad-25k-ids | 329 ms / 285 MB | 328 ms / 275 MB | n/a | 378 ms / 284 MB | n/a | excluded | n/a | n/a |
-| toml-broad-25k-keys-publish | 130 ms / 51 MB | 133 ms / 49 MB | n/a | 386 ms / 285 MB | n/a | excluded | n/a | n/a |
-| toml-broad-25k-nested-dept | 143 ms / 50 MB | 133 ms / 49 MB | n/a | 388 ms / 284 MB | n/a | excluded | 478 ms / 512 MB | n/a |
-| toml-broad-25k-type-path | 361 ms / 452 MB | 368 ms / 422 MB | n/a | 387 ms / 284 MB | n/a | excluded | n/a | n/a |
-| toml-broad-50k-count | 407 ms / 673 MB | 414 ms / 673 MB | n/a | 756 ms / 545 MB | n/a | excluded | 927 ms / 966 MB | n/a |
-| toml-broad-50k-descent | 489 ms / 674 MB | 495 ms / 674 MB | n/a | 894 ms / 626 MB | n/a | excluded | n/a | n/a |
-| toml-broad-50k-exact-name | 254 ms / 93 MB | 254 ms / 93 MB | n/a | 755 ms / 545 MB | n/a | excluded | 945 ms / 968 MB | n/a |
-| toml-broad-50k-first-id | 253 ms / 93 MB | 248 ms / 93 MB | n/a | 748 ms / 545 MB | n/a | excluded | 947 ms / 964 MB | n/a |
-| toml-broad-50k-identity | 469 ms / 674 MB | 464 ms / 674 MB | n/a | 946 ms / 545 MB | n/a | excluded | 1953 ms / 1507 MB | n/a |
-| toml-broad-50k-ids | 865 ms / 618 MB | 874 ms / 618 MB | n/a | 761 ms / 545 MB | n/a | excluded | n/a | n/a |
-| toml-broad-50k-keys-publish | 254 ms / 93 MB | 246 ms / 93 MB | n/a | 755 ms / 545 MB | n/a | excluded | n/a | n/a |
-| toml-broad-50k-nested-dept | 253 ms / 93 MB | 247 ms / 93 MB | n/a | 756 ms / 545 MB | n/a | excluded | 950 ms / 961 MB | n/a |
-| toml-broad-50k-type-path | 718 ms / 873 MB | 704 ms / 873 MB | n/a | 760 ms / 545 MB | n/a | excluded | n/a | n/a |
-| toml-broad-100k-count | 810 ms / 1324 MB | 804 ms / 1324 MB | n/a | 1497 ms / 1086 MB | n/a | excluded | 1862 ms / 1904 MB | n/a |
-| toml-broad-100k-descent | 964 ms / 1325 MB | 975 ms / 1325 MB | n/a | 1807 ms / 1272 MB | n/a | excluded | n/a | n/a |
-| toml-broad-100k-exact-name | 496 ms / 180 MB | 482 ms / 180 MB | n/a | 1490 ms / 1086 MB | n/a | excluded | 1871 ms / 1914 MB | n/a |
-| toml-broad-100k-first-id | 486 ms / 180 MB | 490 ms / 180 MB | n/a | 1495 ms / 1086 MB | n/a | excluded | 1866 ms / 1914 MB | n/a |
-| toml-broad-100k-identity | 934 ms / 1325 MB | 922 ms / 1325 MB | n/a | 1864 ms / 1086 MB | n/a | excluded | 3951 ms / 3003 MB | n/a |
-| toml-broad-100k-ids | 2716 ms / 1217 MB | 2685 ms / 1217 MB | n/a | 1504 ms / 1086 MB | n/a | excluded | n/a | n/a |
-| toml-broad-100k-keys-publish | 498 ms / 181 MB | 498 ms / 181 MB | n/a | 1512 ms / 1086 MB | n/a | excluded | n/a | n/a |
-| toml-broad-100k-nested-dept | 494 ms / 180 MB | 496 ms / 180 MB | n/a | 1501 ms / 1086 MB | n/a | excluded | 1866 ms / 1923 MB | n/a |
-| toml-broad-100k-type-path | 1422 ms / 1746 MB | 1416 ms / 1746 MB | n/a | 1503 ms / 1086 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-100-count | 9.20 ms / 4.8 MB | 8.46 ms / 4.8 MB | n/a | 7.94 ms / 4.2 MB | n/a | 22.4 ms / 29 MB | 9.81 ms / 9.6 MB | n/a |
-| toml-narrow-100-descent | 7.68 ms / 5.0 MB | 7.38 ms / 5.0 MB | n/a | 7.26 ms / 4.2 MB | n/a | 22.0 ms / 29 MB | n/a | n/a |
-| toml-narrow-100-exact-name | 7.27 ms / 4.7 MB | 7.70 ms / 4.7 MB | n/a | 7.98 ms / 4.1 MB | n/a | 23.5 ms / 29 MB | error | n/a |
-| toml-narrow-100-first-id | 8.32 ms / 4.7 MB | 7.85 ms / 4.7 MB | n/a | 8.60 ms / 4.1 MB | n/a | 22.5 ms / 29 MB | 9.71 ms / 9.7 MB | n/a |
-| toml-narrow-100-identity | 7.27 ms / 4.7 MB | 7.47 ms / 4.7 MB | n/a | 7.37 ms / 4.1 MB | n/a | 20.5 ms / 29 MB | 8.75 ms / 9.9 MB | n/a |
-| toml-narrow-100-ids | 8.09 ms / 5.0 MB | 7.84 ms / 5.0 MB | n/a | 7.75 ms / 4.2 MB | n/a | 22.1 ms / 29 MB | n/a | n/a |
-| toml-narrow-100-keys-publish | 8.86 ms / 4.8 MB | 9.03 ms / 4.8 MB | n/a | 11.8 ms / 4.3 MB | n/a | 21.9 ms / 30 MB | n/a | n/a |
-| toml-narrow-100-nested-dept | 7.90 ms / 4.7 MB | 7.96 ms / 4.7 MB | n/a | 8.61 ms / 4.1 MB | n/a | 24.9 ms / 29 MB | error | n/a |
-| toml-narrow-100-type-path | 8.52 ms / 4.9 MB | 8.24 ms / 4.9 MB | n/a | 8.04 ms / 4.1 MB | n/a | disagreed | n/a | n/a |
-| toml-narrow-1k-count | 8.90 ms / 5.6 MB | 9.19 ms / 5.6 MB | n/a | 8.69 ms / 5.7 MB | n/a | 738 ms / 38 MB | 11.0 ms / 13 MB | n/a |
-| toml-narrow-1k-descent | 8.70 ms / 5.8 MB | 8.87 ms / 5.8 MB | n/a | 10.4 ms / 5.8 MB | n/a | 715 ms / 31 MB | n/a | n/a |
-| toml-narrow-1k-exact-name | 8.63 ms / 5.1 MB | 7.98 ms / 5.1 MB | n/a | 9.19 ms / 5.7 MB | n/a | 734 ms / 37 MB | error | n/a |
-| toml-narrow-1k-first-id | 8.40 ms / 5.1 MB | 7.94 ms / 5.1 MB | n/a | 9.15 ms / 5.7 MB | n/a | 737 ms / 31 MB | 10.8 ms / 13 MB | n/a |
-| toml-narrow-1k-identity | 8.51 ms / 5.6 MB | 10.2 ms / 5.6 MB | n/a | 9.85 ms / 5.6 MB | n/a | 738 ms / 38 MB | 12.5 ms / 14 MB | n/a |
-| toml-narrow-1k-ids | 9.24 ms / 5.9 MB | 9.15 ms / 5.9 MB | n/a | 9.32 ms / 5.7 MB | n/a | 738 ms / 38 MB | n/a | n/a |
-| toml-narrow-1k-keys-publish | 7.85 ms / 5.1 MB | 8.57 ms / 5.2 MB | n/a | 9.54 ms / 5.7 MB | n/a | 718 ms / 33 MB | n/a | n/a |
-| toml-narrow-1k-nested-dept | 8.62 ms / 5.0 MB | 9.13 ms / 5.1 MB | n/a | 9.66 ms / 5.5 MB | n/a | 711 ms / 37 MB | error | n/a |
-| toml-narrow-1k-type-path | 8.50 ms / 5.9 MB | 8.44 ms / 6.0 MB | n/a | 9.80 ms / 5.6 MB | n/a | disagreed | n/a | n/a |
-| toml-narrow-5k-count | 10.2 ms / 9.9 MB | 9.85 ms / 9.9 MB | n/a | 12.2 ms / 11 MB | n/a | excluded | 17.2 ms / 19 MB | n/a |
-| toml-narrow-5k-descent | 12.8 ms / 10 MB | 11.2 ms / 10 MB | n/a | 12.8 ms / 11 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-5k-exact-name | 9.17 ms / 6.6 MB | 9.48 ms / 6.6 MB | n/a | 12.6 ms / 11 MB | n/a | excluded | error | n/a |
-| toml-narrow-5k-first-id | 9.75 ms / 6.6 MB | 10.3 ms / 6.6 MB | n/a | 12.6 ms / 11 MB | n/a | excluded | 18.0 ms / 19 MB | n/a |
-| toml-narrow-5k-identity | 10.7 ms / 10.0 MB | 10.8 ms / 10.0 MB | n/a | 14.7 ms / 11 MB | n/a | excluded | 24.9 ms / 23 MB | n/a |
-| toml-narrow-5k-ids | 11.2 ms / 10 MB | 11.3 ms / 10 MB | n/a | 13.2 ms / 11 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-5k-keys-publish | 10.5 ms / 6.7 MB | 10.5 ms / 6.7 MB | n/a | 13.2 ms / 11 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-5k-nested-dept | 10.8 ms / 6.6 MB | 10.1 ms / 6.6 MB | n/a | 13.2 ms / 11 MB | n/a | excluded | error | n/a |
-| toml-narrow-5k-type-path | 16.7 ms / 11 MB | 11.9 ms / 11 MB | n/a | 13.3 ms / 11 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-25k-count | 19.7 ms / 26 MB | 18.9 ms / 27 MB | n/a | 29.5 ms / 50 MB | n/a | excluded | 45.9 ms / 46 MB | n/a |
-| toml-narrow-25k-descent | 23.1 ms / 27 MB | 24.5 ms / 27 MB | n/a | 37.2 ms / 51 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-25k-exact-name | 15.6 ms / 14 MB | 17.8 ms / 14 MB | n/a | 34.6 ms / 50 MB | n/a | excluded | error | n/a |
-| toml-narrow-25k-first-id | 14.9 ms / 14 MB | 15.6 ms / 14 MB | n/a | 30.9 ms / 50 MB | n/a | excluded | 48.0 ms / 46 MB | n/a |
-| toml-narrow-25k-identity | 21.7 ms / 26 MB | 22.6 ms / 27 MB | n/a | 35.9 ms / 50 MB | n/a | excluded | 79.2 ms / 68 MB | n/a |
-| toml-narrow-25k-ids | 33.6 ms / 27 MB | 35.2 ms / 27 MB | n/a | 32.6 ms / 50 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-25k-keys-publish | 18.6 ms / 14 MB | 19.8 ms / 14 MB | n/a | 34.7 ms / 50 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-25k-nested-dept | 15.1 ms / 14 MB | 16.3 ms / 14 MB | n/a | 32.1 ms / 50 MB | n/a | excluded | error | n/a |
-| toml-narrow-25k-type-path | 30.1 ms / 32 MB | 30.8 ms / 32 MB | n/a | 34.1 ms / 50 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-50k-count | 31.7 ms / 54 MB | 31.6 ms / 54 MB | n/a | 50.9 ms / 80 MB | n/a | excluded | 80.5 ms / 81 MB | n/a |
-| toml-narrow-50k-descent | 35.6 ms / 54 MB | 36.0 ms / 54 MB | n/a | 60.0 ms / 80 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-50k-exact-name | 22.9 ms / 24 MB | 21.6 ms / 24 MB | n/a | 52.9 ms / 80 MB | n/a | excluded | error | n/a |
-| toml-narrow-50k-first-id | 22.5 ms / 24 MB | 23.2 ms / 24 MB | n/a | 52.2 ms / 80 MB | n/a | excluded | 80.0 ms / 82 MB | n/a |
-| toml-narrow-50k-identity | 34.5 ms / 54 MB | 36.0 ms / 54 MB | n/a | 60.9 ms / 80 MB | n/a | excluded | 141 ms / 123 MB | n/a |
-| toml-narrow-50k-ids | 66.4 ms / 57 MB | 66.3 ms / 57 MB | n/a | 56.2 ms / 80 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-50k-keys-publish | 22.5 ms / 24 MB | 22.6 ms / 24 MB | n/a | 51.0 ms / 80 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-50k-nested-dept | 23.4 ms / 24 MB | 23.3 ms / 24 MB | n/a | 51.5 ms / 80 MB | n/a | excluded | error | n/a |
-| toml-narrow-50k-type-path | 44.8 ms / 65 MB | 45.1 ms / 64 MB | n/a | 52.2 ms / 80 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-100k-count | 49.9 ms / 94 MB | 49.1 ms / 94 MB | n/a | 92.4 ms / 139 MB | n/a | excluded | 144 ms / 158 MB | n/a |
-| toml-narrow-100k-descent | 61.0 ms / 94 MB | 62.3 ms / 94 MB | n/a | 108 ms / 139 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-100k-exact-name | 35.4 ms / 42 MB | 35.3 ms / 42 MB | n/a | 92.1 ms / 139 MB | n/a | excluded | error | n/a |
-| toml-narrow-100k-first-id | 35.4 ms / 42 MB | 36.7 ms / 42 MB | n/a | 93.8 ms / 139 MB | n/a | excluded | 146 ms / 159 MB | n/a |
-| toml-narrow-100k-identity | 55.2 ms / 94 MB | 55.4 ms / 94 MB | n/a | 112 ms / 139 MB | n/a | excluded | 267 ms / 223 MB | n/a |
-| toml-narrow-100k-ids | 184 ms / 95 MB | 181 ms / 95 MB | n/a | 100 ms / 139 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-100k-keys-publish | 35.1 ms / 42 MB | 33.8 ms / 42 MB | n/a | 93.2 ms / 139 MB | n/a | excluded | n/a | n/a |
-| toml-narrow-100k-nested-dept | 35.1 ms / 42 MB | 34.4 ms / 42 MB | n/a | 94.8 ms / 139 MB | n/a | excluded | error | n/a |
-| toml-narrow-100k-type-path | 78.9 ms / 129 MB | 76.5 ms / 126 MB | n/a | 94.2 ms / 139 MB | n/a | excluded | n/a | n/a |
-| users-broad-100-all-nonneg | 4.58 ms / 5.0 MB | 4.60 ms / 5.0 MB | 5.85 ms / 3.6 MB | 4.58 ms / 5.1 MB | 5.12 ms / 7.1 MB | n/a | n/a | n/a |
-| users-broad-100-any-high | 4.49 ms / 5.0 MB | 4.53 ms / 5.0 MB | 5.18 ms / 3.6 MB | 4.42 ms / 5.1 MB | 5.08 ms / 6.8 MB | n/a | n/a | n/a |
-| users-broad-100-count | 4.28 ms / 4.7 MB | 4.24 ms / 4.7 MB | 5.55 ms / 3.6 MB | 4.58 ms / 4.8 MB | 4.95 ms / 6.7 MB | 11.4 ms / 37 MB | n/a | n/a |
-| users-broad-100-descent | 4.84 ms / 6.0 MB | 4.86 ms / 6.0 MB | 6.11 ms / 4.1 MB | 4.95 ms / 5.0 MB | 7.73 ms / 10 MB | 14.8 ms / 53 MB | n/a | n/a |
-| users-broad-100-filter-active | 4.36 ms / 5.0 MB | 4.46 ms / 5.0 MB | 5.52 ms / 3.6 MB | 4.39 ms / 4.8 MB | 5.01 ms / 7.0 MB | 12.2 ms / 40 MB | n/a | n/a |
-| users-broad-100-first-id | 4.99 ms / 4.6 MB | 4.45 ms / 4.6 MB | 5.44 ms / 3.6 MB | 8.60 ms / 4.7 MB | 5.21 ms / 6.9 MB | 10.3 ms / 37 MB | n/a | n/a |
-| users-broad-100-group-mod | 5.46 ms / 6.4 MB | 5.77 ms / 6.4 MB | 5.69 ms / 3.6 MB | 4.86 ms / 5.1 MB | 6.09 ms / 7.0 MB | 13.1 ms / 47 MB | n/a | n/a |
-| users-broad-100-high-score | 5.21 ms / 4.9 MB | 5.13 ms / 4.9 MB | 5.82 ms / 3.6 MB | 5.15 ms / 4.8 MB | 5.81 ms / 6.8 MB | 12.3 ms / 41 MB | n/a | n/a |
-| users-broad-100-identity | 5.44 ms / 6.4 MB | 5.72 ms / 6.4 MB | 7.86 ms / 3.7 MB | 4.92 ms / 4.7 MB | 8.26 ms / 7.0 MB | 13.9 ms / 46 MB | n/a | n/a |
-| users-broad-100-ids | 5.59 ms / 4.7 MB | 4.73 ms / 4.7 MB | 5.10 ms / 3.6 MB | 4.47 ms / 4.7 MB | 5.04 ms / 6.8 MB | 10.6 ms / 21 MB | n/a | n/a |
-| users-broad-100-keys-len | 4.48 ms / 4.8 MB | 4.53 ms / 4.8 MB | 5.80 ms / 3.6 MB | 4.38 ms / 4.9 MB | 5.00 ms / 7.0 MB | 10.2 ms / 37 MB | n/a | n/a |
-| users-broad-100-keys-publish | 5.05 ms / 4.8 MB | 4.75 ms / 4.8 MB | 5.36 ms / 3.6 MB | 4.49 ms / 4.8 MB | 5.01 ms / 6.9 MB | disagreed | n/a | n/a |
-| users-broad-100-max-score | 6.25 ms / 5.0 MB | 4.55 ms / 5.0 MB | 5.25 ms / 3.6 MB | 4.72 ms / 4.9 MB | 5.18 ms / 7.0 MB | 10.4 ms / 37 MB | n/a | n/a |
-| users-broad-100-nested-dept | 4.40 ms / 4.6 MB | 4.56 ms / 4.6 MB | 5.34 ms / 3.5 MB | 4.48 ms / 4.7 MB | 5.10 ms / 6.9 MB | 9.77 ms / 37 MB | n/a | n/a |
-| users-broad-100-project-names | 4.28 ms / 4.6 MB | 4.45 ms / 4.6 MB | 5.75 ms / 3.6 MB | 4.32 ms / 4.7 MB | 5.08 ms / 7.0 MB | 11.3 ms / 37 MB | n/a | n/a |
-| users-broad-100-project-pair | 5.74 ms / 4.8 MB | 4.61 ms / 4.8 MB | 5.26 ms / 3.6 MB | 4.44 ms / 4.7 MB | 5.19 ms / 7.0 MB | 11.7 ms / 41 MB | n/a | n/a |
-| users-broad-100-reduce-score | 4.31 ms / 5.0 MB | 4.37 ms / 5.0 MB | 5.41 ms / 3.6 MB | 4.38 ms / 4.7 MB | 5.02 ms / 6.8 MB | n/a | n/a | n/a |
-| users-broad-100-reverse-id | 5.69 ms / 6.2 MB | 5.52 ms / 6.2 MB | 5.20 ms / 3.6 MB | 4.92 ms / 4.8 MB | 5.03 ms / 7.0 MB | 11.9 ms / 41 MB | n/a | n/a |
-| users-broad-100-select-id-stream | 4.82 ms / 4.7 MB | 5.04 ms / 4.7 MB | 5.28 ms / 3.5 MB | 4.50 ms / 4.7 MB | 5.10 ms / 7.0 MB | n/a | n/a | n/a |
-| users-broad-100-slice-length | 4.28 ms / 4.7 MB | 4.13 ms / 4.8 MB | 5.44 ms / 3.6 MB | 4.34 ms / 4.8 MB | 5.56 ms / 6.9 MB | 11.5 ms / 37 MB | n/a | n/a |
-| users-broad-100-sort-last | 4.95 ms / 6.2 MB | 5.13 ms / 6.2 MB | 5.41 ms / 3.6 MB | 4.83 ms / 5.0 MB | 4.98 ms / 6.8 MB | 10.6 ms / 41 MB | n/a | n/a |
-| users-broad-100-sum-score | 4.43 ms / 5.0 MB | 4.48 ms / 5.0 MB | 5.26 ms / 3.6 MB | 4.58 ms / 4.8 MB | 5.55 ms / 6.8 MB | n/a | n/a | n/a |
-| users-broad-100-type-path | 4.74 ms / 4.6 MB | 4.45 ms / 4.6 MB | 5.30 ms / 3.6 MB | 4.65 ms / 4.7 MB | 5.02 ms / 7.0 MB | disagreed | n/a | n/a |
-| users-broad-100-unique-scores | 5.74 ms / 6.1 MB | 5.87 ms / 6.1 MB | 5.97 ms / 3.6 MB | 4.93 ms / 4.9 MB | 6.26 ms / 6.8 MB | 11.2 ms / 37 MB | n/a | n/a |
-| users-broad-1k-all-nonneg | 7.39 ms / 6.3 MB | 7.74 ms / 6.3 MB | 15.5 ms / 12 MB | 9.18 ms / 13 MB | 13.1 ms / 15 MB | n/a | n/a | n/a |
-| users-broad-1k-any-high | 7.79 ms / 6.3 MB | 8.06 ms / 6.3 MB | 15.5 ms / 12 MB | 9.76 ms / 13 MB | 14.7 ms / 15 MB | n/a | n/a | n/a |
-| users-broad-1k-count | 5.38 ms / 5.8 MB | 5.95 ms / 5.8 MB | 14.0 ms / 12 MB | 8.75 ms / 13 MB | 12.2 ms / 14 MB | 26.8 ms / 70 MB | n/a | n/a |
-| users-broad-1k-descent | 11.4 ms / 13 MB | 11.1 ms / 13 MB | 30.0 ms / 16 MB | 13.3 ms / 15 MB | 32.3 ms / 24 MB | 81.0 ms / 204 MB | n/a | n/a |
-| users-broad-1k-filter-active | 5.72 ms / 6.4 MB | 6.59 ms / 6.3 MB | 13.8 ms / 12 MB | 9.15 ms / 13 MB | 12.5 ms / 15 MB | 33.4 ms / 100 MB | n/a | n/a |
-| users-broad-1k-first-id | 6.01 ms / 5.5 MB | 6.39 ms / 5.6 MB | 14.0 ms / 12 MB | 9.49 ms / 13 MB | 13.2 ms / 15 MB | 27.8 ms / 70 MB | n/a | n/a |
-| users-broad-1k-group-mod | 12.0 ms / 16 MB | 11.0 ms / 16 MB | 15.5 ms / 12 MB | 8.87 ms / 14 MB | 12.5 ms / 15 MB | 45.1 ms / 134 MB | n/a | n/a |
-| users-broad-1k-high-score | 5.78 ms / 6.3 MB | 6.08 ms / 6.3 MB | 14.4 ms / 12 MB | 10.8 ms / 13 MB | 13.8 ms / 15 MB | 38.3 ms / 107 MB | n/a | n/a |
-| users-broad-1k-identity | 15.0 ms / 17 MB | 13.7 ms / 17 MB | 33.0 ms / 13 MB | 12.4 ms / 13 MB | disagreed | 59.3 ms / 111 MB | n/a | n/a |
-| users-broad-1k-ids | 6.35 ms / 5.8 MB | 6.61 ms / 5.8 MB | 14.3 ms / 12 MB | 9.17 ms / 13 MB | 12.8 ms / 15 MB | 28.8 ms / 72 MB | n/a | n/a |
-| users-broad-1k-keys-len | 6.26 ms / 5.8 MB | 6.52 ms / 5.8 MB | 14.0 ms / 12 MB | 9.92 ms / 13 MB | 12.4 ms / 15 MB | 26.9 ms / 71 MB | n/a | n/a |
-| users-broad-1k-keys-publish | 6.80 ms / 5.8 MB | 7.34 ms / 5.8 MB | 14.2 ms / 12 MB | 8.71 ms / 13 MB | 12.6 ms / 14 MB | disagreed | n/a | n/a |
-| users-broad-1k-max-score | 7.17 ms / 6.3 MB | 7.77 ms / 6.3 MB | 15.4 ms / 12 MB | 8.78 ms / 13 MB | 12.4 ms / 15 MB | 29.6 ms / 73 MB | n/a | n/a |
-| users-broad-1k-nested-dept | 7.35 ms / 5.6 MB | 7.19 ms / 5.6 MB | 16.2 ms / 12 MB | 9.49 ms / 13 MB | 13.7 ms / 15 MB | 28.9 ms / 71 MB | n/a | n/a |
-| users-broad-1k-project-names | 6.19 ms / 5.7 MB | 6.77 ms / 5.7 MB | 14.3 ms / 12 MB | 8.85 ms / 13 MB | 12.4 ms / 15 MB | 28.4 ms / 72 MB | n/a | n/a |
-| users-broad-1k-project-pair | 8.74 ms / 6.1 MB | 8.79 ms / 6.1 MB | 16.5 ms / 13 MB | 9.72 ms / 13 MB | 13.3 ms / 15 MB | 41.2 ms / 109 MB | n/a | n/a |
-| users-broad-1k-reduce-score | 5.63 ms / 6.2 MB | 5.99 ms / 6.3 MB | 14.1 ms / 12 MB | 8.89 ms / 13 MB | 12.4 ms / 15 MB | n/a | n/a | n/a |
-| users-broad-1k-reverse-id | 10.6 ms / 16 MB | 10.4 ms / 15 MB | 15.4 ms / 12 MB | 8.61 ms / 13 MB | 12.5 ms / 14 MB | 35.9 ms / 101 MB | n/a | n/a |
-| users-broad-1k-select-id-stream | 7.25 ms / 5.7 MB | 7.45 ms / 5.7 MB | 15.8 ms / 12 MB | 10.7 ms / 13 MB | 14.7 ms / 15 MB | n/a | n/a | n/a |
-| users-broad-1k-slice-length | 6.01 ms / 5.9 MB | 6.19 ms / 5.9 MB | 14.4 ms / 12 MB | 8.39 ms / 13 MB | 12.4 ms / 15 MB | 27.9 ms / 74 MB | n/a | n/a |
-| users-broad-1k-sort-last | 11.4 ms / 15 MB | 11.0 ms / 15 MB | 15.3 ms / 12 MB | 9.12 ms / 13 MB | 13.3 ms / 15 MB | 38.9 ms / 112 MB | n/a | n/a |
-| users-broad-1k-sum-score | 5.66 ms / 6.2 MB | 5.95 ms / 6.2 MB | 14.1 ms / 12 MB | 8.92 ms / 13 MB | 12.5 ms / 15 MB | n/a | n/a | n/a |
-| users-broad-1k-type-path | 6.19 ms / 5.6 MB | 6.86 ms / 5.6 MB | 13.8 ms / 12 MB | 8.63 ms / 13 MB | 12.3 ms / 14 MB | disagreed | n/a | n/a |
-| users-broad-1k-unique-scores | 9.21 ms / 14 MB | 9.21 ms / 14 MB | 15.6 ms / 12 MB | 8.77 ms / 13 MB | 12.5 ms / 15 MB | 28.7 ms / 73 MB | n/a | n/a |
-| users-broad-5k-all-nonneg | 19.2 ms / 12 MB | 18.5 ms / 12 MB | 55.7 ms / 50 MB | 27.5 ms / 51 MB | 43.2 ms / 41 MB | n/a | n/a | n/a |
-| users-broad-5k-any-high | 19.9 ms / 12 MB | 17.1 ms / 12 MB | 53.2 ms / 50 MB | 26.3 ms / 51 MB | 43.1 ms / 41 MB | n/a | n/a | n/a |
-| users-broad-5k-count | 12.0 ms / 11 MB | 9.60 ms / 11 MB | 52.4 ms / 50 MB | 24.7 ms / 51 MB | 42.9 ms / 41 MB | 102 ms / 223 MB | n/a | n/a |
-| users-broad-5k-descent | 29.2 ms / 42 MB | 28.8 ms / 42 MB | 92.6 ms / 74 MB | 42.1 ms / 63 MB | 123 ms / 77 MB | 346 ms / 866 MB | n/a | n/a |
-| users-broad-5k-filter-active | 13.1 ms / 13 MB | 10.8 ms / 13 MB | 55.3 ms / 50 MB | 27.3 ms / 51 MB | 43.0 ms / 42 MB | 135 ms / 329 MB | n/a | n/a |
-| users-broad-5k-first-id | 18.1 ms / 9.9 MB | 12.7 ms / 9.9 MB | 53.2 ms / 50 MB | 24.6 ms / 51 MB | 41.5 ms / 41 MB | 99.2 ms / 218 MB | n/a | n/a |
-| users-broad-5k-group-mod | 39.3 ms / 64 MB | 38.9 ms / 64 MB | 58.7 ms / 50 MB | 29.8 ms / 52 MB | 43.9 ms / 41 MB | 191 ms / 503 MB | n/a | n/a |
-| users-broad-5k-high-score | 14.4 ms / 13 MB | 11.6 ms / 13 MB | 55.1 ms / 50 MB | 27.0 ms / 51 MB | 45.0 ms / 41 MB | 145 ms / 380 MB | n/a | n/a |
-| users-broad-5k-identity | 48.4 ms / 66 MB | 48.6 ms / 66 MB | 167 ms / 55 MB | 43.2 ms / 51 MB | disagreed | 253 ms / 378 MB | n/a | n/a |
-| users-broad-5k-ids | 15.5 ms / 11 MB | 13.7 ms / 11 MB | 55.1 ms / 50 MB | 24.7 ms / 51 MB | 41.6 ms / 42 MB | 108 ms / 239 MB | n/a | n/a |
-| users-broad-5k-keys-len | 15.3 ms / 10 MB | 13.8 ms / 10 MB | 54.1 ms / 50 MB | 26.8 ms / 51 MB | 43.9 ms / 41 MB | 99.4 ms / 223 MB | n/a | n/a |
-| users-broad-5k-keys-publish | 15.0 ms / 10 MB | 12.7 ms / 10 MB | 52.6 ms / 50 MB | 24.8 ms / 51 MB | 41.4 ms / 41 MB | disagreed | n/a | n/a |
-| users-broad-5k-max-score | 19.8 ms / 12 MB | 18.1 ms / 12 MB | 55.1 ms / 50 MB | 25.6 ms / 51 MB | 42.6 ms / 41 MB | 110 ms / 231 MB | n/a | n/a |
-| users-broad-5k-nested-dept | 15.3 ms / 9.9 MB | 13.9 ms / 9.9 MB | 53.4 ms / 50 MB | 24.3 ms / 51 MB | 41.3 ms / 41 MB | 99.3 ms / 219 MB | n/a | n/a |
-| users-broad-5k-project-names | 19.2 ms / 11 MB | 14.0 ms / 11 MB | 54.7 ms / 50 MB | 25.6 ms / 51 MB | 42.7 ms / 41 MB | 109 ms / 230 MB | n/a | n/a |
-| users-broad-5k-project-pair | 20.9 ms / 12 MB | 20.1 ms / 12 MB | 59.5 ms / 52 MB | 28.7 ms / 51 MB | 44.3 ms / 43 MB | 170 ms / 321 MB | n/a | n/a |
-| users-broad-5k-reduce-score | 12.7 ms / 12 MB | 10.5 ms / 12 MB | 54.6 ms / 50 MB | 25.4 ms / 51 MB | 42.5 ms / 41 MB | n/a | n/a | n/a |
-| users-broad-5k-reverse-id | 36.0 ms / 63 MB | 35.4 ms / 63 MB | 54.5 ms / 50 MB | 25.2 ms / 51 MB | 41.6 ms / 41 MB | 142 ms / 399 MB | n/a | n/a |
-| users-broad-5k-select-id-stream | 15.8 ms / 10 MB | 15.9 ms / 10 MB | 55.8 ms / 50 MB | 28.9 ms / 51 MB | 45.5 ms / 41 MB | n/a | n/a | n/a |
-| users-broad-5k-slice-length | 10.6 ms / 11 MB | 10.0 ms / 11 MB | 52.3 ms / 50 MB | 23.9 ms / 51 MB | 40.9 ms / 41 MB | 102 ms / 243 MB | n/a | n/a |
-| users-broad-5k-sort-last | 36.5 ms / 63 MB | 35.9 ms / 63 MB | 58.9 ms / 50 MB | 28.4 ms / 51 MB | 45.0 ms / 42 MB | 150 ms / 391 MB | n/a | n/a |
-| users-broad-5k-sum-score | 16.9 ms / 12 MB | 10.7 ms / 12 MB | 54.9 ms / 50 MB | 25.0 ms / 51 MB | 42.6 ms / 42 MB | n/a | n/a | n/a |
-| users-broad-5k-type-path | 18.5 ms / 9.9 MB | 12.9 ms / 9.9 MB | 53.2 ms / 50 MB | 24.2 ms / 51 MB | 42.0 ms / 42 MB | disagreed | n/a | n/a |
-| users-broad-5k-unique-scores | 28.3 ms / 46 MB | 28.2 ms / 46 MB | 56.4 ms / 50 MB | 25.0 ms / 51 MB | 44.8 ms / 41 MB | 110 ms / 226 MB | n/a | n/a |
-| users-broad-25k-all-nonneg | 70.2 ms / 39 MB | 70.8 ms / 39 MB | 253 ms / 237 MB | 124 ms / 239 MB | 186 ms / 181 MB | n/a | n/a | n/a |
-| users-broad-25k-any-high | 65.8 ms / 39 MB | 65.1 ms / 39 MB | 240 ms / 237 MB | 103 ms / 239 MB | 175 ms / 179 MB | n/a | n/a | n/a |
-| users-broad-25k-count | 29.8 ms / 36 MB | 29.6 ms / 36 MB | 238 ms / 237 MB | 106 ms / 239 MB | 175 ms / 179 MB | 441 ms / 941 MB | n/a | n/a |
-| users-broad-25k-descent | 117 ms / 189 MB | 122 ms / 189 MB | 448 ms / 371 MB | 188 ms / 299 MB | 574 ms / 386 MB | excluded | n/a | n/a |
-| users-broad-25k-filter-active | 36.8 ms / 41 MB | 36.3 ms / 41 MB | 255 ms / 237 MB | 119 ms / 239 MB | 186 ms / 182 MB | excluded | n/a | n/a |
-| users-broad-25k-first-id | 46.2 ms / 31 MB | 45.5 ms / 31 MB | 242 ms / 237 MB | 108 ms / 238 MB | 181 ms / 178 MB | 450 ms / 955 MB | n/a | n/a |
-| users-broad-25k-group-mod | 179 ms / 267 MB | 175 ms / 237 MB | 273 ms / 239 MB | 132 ms / 243 MB | 191 ms / 186 MB | 872 ms / 2213 MB | n/a | n/a |
-| users-broad-25k-high-score | 37.9 ms / 42 MB | 36.6 ms / 41 MB | 253 ms / 237 MB | 119 ms / 239 MB | 184 ms / 183 MB | excluded | n/a | n/a |
-| users-broad-25k-identity | 214 ms / 273 MB | 212 ms / 261 MB | 708 ms / 266 MB | 197 ms / 238 MB | disagreed | excluded | n/a | n/a |
-| users-broad-25k-ids | 49.9 ms / 34 MB | 50.0 ms / 34 MB | 251 ms / 237 MB | 107 ms / 239 MB | 185 ms / 183 MB | 489 ms / 994 MB | n/a | n/a |
-| users-broad-25k-keys-len | 45.1 ms / 32 MB | 45.0 ms / 32 MB | 241 ms / 237 MB | 103 ms / 239 MB | 177 ms / 179 MB | 442 ms / 940 MB | n/a | n/a |
-| users-broad-25k-keys-publish | 44.8 ms / 32 MB | 45.0 ms / 32 MB | 246 ms / 237 MB | 107 ms / 239 MB | 182 ms / 179 MB | disagreed | n/a | n/a |
-| users-broad-25k-max-score | 68.8 ms / 41 MB | 69.2 ms / 41 MB | 250 ms / 237 MB | 111 ms / 239 MB | 182 ms / 183 MB | 485 ms / 1008 MB | n/a | n/a |
-| users-broad-25k-nested-dept | 46.7 ms / 31 MB | 45.8 ms / 31 MB | 240 ms / 237 MB | 106 ms / 239 MB | 180 ms / 178 MB | 445 ms / 940 MB | n/a | n/a |
-| users-broad-25k-project-names | 52.2 ms / 36 MB | 52.0 ms / 36 MB | 250 ms / 237 MB | 108 ms / 239 MB | 186 ms / 183 MB | 498 ms / 995 MB | n/a | n/a |
-| users-broad-25k-project-pair | 72.8 ms / 40 MB | 73.0 ms / 40 MB | 277 ms / 248 MB | 123 ms / 239 MB | 193 ms / 196 MB | 784 ms / 1426 MB | n/a | n/a |
-| users-broad-25k-reduce-score | 35.4 ms / 37 MB | 35.5 ms / 38 MB | 255 ms / 237 MB | 110 ms / 239 MB | 184 ms / 181 MB | n/a | n/a | n/a |
-| users-broad-25k-reverse-id | 148 ms / 264 MB | 155 ms / 235 MB | 247 ms / 237 MB | 107 ms / 239 MB | 177 ms / 179 MB | 647 ms / 1758 MB | n/a | n/a |
-| users-broad-25k-select-id-stream | 50.7 ms / 33 MB | 50.4 ms / 33 MB | 254 ms / 237 MB | 127 ms / 239 MB | 203 ms / 181 MB | n/a | n/a | n/a |
-| users-broad-25k-slice-length | 29.8 ms / 36 MB | 29.6 ms / 36 MB | 239 ms / 237 MB | 104 ms / 239 MB | 183 ms / 178 MB | 461 ms / 1048 MB | n/a | n/a |
-| users-broad-25k-sort-last | 166 ms / 265 MB | 166 ms / 238 MB | 284 ms / 239 MB | 133 ms / 241 MB | 202 ms / 190 MB | 699 ms / 1809 MB | n/a | n/a |
-| users-broad-25k-sum-score | 35.4 ms / 37 MB | 35.6 ms / 38 MB | 254 ms / 237 MB | 109 ms / 239 MB | 184 ms / 183 MB | n/a | n/a | n/a |
-| users-broad-25k-type-path | 45.5 ms / 31 MB | 44.7 ms / 32 MB | 244 ms / 237 MB | 107 ms / 239 MB | 179 ms / 179 MB | disagreed | n/a | n/a |
-| users-broad-25k-unique-scores | 121 ms / 192 MB | 121 ms / 201 MB | 254 ms / 238 MB | 107 ms / 239 MB | 198 ms / 188 MB | 488 ms / 993 MB | n/a | n/a |
-| users-broad-50k-all-nonneg | 136 ms / 73 MB | 137 ms / 73 MB | 495 ms / 472 MB | 238 ms / 475 MB | 360 ms / 354 MB | n/a | n/a | n/a |
-| users-broad-50k-any-high | 124 ms / 73 MB | 124 ms / 73 MB | 482 ms / 472 MB | 208 ms / 475 MB | 348 ms / 351 MB | n/a | n/a | n/a |
-| users-broad-50k-count | 54.7 ms / 64 MB | 54.5 ms / 64 MB | 485 ms / 472 MB | 205 ms / 474 MB | 341 ms / 349 MB | excluded | n/a | n/a |
-| users-broad-50k-descent | 232 ms / 365 MB | 233 ms / 365 MB | 878 ms / 764 MB | 373 ms / 591 MB | 1156 ms / 744 MB | excluded | n/a | n/a |
-| users-broad-50k-filter-active | 71.3 ms / 78 MB | 71.0 ms / 78 MB | 502 ms / 473 MB | 233 ms / 475 MB | 352 ms / 356 MB | excluded | n/a | n/a |
-| users-broad-50k-first-id | 83.0 ms / 58 MB | 83.9 ms / 58 MB | 482 ms / 472 MB | 201 ms / 473 MB | 351 ms / 349 MB | excluded | n/a | n/a |
-| users-broad-50k-group-mod | 358 ms / 492 MB | 351 ms / 492 MB | 540 ms / 476 MB | 259 ms / 481 MB | 371 ms / 365 MB | 1788 ms / 4303 MB | n/a | n/a |
-| users-broad-50k-high-score | 70.2 ms / 78 MB | 70.4 ms / 78 MB | 509 ms / 473 MB | 237 ms / 475 MB | 363 ms / 358 MB | excluded | n/a | n/a |
-| users-broad-50k-identity | 436 ms / 499 MB | 427 ms / 499 MB | 1396 ms / 529 MB | 386 ms / 473 MB | disagreed | excluded | n/a | n/a |
-| users-broad-50k-ids | 93.2 ms / 64 MB | 96.1 ms / 64 MB | 496 ms / 473 MB | 204 ms / 474 MB | 353 ms / 358 MB | 959 ms / 1931 MB | n/a | n/a |
-| users-broad-50k-keys-len | 83.0 ms / 59 MB | 84.6 ms / 59 MB | 485 ms / 472 MB | 205 ms / 474 MB | 348 ms / 349 MB | 877 ms / 1859 MB | n/a | n/a |
-| users-broad-50k-keys-publish | 84.4 ms / 59 MB | 83.0 ms / 59 MB | 475 ms / 472 MB | 198 ms / 474 MB | 350 ms / 349 MB | disagreed | n/a | n/a |
-| users-broad-50k-max-score | 136 ms / 78 MB | 132 ms / 78 MB | 489 ms / 473 MB | 211 ms / 474 MB | 359 ms / 358 MB | 970 ms / 1963 MB | n/a | n/a |
-| users-broad-50k-nested-dept | 83.1 ms / 58 MB | 82.9 ms / 58 MB | 477 ms / 472 MB | 199 ms / 473 MB | 344 ms / 349 MB | 888 ms / 1827 MB | n/a | n/a |
-| users-broad-50k-project-names | 94.4 ms / 66 MB | 96.0 ms / 66 MB | 498 ms / 473 MB | 216 ms / 474 MB | 359 ms / 358 MB | 966 ms / 1936 MB | n/a | n/a |
-| users-broad-50k-project-pair | 140 ms / 75 MB | 139 ms / 75 MB | 541 ms / 494 MB | 242 ms / 474 MB | 381 ms / 383 MB | 1548 ms / 2693 MB | n/a | n/a |
-| users-broad-50k-reduce-score | 66.3 ms / 70 MB | 66.7 ms / 70 MB | 489 ms / 472 MB | 210 ms / 474 MB | 357 ms / 354 MB | n/a | n/a | n/a |
-| users-broad-50k-reverse-id | 301 ms / 486 MB | 298 ms / 486 MB | 489 ms / 473 MB | 210 ms / 474 MB | 343 ms / 350 MB | 1274 ms / 3441 MB | n/a | n/a |
-| users-broad-50k-select-id-stream | 98.9 ms / 62 MB | 98.7 ms / 62 MB | 502 ms / 473 MB | 244 ms / 474 MB | 392 ms / 353 MB | n/a | n/a | n/a |
-| users-broad-50k-slice-length | 53.0 ms / 64 MB | 53.1 ms / 64 MB | 476 ms / 472 MB | 204 ms / 474 MB | 350 ms / 349 MB | excluded | n/a | n/a |
-| users-broad-50k-sort-last | 333 ms / 487 MB | 330 ms / 487 MB | 562 ms / 477 MB | 257 ms / 478 MB | 407 ms / 372 MB | 1419 ms / 3483 MB | n/a | n/a |
-| users-broad-50k-sum-score | 68.7 ms / 70 MB | 66.2 ms / 70 MB | 490 ms / 473 MB | 208 ms / 474 MB | 352 ms / 358 MB | n/a | n/a | n/a |
-| users-broad-50k-type-path | 83.0 ms / 58 MB | 85.2 ms / 58 MB | 475 ms / 472 MB | 201 ms / 473 MB | 342 ms / 349 MB | disagreed | n/a | n/a |
-| users-broad-50k-unique-scores | 239 ms / 379 MB | 238 ms / 379 MB | 502 ms / 473 MB | 205 ms / 474 MB | 419 ms / 369 MB | 962 ms / 1922 MB | n/a | n/a |
-| users-broad-100k-all-nonneg | 268 ms / 143 MB | 263 ms / 143 MB | 978 ms / 943 MB | 472 ms / 945 MB | 709 ms / 698 MB | n/a | n/a | n/a |
-| users-broad-100k-any-high | 245 ms / 143 MB | 243 ms / 143 MB | 946 ms / 943 MB | 402 ms / 945 MB | 675 ms / 692 MB | n/a | n/a | n/a |
-| users-broad-100k-count | 100 ms / 123 MB | 101 ms / 123 MB | 938 ms / 943 MB | 402 ms / 943 MB | 681 ms / 689 MB | excluded | n/a | n/a |
-| users-broad-100k-descent | 452 ms / 703 MB | 452 ms / 703 MB | 1754 ms / 1583 MB | 735 ms / 1180 MB | 2300 ms / 1555 MB | excluded | n/a | n/a |
-| users-broad-100k-filter-active | 132 ms / 150 MB | 130 ms / 150 MB | 1016 ms / 943 MB | 471 ms / 946 MB | 715 ms / 704 MB | excluded | n/a | n/a |
-| users-broad-100k-first-id | 160 ms / 112 MB | 159 ms / 112 MB | 947 ms / 943 MB | 397 ms / 943 MB | 694 ms / 689 MB | excluded | n/a | n/a |
-| users-broad-100k-group-mod | 689 ms / 913 MB | 675 ms / 913 MB | 1090 ms / 952 MB | 518 ms / 959 MB | 739 ms / 724 MB | 3532 ms / 8722 MB | n/a | n/a |
-| users-broad-100k-high-score | 133 ms / 152 MB | 135 ms / 152 MB | 996 ms / 943 MB | 460 ms / 946 MB | 718 ms / 706 MB | excluded | n/a | n/a |
-| users-broad-100k-identity | 846 ms / 977 MB | 828 ms / 977 MB | 2740 ms / 1057 MB | 775 ms / 943 MB | disagreed | excluded | n/a | n/a |
-| users-broad-100k-ids | 183 ms / 123 MB | 180 ms / 123 MB | 990 ms / 944 MB | 410 ms / 944 MB | 696 ms / 706 MB | 1913 ms / 3854 MB | n/a | n/a |
-| users-broad-100k-keys-len | 163 ms / 113 MB | 159 ms / 113 MB | 945 ms / 943 MB | 397 ms / 944 MB | 661 ms / 689 MB | 1755 ms / 3667 MB | n/a | n/a |
-| users-broad-100k-keys-publish | 160 ms / 113 MB | 163 ms / 113 MB | 939 ms / 943 MB | 401 ms / 943 MB | 707 ms / 689 MB | disagreed | n/a | n/a |
-| users-broad-100k-max-score | 261 ms / 150 MB | 257 ms / 150 MB | 973 ms / 944 MB | 433 ms / 944 MB | 718 ms / 707 MB | 1915 ms / 3925 MB | n/a | n/a |
-| users-broad-100k-nested-dept | 164 ms / 112 MB | 160 ms / 112 MB | 944 ms / 943 MB | 402 ms / 943 MB | 679 ms / 688 MB | 1764 ms / 3666 MB | n/a | n/a |
-| users-broad-100k-project-names | 192 ms / 127 MB | 184 ms / 127 MB | 1012 ms / 944 MB | 427 ms / 944 MB | 717 ms / 706 MB | 1916 ms / 3858 MB | n/a | n/a |
-| users-broad-100k-project-pair | 274 ms / 143 MB | 271 ms / 143 MB | 1058 ms / 988 MB | 488 ms / 944 MB | 738 ms / 758 MB | 3097 ms / 5316 MB | n/a | n/a |
-| users-broad-100k-reduce-score | 127 ms / 136 MB | 126 ms / 136 MB | 988 ms / 943 MB | 424 ms / 945 MB | 718 ms / 697 MB | n/a | n/a | n/a |
-| users-broad-100k-reverse-id | 593 ms / 906 MB | 602 ms / 905 MB | 974 ms / 944 MB | 428 ms / 943 MB | 672 ms / 691 MB | 2574 ms / 6972 MB | n/a | n/a |
-| users-broad-100k-select-id-stream | 187 ms / 119 MB | 188 ms / 119 MB | 1029 ms / 945 MB | 499 ms / 943 MB | 800 ms / 697 MB | n/a | n/a | n/a |
-| users-broad-100k-slice-length | 103 ms / 123 MB | 102 ms / 123 MB | 931 ms / 943 MB | 411 ms / 944 MB | 695 ms / 689 MB | excluded | n/a | n/a |
-| users-broad-100k-sort-last | 657 ms / 915 MB | 657 ms / 915 MB | 1146 ms / 951 MB | 520 ms / 953 MB | 818 ms / 734 MB | 2848 ms / 7039 MB | n/a | n/a |
-| users-broad-100k-sum-score | 133 ms / 136 MB | 129 ms / 136 MB | 992 ms / 944 MB | 421 ms / 944 MB | 712 ms / 707 MB | n/a | n/a | n/a |
-| users-broad-100k-type-path | 167 ms / 112 MB | 162 ms / 112 MB | 933 ms / 943 MB | 392 ms / 943 MB | 682 ms / 689 MB | disagreed | n/a | n/a |
-| users-broad-100k-unique-scores | 470 ms / 724 MB | 474 ms / 724 MB | 1029 ms / 946 MB | 415 ms / 944 MB | 820 ms / 729 MB | 1927 ms / 3833 MB | n/a | n/a |
-| users-broad-200k-all-nonneg | 519 ms / 281 MB | 521 ms / 281 MB | 1974 ms / 1882 MB | 932 ms / 1887 MB | 1401 ms / 1384 MB | n/a | n/a | n/a |
-| users-broad-200k-any-high | 473 ms / 281 MB | 474 ms / 281 MB | 1867 ms / 1882 MB | 786 ms / 1887 MB | 1337 ms / 1376 MB | n/a | n/a | n/a |
-| users-broad-200k-count | 192 ms / 241 MB | 192 ms / 241 MB | 1893 ms / 1882 MB | 809 ms / 1884 MB | 1341 ms / 1368 MB | excluded | n/a | n/a |
-| users-broad-200k-descent | 899 ms / 1406 MB | 887 ms / 1406 MB | 3509 ms / 2923 MB | 1506 ms / 2357 MB | 4582 ms / 2866 MB | excluded | n/a | n/a |
-| users-broad-200k-filter-active | 268 ms / 292 MB | 257 ms / 292 MB | 2001 ms / 1882 MB | 919 ms / 1889 MB | 1422 ms / 1399 MB | excluded | n/a | n/a |
-| users-broad-200k-first-id | 313 ms / 220 MB | 309 ms / 220 MB | 1880 ms / 1882 MB | 801 ms / 1884 MB | 1346 ms / 1368 MB | excluded | n/a | n/a |
-| users-broad-200k-group-mod | 1348 ms / 1803 MB | 1351 ms / 1803 MB | 2157 ms / 1899 MB | 1021 ms / 1913 MB | 1463 ms / 1439 MB | 6986 ms / 17516 MB | n/a | n/a |
-| users-broad-200k-high-score | 256 ms / 292 MB | 257 ms / 292 MB | 1980 ms / 1884 MB | 931 ms / 1889 MB | 1446 ms / 1403 MB | excluded | n/a | n/a |
-| users-broad-200k-identity | 1684 ms / 1934 MB | 1655 ms / 1934 MB | 5314 ms / 2110 MB | 1520 ms / 1884 MB | disagreed | excluded | n/a | n/a |
-| users-broad-200k-ids | 353 ms / 248 MB | 358 ms / 248 MB | 1968 ms / 1885 MB | 805 ms / 1884 MB | 1395 ms / 1402 MB | 3849 ms / 7676 MB | n/a | n/a |
-| users-broad-200k-keys-len | 308 ms / 221 MB | 307 ms / 221 MB | 1824 ms / 1882 MB | 792 ms / 1884 MB | 1363 ms / 1368 MB | 3434 ms / 7295 MB | n/a | n/a |
-| users-broad-200k-keys-publish | 311 ms / 221 MB | 308 ms / 221 MB | 1858 ms / 1882 MB | 770 ms / 1884 MB | 1318 ms / 1368 MB | disagreed | n/a | n/a |
-| users-broad-200k-max-score | 505 ms / 286 MB | 502 ms / 286 MB | 1974 ms / 1885 MB | 826 ms / 1884 MB | 1376 ms / 1405 MB | 3826 ms / 7832 MB | n/a | n/a |
-| users-broad-200k-nested-dept | 310 ms / 220 MB | 313 ms / 221 MB | 1865 ms / 1882 MB | 782 ms / 1884 MB | 1326 ms / 1368 MB | 3444 ms / 7288 MB | n/a | n/a |
-| users-broad-200k-project-names | 357 ms / 249 MB | 357 ms / 249 MB | 1993 ms / 1885 MB | 845 ms / 1884 MB | 1402 ms / 1403 MB | 3880 ms / 7700 MB | n/a | n/a |
-| users-broad-200k-project-pair | 535 ms / 291 MB | 534 ms / 291 MB | 2143 ms / 1972 MB | 958 ms / 1887 MB | 1456 ms / 1506 MB | 6134 ms / 10716 MB | n/a | n/a |
-| users-broad-200k-reduce-score | 253 ms / 264 MB | 247 ms / 263 MB | 1956 ms / 1882 MB | 839 ms / 1887 MB | 1423 ms / 1387 MB | n/a | n/a | n/a |
-| users-broad-200k-reverse-id | 1133 ms / 1803 MB | 1152 ms / 1803 MB | 1919 ms / 1885 MB | 819 ms / 1884 MB | 1342 ms / 1372 MB | 5032 ms / 13848 MB | n/a | n/a |
-| users-broad-200k-select-id-stream | 356 ms / 233 MB | 353 ms / 233 MB | 2018 ms / 1886 MB | 960 ms / 1884 MB | 1534 ms / 1384 MB | n/a | n/a | n/a |
-| users-broad-200k-slice-length | 197 ms / 241 MB | 193 ms / 241 MB | 1871 ms / 1882 MB | 804 ms / 1884 MB | 1354 ms / 1369 MB | excluded | n/a | n/a |
-| users-broad-200k-sort-last | 1317 ms / 1828 MB | 1316 ms / 1828 MB | 2355 ms / 1899 MB | 1028 ms / 1902 MB | 1697 ms / 1459 MB | 6016 ms / 13369 MB | n/a | n/a |
-| users-broad-200k-sum-score | 245 ms / 264 MB | 253 ms / 263 MB | 1986 ms / 1885 MB | 817 ms / 1884 MB | 1416 ms / 1406 MB | n/a | n/a | n/a |
-| users-broad-200k-type-path | 312 ms / 221 MB | 308 ms / 221 MB | 1883 ms / 1882 MB | 798 ms / 1884 MB | 1345 ms / 1368 MB | disagreed | n/a | n/a |
-| users-broad-200k-unique-scores | 919 ms / 1446 MB | 940 ms / 1446 MB | 2060 ms / 1885 MB | 817 ms / 1884 MB | 1677 ms / 1449 MB | 3814 ms / 7661 MB | n/a | n/a |
-| users-narrow-100-all-nonneg | 3.09 ms / 4.9 MB | 3.63 ms / 4.9 MB | 3.22 ms / 2.7 MB | 3.85 ms / 4.3 MB | 3.20 ms / 6.5 MB | n/a | n/a | n/a |
-| users-narrow-100-any-high | 3.66 ms / 4.9 MB | 3.17 ms / 4.9 MB | 2.94 ms / 2.7 MB | 3.16 ms / 4.2 MB | 2.97 ms / 6.1 MB | n/a | n/a | n/a |
-| users-narrow-100-count | 3.34 ms / 4.5 MB | 3.01 ms / 4.5 MB | 2.88 ms / 2.6 MB | 2.87 ms / 4.0 MB | 3.14 ms / 6.1 MB | 6.32 ms / 32 MB | n/a | n/a |
-| users-narrow-100-descent | 3.13 ms / 4.8 MB | 3.60 ms / 4.8 MB | 3.72 ms / 2.7 MB | 3.39 ms / 4.0 MB | 3.29 ms / 6.1 MB | 6.89 ms / 34 MB | n/a | n/a |
-| users-narrow-100-filter-active | 3.40 ms / 4.8 MB | 3.37 ms / 4.8 MB | 3.12 ms / 2.6 MB | 3.64 ms / 4.0 MB | 2.92 ms / 6.0 MB | 6.37 ms / 29 MB | n/a | n/a |
-| users-narrow-100-first-id | 2.91 ms / 4.5 MB | 2.93 ms / 4.5 MB | 3.10 ms / 2.6 MB | 2.92 ms / 3.9 MB | 2.91 ms / 5.9 MB | 5.76 ms / 22 MB | n/a | n/a |
-| users-narrow-100-group-mod | 3.05 ms / 5.0 MB | 3.68 ms / 5.0 MB | 4.82 ms / 2.8 MB | 3.14 ms / 4.2 MB | 3.20 ms / 6.1 MB | 6.97 ms / 34 MB | n/a | n/a |
-| users-narrow-100-high-score | 3.83 ms / 4.8 MB | 3.17 ms / 4.8 MB | 3.00 ms / 2.6 MB | 3.18 ms / 4.0 MB | 3.08 ms / 6.0 MB | 6.98 ms / 33 MB | n/a | n/a |
-| users-narrow-100-identity | 3.18 ms / 4.3 MB | 3.67 ms / 4.3 MB | 3.17 ms / 2.6 MB | 3.57 ms / 3.9 MB | 3.15 ms / 6.0 MB | 6.87 ms / 32 MB | n/a | n/a |
-| users-narrow-100-ids | 2.93 ms / 4.6 MB | 2.89 ms / 4.6 MB | 2.89 ms / 2.7 MB | 3.89 ms / 3.9 MB | 3.24 ms / 6.0 MB | 6.20 ms / 28 MB | n/a | n/a |
-| users-narrow-100-keys-len | 3.46 ms / 4.6 MB | 3.31 ms / 4.7 MB | 3.03 ms / 2.7 MB | 3.33 ms / 4.1 MB | 3.07 ms / 5.9 MB | 6.23 ms / 28 MB | n/a | n/a |
-| users-narrow-100-keys-publish | 2.98 ms / 4.6 MB | 3.01 ms / 4.6 MB | 2.90 ms / 2.6 MB | 3.56 ms / 4.0 MB | 4.15 ms / 6.0 MB | 6.56 ms / 30 MB | n/a | n/a |
-| users-narrow-100-max-score | 3.00 ms / 4.8 MB | 3.02 ms / 4.8 MB | 3.02 ms / 2.7 MB | 3.55 ms / 4.1 MB | 3.34 ms / 5.9 MB | 6.70 ms / 29 MB | n/a | n/a |
-| users-narrow-100-nested-dept | 3.04 ms / 4.5 MB | 3.33 ms / 4.5 MB | 3.37 ms / 2.6 MB | 3.06 ms / 3.9 MB | 3.08 ms / 5.8 MB | 6.37 ms / 26 MB | n/a | n/a |
-| users-narrow-100-project-names | 3.15 ms / 4.5 MB | 3.90 ms / 4.6 MB | 3.04 ms / 2.6 MB | 3.28 ms / 3.9 MB | 3.89 ms / 5.9 MB | 7.65 ms / 32 MB | n/a | n/a |
-| users-narrow-100-project-pair | 3.03 ms / 4.7 MB | 2.97 ms / 4.7 MB | 2.90 ms / 2.7 MB | 3.27 ms / 3.9 MB | 3.54 ms / 5.9 MB | 7.73 ms / 36 MB | n/a | n/a |
-| users-narrow-100-reduce-score | 3.86 ms / 4.8 MB | 3.53 ms / 4.9 MB | 3.57 ms / 2.7 MB | 3.06 ms / 3.9 MB | 2.99 ms / 5.9 MB | n/a | n/a | n/a |
-| users-narrow-100-reverse-id | 3.01 ms / 4.8 MB | 2.91 ms / 4.8 MB | 3.46 ms / 2.7 MB | 3.32 ms / 4.0 MB | 3.14 ms / 6.0 MB | 5.98 ms / 17 MB | n/a | n/a |
-| users-narrow-100-select-id-stream | 3.11 ms / 4.5 MB | 3.46 ms / 4.5 MB | 3.04 ms / 2.6 MB | 3.44 ms / 3.9 MB | 3.11 ms / 5.9 MB | n/a | n/a | n/a |
-| users-narrow-100-slice-length | 3.38 ms / 4.6 MB | 2.80 ms / 4.6 MB | 2.85 ms / 2.6 MB | 3.12 ms / 4.0 MB | 3.15 ms / 6.0 MB | 6.64 ms / 32 MB | n/a | n/a |
-| users-narrow-100-sort-last | 3.01 ms / 4.8 MB | 3.71 ms / 4.8 MB | 3.14 ms / 2.7 MB | 3.26 ms / 4.2 MB | 3.11 ms / 6.0 MB | 6.61 ms / 31 MB | n/a | n/a |
-| users-narrow-100-sum-score | 3.00 ms / 4.8 MB | 3.86 ms / 4.8 MB | 3.21 ms / 2.7 MB | 3.13 ms / 4.0 MB | 3.11 ms / 5.9 MB | n/a | n/a | n/a |
-| users-narrow-100-type-path | 3.00 ms / 4.5 MB | 3.69 ms / 4.5 MB | 3.17 ms / 2.6 MB | 3.19 ms / 3.9 MB | 3.06 ms / 5.8 MB | disagreed | n/a | n/a |
-| users-narrow-100-unique-scores | 2.93 ms / 5.0 MB | 2.93 ms / 5.0 MB | 2.81 ms / 2.7 MB | 3.84 ms / 4.1 MB | 3.60 ms / 5.8 MB | 6.14 ms / 28 MB | n/a | n/a |
-| users-narrow-1k-all-nonneg | 4.07 ms / 5.3 MB | 3.75 ms / 5.3 MB | 3.92 ms / 3.3 MB | 3.74 ms / 4.6 MB | 3.73 ms / 6.7 MB | n/a | n/a | n/a |
-| users-narrow-1k-any-high | 3.24 ms / 5.3 MB | 3.28 ms / 5.3 MB | 3.34 ms / 3.3 MB | 3.73 ms / 4.6 MB | 3.51 ms / 6.7 MB | n/a | n/a | n/a |
-| users-narrow-1k-count | 3.75 ms / 4.8 MB | 4.11 ms / 4.8 MB | 3.83 ms / 3.3 MB | 3.40 ms / 4.3 MB | 3.48 ms / 6.4 MB | 7.98 ms / 35 MB | n/a | n/a |
-| users-narrow-1k-descent | 6.55 ms / 5.4 MB | 4.48 ms / 5.4 MB | 4.23 ms / 3.6 MB | 3.50 ms / 4.4 MB | 4.30 ms / 7.5 MB | 12.2 ms / 46 MB | n/a | n/a |
-| users-narrow-1k-filter-active | 4.23 ms / 5.0 MB | 3.62 ms / 5.0 MB | 4.38 ms / 3.3 MB | 3.82 ms / 4.3 MB | 3.96 ms / 6.5 MB | 9.10 ms / 37 MB | n/a | n/a |
-| users-narrow-1k-first-id | 3.15 ms / 4.5 MB | 3.36 ms / 4.5 MB | 3.55 ms / 3.3 MB | 3.36 ms / 4.2 MB | 3.35 ms / 6.5 MB | 7.49 ms / 35 MB | n/a | n/a |
-| users-narrow-1k-group-mod | 4.71 ms / 5.9 MB | 4.23 ms / 6.0 MB | 4.77 ms / 3.5 MB | 3.42 ms / 4.7 MB | 3.97 ms / 6.8 MB | 10.3 ms / 42 MB | n/a | n/a |
-| users-narrow-1k-high-score | 3.71 ms / 5.3 MB | 3.52 ms / 5.3 MB | 3.80 ms / 3.4 MB | 3.45 ms / 4.3 MB | 3.49 ms / 6.5 MB | 9.15 ms / 40 MB | n/a | n/a |
-| users-narrow-1k-identity | 3.32 ms / 4.4 MB | 3.22 ms / 4.4 MB | 3.87 ms / 3.3 MB | 3.49 ms / 4.2 MB | 3.99 ms / 6.6 MB | 9.81 ms / 36 MB | n/a | n/a |
-| users-narrow-1k-ids | 3.41 ms / 4.7 MB | 3.32 ms / 4.7 MB | 4.81 ms / 3.4 MB | 3.53 ms / 4.2 MB | 3.70 ms / 6.6 MB | 8.34 ms / 37 MB | n/a | n/a |
-| users-narrow-1k-keys-len | 3.70 ms / 4.7 MB | 3.67 ms / 4.7 MB | 3.72 ms / 3.3 MB | 3.70 ms / 4.4 MB | 3.84 ms / 6.4 MB | 8.17 ms / 35 MB | n/a | n/a |
-| users-narrow-1k-keys-publish | 3.20 ms / 4.6 MB | 3.08 ms / 4.6 MB | 4.05 ms / 3.3 MB | 4.29 ms / 4.4 MB | 3.75 ms / 6.4 MB | 8.81 ms / 19 MB | n/a | n/a |
-| users-narrow-1k-max-score | 3.59 ms / 5.2 MB | 3.67 ms / 5.3 MB | 4.18 ms / 3.4 MB | 3.76 ms / 4.4 MB | 3.65 ms / 6.5 MB | 8.73 ms / 38 MB | n/a | n/a |
-| users-narrow-1k-nested-dept | 3.78 ms / 4.5 MB | 3.82 ms / 4.5 MB | 3.68 ms / 3.3 MB | 4.04 ms / 4.2 MB | 3.46 ms / 6.4 MB | 7.73 ms / 35 MB | n/a | n/a |
-| users-narrow-1k-project-names | 3.71 ms / 4.6 MB | 3.34 ms / 4.6 MB | 3.94 ms / 3.4 MB | 3.76 ms / 4.2 MB | 4.01 ms / 6.5 MB | 8.83 ms / 38 MB | n/a | n/a |
-| users-narrow-1k-project-pair | 3.41 ms / 5.1 MB | 3.32 ms / 5.1 MB | 4.83 ms / 3.9 MB | 4.55 ms / 4.3 MB | 3.81 ms / 7.1 MB | 20.4 ms / 64 MB | n/a | n/a |
-| users-narrow-1k-reduce-score | 3.59 ms / 5.2 MB | 3.66 ms / 5.2 MB | 4.13 ms / 3.3 MB | 4.01 ms / 4.2 MB | 3.86 ms / 6.4 MB | n/a | n/a | n/a |
-| users-narrow-1k-reverse-id | 3.51 ms / 5.6 MB | 3.85 ms / 5.7 MB | 4.52 ms / 3.5 MB | 3.76 ms / 4.3 MB | 3.75 ms / 6.5 MB | 9.02 ms / 37 MB | n/a | n/a |
-| users-narrow-1k-select-id-stream | 3.23 ms / 4.5 MB | 3.06 ms / 4.5 MB | 3.54 ms / 3.3 MB | 3.94 ms / 4.2 MB | 3.65 ms / 6.6 MB | n/a | n/a | n/a |
-| users-narrow-1k-slice-length | 3.67 ms / 4.8 MB | 3.88 ms / 4.9 MB | 3.53 ms / 3.3 MB | 3.39 ms / 4.3 MB | 3.45 ms / 6.4 MB | 8.41 ms / 35 MB | n/a | n/a |
-| users-narrow-1k-sort-last | 6.97 ms / 5.8 MB | 3.91 ms / 5.8 MB | 4.72 ms / 3.4 MB | 3.31 ms / 4.5 MB | 3.96 ms / 6.8 MB | 9.20 ms / 39 MB | n/a | n/a |
-| users-narrow-1k-sum-score | 3.58 ms / 5.2 MB | 3.40 ms / 5.2 MB | 3.69 ms / 3.4 MB | 3.57 ms / 4.3 MB | 3.55 ms / 6.6 MB | n/a | n/a | n/a |
-| users-narrow-1k-type-path | 3.57 ms / 4.5 MB | 3.60 ms / 4.5 MB | 3.79 ms / 3.3 MB | 3.32 ms / 4.2 MB | 4.06 ms / 6.4 MB | disagreed | n/a | n/a |
-| users-narrow-1k-unique-scores | 3.43 ms / 5.7 MB | 3.49 ms / 5.8 MB | 4.35 ms / 3.5 MB | 3.79 ms / 4.6 MB | 4.02 ms / 6.8 MB | 8.41 ms / 38 MB | n/a | n/a |
-| users-narrow-5k-all-nonneg | 6.66 ms / 6.7 MB | 6.90 ms / 6.7 MB | 7.52 ms / 6.0 MB | 8.88 ms / 6.4 MB | 7.95 ms / 10 MB | n/a | n/a | n/a |
-| users-narrow-5k-any-high | 5.65 ms / 6.8 MB | 5.50 ms / 6.8 MB | 6.29 ms / 6.0 MB | 5.25 ms / 6.3 MB | 6.27 ms / 9.4 MB | n/a | n/a | n/a |
-| users-narrow-5k-count | 4.78 ms / 5.8 MB | 5.06 ms / 5.9 MB | 6.46 ms / 6.0 MB | 5.09 ms / 6.0 MB | 5.80 ms / 8.3 MB | 13.9 ms / 46 MB | n/a | n/a |
-| users-narrow-5k-descent | 6.24 ms / 7.3 MB | 6.52 ms / 7.3 MB | 8.84 ms / 6.8 MB | 6.72 ms / 6.6 MB | 10.9 ms / 14 MB | 26.9 ms / 79 MB | n/a | n/a |
-| users-narrow-5k-filter-active | 5.47 ms / 6.1 MB | 5.46 ms / 6.1 MB | 7.38 ms / 6.0 MB | 7.49 ms / 6.0 MB | 7.50 ms / 9.9 MB | 17.2 ms / 52 MB | n/a | n/a |
-| users-narrow-5k-first-id | 5.24 ms / 4.6 MB | 4.84 ms / 4.6 MB | 6.25 ms / 5.9 MB | 5.07 ms / 5.9 MB | 6.52 ms / 8.3 MB | 13.8 ms / 31 MB | n/a | n/a |
-| users-narrow-5k-group-mod | 9.62 ms / 10 MB | 10.1 ms / 10 MB | 11.6 ms / 6.7 MB | 6.81 ms / 7.4 MB | 8.93 ms / 11 MB | 24.2 ms / 68 MB | n/a | n/a |
-| users-narrow-5k-high-score | 6.26 ms / 7.8 MB | 6.51 ms / 7.8 MB | 7.55 ms / 6.1 MB | 7.35 ms / 6.2 MB | 7.46 ms / 10 MB | 21.3 ms / 63 MB | n/a | n/a |
-| users-narrow-5k-identity | 4.93 ms / 4.5 MB | 4.71 ms / 4.5 MB | 8.41 ms / 6.2 MB | 6.55 ms / 5.9 MB | 7.63 ms / 10.0 MB | 20.6 ms / 57 MB | n/a | n/a |
-| users-narrow-5k-ids | 4.86 ms / 5.3 MB | 5.34 ms / 5.3 MB | 7.34 ms / 6.0 MB | 5.71 ms / 6.1 MB | 7.18 ms / 10 MB | 17.9 ms / 53 MB | n/a | n/a |
-| users-narrow-5k-keys-len | 5.06 ms / 4.8 MB | 4.93 ms / 4.8 MB | 6.54 ms / 6.0 MB | 5.38 ms / 6.1 MB | 6.57 ms / 8.3 MB | 14.0 ms / 46 MB | n/a | n/a |
-| users-narrow-5k-keys-publish | 5.05 ms / 4.7 MB | 4.86 ms / 4.7 MB | 6.60 ms / 5.9 MB | 5.43 ms / 6.1 MB | 6.71 ms / 8.3 MB | 14.5 ms / 54 MB | n/a | n/a |
-| users-narrow-5k-max-score | 6.18 ms / 7.0 MB | 6.72 ms / 7.0 MB | 7.72 ms / 6.1 MB | 6.55 ms / 6.3 MB | 7.50 ms / 10 MB | 18.0 ms / 52 MB | n/a | n/a |
-| users-narrow-5k-nested-dept | 5.24 ms / 4.6 MB | 5.34 ms / 4.7 MB | 7.07 ms / 6.0 MB | 6.39 ms / 5.9 MB | 6.83 ms / 8.4 MB | 14.0 ms / 47 MB | n/a | n/a |
-| users-narrow-5k-project-names | 4.79 ms / 5.2 MB | 4.77 ms / 5.2 MB | 7.14 ms / 6.1 MB | 5.99 ms / 6.1 MB | 7.50 ms / 10 MB | 19.1 ms / 54 MB | n/a | n/a |
-| users-narrow-5k-project-pair | 5.78 ms / 6.8 MB | 5.87 ms / 6.8 MB | 10.9 ms / 8.3 MB | 9.44 ms / 6.1 MB | 8.28 ms / 12 MB | 73.6 ms / 112 MB | n/a | n/a |
-| users-narrow-5k-reduce-score | 6.62 ms / 7.0 MB | 5.90 ms / 7.0 MB | 6.99 ms / 6.0 MB | 6.79 ms / 6.0 MB | 9.84 ms / 9.8 MB | n/a | n/a | n/a |
-| users-narrow-5k-reverse-id | 6.18 ms / 9.2 MB | 6.33 ms / 9.2 MB | 7.33 ms / 6.1 MB | 5.26 ms / 6.0 MB | 6.41 ms / 8.4 MB | 16.4 ms / 53 MB | n/a | n/a |
-| users-narrow-5k-select-id-stream | 4.93 ms / 4.6 MB | 4.90 ms / 4.6 MB | 7.71 ms / 6.0 MB | 7.93 ms / 5.9 MB | 9.76 ms / 9.9 MB | n/a | n/a | n/a |
-| users-narrow-5k-slice-length | 4.79 ms / 5.9 MB | 4.73 ms / 5.9 MB | 6.44 ms / 5.9 MB | 5.12 ms / 6.0 MB | 5.63 ms / 8.5 MB | 14.0 ms / 52 MB | n/a | n/a |
-| users-narrow-5k-sort-last | 6.71 ms / 9.8 MB | 7.21 ms / 9.8 MB | 11.0 ms / 6.5 MB | 6.74 ms / 6.7 MB | 10.1 ms / 11 MB | 21.4 ms / 56 MB | n/a | n/a |
-| users-narrow-5k-sum-score | 6.16 ms / 7.0 MB | 6.27 ms / 7.0 MB | 8.37 ms / 6.1 MB | 6.19 ms / 6.1 MB | 7.16 ms / 10 MB | n/a | n/a | n/a |
-| users-narrow-5k-type-path | 4.88 ms / 4.7 MB | 4.99 ms / 4.7 MB | 6.85 ms / 6.0 MB | 5.21 ms / 5.9 MB | 6.41 ms / 8.5 MB | disagreed | n/a | n/a |
-| users-narrow-5k-unique-scores | 7.26 ms / 8.6 MB | 7.21 ms / 8.6 MB | 8.56 ms / 6.1 MB | 7.19 ms / 7.0 MB | 10.0 ms / 11 MB | 17.2 ms / 52 MB | n/a | n/a |
-| users-narrow-25k-all-nonneg | 11.7 ms / 14 MB | 11.1 ms / 14 MB | 16.8 ms / 19 MB | 17.3 ms / 16 MB | 16.1 ms / 21 MB | n/a | n/a | n/a |
-| users-narrow-25k-any-high | 7.79 ms / 14 MB | 7.88 ms / 14 MB | 11.5 ms / 19 MB | 7.45 ms / 16 MB | 10.7 ms / 20 MB | n/a | n/a | n/a |
-| users-narrow-25k-count | 7.03 ms / 9.8 MB | 7.37 ms / 9.8 MB | 14.3 ms / 19 MB | 9.33 ms / 15 MB | 12.7 ms / 19 MB | 33.2 ms / 83 MB | n/a | n/a |
-| users-narrow-25k-descent | 11.3 ms / 20 MB | 10.6 ms / 20 MB | 24.3 ms / 24 MB | 12.2 ms / 18 MB | 30.2 ms / 34 MB | 86.8 ms / 271 MB | n/a | n/a |
-| users-narrow-25k-filter-active | 8.47 ms / 10 MB | 7.93 ms / 10 MB | 18.7 ms / 19 MB | 18.3 ms / 15 MB | 14.1 ms / 21 MB | 47.1 ms / 121 MB | n/a | n/a |
-| users-narrow-25k-first-id | 6.97 ms / 5.1 MB | 6.87 ms / 5.1 MB | 13.3 ms / 19 MB | 9.20 ms / 15 MB | 12.7 ms / 19 MB | 32.3 ms / 83 MB | n/a | n/a |
-| users-narrow-25k-group-mod | 25.6 ms / 27 MB | 24.8 ms / 27 MB | 37.9 ms / 21 MB | 15.3 ms / 20 MB | 20.4 ms / 25 MB | 81.7 ms / 184 MB | n/a | n/a |
-| users-narrow-25k-high-score | 11.8 ms / 18 MB | 12.4 ms / 19 MB | 17.9 ms / 19 MB | 14.0 ms / 16 MB | 16.0 ms / 23 MB | 66.1 ms / 145 MB | n/a | n/a |
-| users-narrow-25k-identity | 4.50 ms / 4.9 MB | 4.98 ms / 4.9 MB | 23.8 ms / 20 MB | 12.4 ms / 15 MB | 13.4 ms / 23 MB | 60.9 ms / 122 MB | n/a | n/a |
-| users-narrow-25k-ids | 5.78 ms / 7.8 MB | 6.02 ms / 7.8 MB | 16.2 ms / 19 MB | 9.46 ms / 16 MB | 12.4 ms / 23 MB | 51.2 ms / 125 MB | n/a | n/a |
-| users-narrow-25k-keys-len | 5.35 ms / 5.2 MB | 5.50 ms / 5.2 MB | 11.4 ms / 19 MB | 7.83 ms / 15 MB | 11.0 ms / 19 MB | 29.6 ms / 83 MB | n/a | n/a |
-| users-narrow-25k-keys-publish | 5.34 ms / 5.2 MB | 5.64 ms / 5.2 MB | 11.5 ms / 19 MB | 8.66 ms / 15 MB | 10.1 ms / 19 MB | 29.0 ms / 85 MB | n/a | n/a |
-| users-narrow-25k-max-score | 9.64 ms / 16 MB | 9.23 ms / 16 MB | 16.7 ms / 19 MB | 12.3 ms / 16 MB | 13.5 ms / 23 MB | 51.6 ms / 126 MB | n/a | n/a |
-| users-narrow-25k-nested-dept | 5.35 ms / 5.1 MB | 5.56 ms / 5.1 MB | 12.9 ms / 19 MB | 7.45 ms / 15 MB | 10.6 ms / 19 MB | 31.7 ms / 84 MB | n/a | n/a |
-| users-narrow-25k-project-names | 5.74 ms / 7.7 MB | 5.76 ms / 7.7 MB | 15.4 ms / 19 MB | 12.4 ms / 16 MB | 12.4 ms / 23 MB | 55.8 ms / 131 MB | n/a | n/a |
-| users-narrow-25k-project-pair | 9.59 ms / 14 MB | 9.28 ms / 14 MB | 31.4 ms / 30 MB | 25.3 ms / 16 MB | 19.2 ms / 35 MB | 323 ms / 340 MB | n/a | n/a |
-| users-narrow-25k-reduce-score | 10.1 ms / 15 MB | 13.6 ms / 15 MB | 16.0 ms / 19 MB | 13.1 ms / 15 MB | 13.7 ms / 21 MB | n/a | n/a | n/a |
-| users-narrow-25k-reverse-id | 10.3 ms / 25 MB | 10.1 ms / 25 MB | 16.8 ms / 19 MB | 7.42 ms / 15 MB | 10.4 ms / 19 MB | 41.4 ms / 128 MB | n/a | n/a |
-| users-narrow-25k-select-id-stream | 5.17 ms / 5.1 MB | 5.30 ms / 5.1 MB | 16.6 ms / 19 MB | 18.8 ms / 15 MB | 13.8 ms / 21 MB | n/a | n/a | n/a |
-| users-narrow-25k-slice-length | 6.65 ms / 9.9 MB | 7.09 ms / 9.9 MB | 13.5 ms / 19 MB | 9.61 ms / 15 MB | 12.6 ms / 19 MB | 34.0 ms / 90 MB | n/a | n/a |
-| users-narrow-25k-sort-last | 13.5 ms / 26 MB | 13.9 ms / 26 MB | 37.3 ms / 21 MB | 13.6 ms / 17 MB | 30.0 ms / 28 MB | 82.3 ms / 137 MB | n/a | n/a |
-| users-narrow-25k-sum-score | 10.8 ms / 15 MB | 11.3 ms / 15 MB | 18.2 ms / 19 MB | 11.8 ms / 16 MB | 14.0 ms / 23 MB | n/a | n/a | n/a |
-| users-narrow-25k-type-path | 5.45 ms / 5.1 MB | 5.73 ms / 5.1 MB | 11.4 ms / 19 MB | 8.46 ms / 15 MB | 10.6 ms / 19 MB | disagreed | n/a | n/a |
-| users-narrow-25k-unique-scores | 12.4 ms / 21 MB | 12.6 ms / 21 MB | 25.1 ms / 20 MB | 11.8 ms / 16 MB | 26.0 ms / 26 MB | 46.1 ms / 106 MB | n/a | n/a |
-| users-narrow-50k-all-nonneg | 19.7 ms / 18 MB | 19.0 ms / 18 MB | 31.6 ms / 35 MB | 30.6 ms / 27 MB | 28.4 ms / 34 MB | n/a | n/a | n/a |
-| users-narrow-50k-any-high | 12.1 ms / 18 MB | 11.4 ms / 18 MB | 20.5 ms / 35 MB | 11.6 ms / 27 MB | 17.7 ms / 32 MB | n/a | n/a | n/a |
-| users-narrow-50k-count | 6.35 ms / 11 MB | 6.39 ms / 11 MB | 20.1 ms / 35 MB | 11.4 ms / 26 MB | 16.7 ms / 30 MB | 50.6 ms / 133 MB | n/a | n/a |
-| users-narrow-50k-descent | 15.7 ms / 23 MB | 14.1 ms / 23 MB | 43.0 ms / 47 MB | 19.2 ms / 33 MB | 52.5 ms / 58 MB | 194 ms / 466 MB | n/a | n/a |
-| users-narrow-50k-filter-active | 12.2 ms / 12 MB | 11.5 ms / 12 MB | 32.0 ms / 35 MB | 33.0 ms / 26 MB | 25.6 ms / 34 MB | 84.6 ms / 212 MB | n/a | n/a |
-| users-narrow-50k-first-id | 7.25 ms / 5.7 MB | 7.99 ms / 5.7 MB | 20.4 ms / 35 MB | 11.9 ms / 26 MB | 17.2 ms / 31 MB | 52.5 ms / 133 MB | n/a | n/a |
-| users-narrow-50k-group-mod | 45.4 ms / 32 MB | 45.1 ms / 32 MB | 77.2 ms / 39 MB | 27.6 ms / 34 MB | 37.3 ms / 47 MB | 161 ms / 295 MB | n/a | n/a |
-| users-narrow-50k-high-score | 20.0 ms / 24 MB | 18.0 ms / 25 MB | 33.4 ms / 36 MB | 24.7 ms / 28 MB | 29.2 ms / 39 MB | 127 ms / 239 MB | n/a | n/a |
-| users-narrow-50k-identity | 6.16 ms / 5.5 MB | 7.05 ms / 5.6 MB | 45.8 ms / 38 MB | 21.7 ms / 26 MB | 25.3 ms / 39 MB | 113 ms / 203 MB | n/a | n/a |
-| users-narrow-50k-ids | 9.13 ms / 11 MB | 12.0 ms / 11 MB | 28.5 ms / 36 MB | 15.4 ms / 27 MB | 20.9 ms / 39 MB | 93.9 ms / 209 MB | n/a | n/a |
-| users-narrow-50k-keys-len | 7.41 ms / 5.8 MB | 7.73 ms / 5.8 MB | 20.6 ms / 35 MB | 11.7 ms / 26 MB | 17.1 ms / 30 MB | 54.4 ms / 133 MB | n/a | n/a |
-| users-narrow-50k-keys-publish | 7.75 ms / 5.8 MB | 7.72 ms / 5.8 MB | 20.7 ms / 35 MB | 13.1 ms / 26 MB | 19.2 ms / 30 MB | 53.6 ms / 123 MB | n/a | n/a |
-| users-narrow-50k-max-score | 15.6 ms / 19 MB | 15.1 ms / 19 MB | 28.7 ms / 36 MB | 21.4 ms / 27 MB | 23.2 ms / 39 MB | 92.6 ms / 200 MB | n/a | n/a |
-| users-narrow-50k-nested-dept | 7.36 ms / 5.7 MB | 8.53 ms / 5.7 MB | 20.8 ms / 35 MB | 11.5 ms / 26 MB | 16.9 ms / 31 MB | 52.1 ms / 123 MB | n/a | n/a |
-| users-narrow-50k-project-names | 8.68 ms / 11 MB | 9.18 ms / 11 MB | 28.1 ms / 36 MB | 21.1 ms / 27 MB | 21.3 ms / 38 MB | 99.4 ms / 221 MB | n/a | n/a |
-| users-narrow-50k-project-pair | 15.0 ms / 22 MB | 15.2 ms / 22 MB | 61.8 ms / 58 MB | 47.4 ms / 28 MB | 35.6 ms / 61 MB | 647 ms / 637 MB | n/a | n/a |
-| users-narrow-50k-reduce-score | 17.3 ms / 18 MB | 15.5 ms / 18 MB | 30.0 ms / 35 MB | 23.3 ms / 27 MB | 23.4 ms / 35 MB | n/a | n/a | n/a |
-| users-narrow-50k-reverse-id | 16.6 ms / 28 MB | 17.5 ms / 28 MB | 30.0 ms / 36 MB | 11.8 ms / 26 MB | 17.1 ms / 31 MB | 77.7 ms / 214 MB | n/a | n/a |
-| users-narrow-50k-select-id-stream | 8.21 ms / 5.7 MB | 10.4 ms / 5.7 MB | 31.8 ms / 35 MB | 34.5 ms / 26 MB | 24.9 ms / 34 MB | n/a | n/a | n/a |
-| users-narrow-50k-slice-length | 7.18 ms / 11 MB | 7.22 ms / 11 MB | 21.1 ms / 35 MB | 11.9 ms / 26 MB | 17.7 ms / 30 MB | 55.0 ms / 131 MB | n/a | n/a |
-| users-narrow-50k-sort-last | 21.8 ms / 33 MB | 22.0 ms / 33 MB | 78.3 ms / 41 MB | 25.2 ms / 31 MB | 56.6 ms / 47 MB | 171 ms / 243 MB | n/a | n/a |
-| users-narrow-50k-sum-score | 17.2 ms / 18 MB | 15.6 ms / 18 MB | 32.3 ms / 36 MB | 19.1 ms / 27 MB | 21.7 ms / 39 MB | n/a | n/a | n/a |
-| users-narrow-50k-type-path | 7.52 ms / 5.7 MB | 9.40 ms / 5.7 MB | 21.8 ms / 35 MB | 11.7 ms / 26 MB | 17.1 ms / 30 MB | disagreed | n/a | n/a |
-| users-narrow-50k-unique-scores | 20.0 ms / 24 MB | 18.3 ms / 24 MB | 47.0 ms / 36 MB | 19.7 ms / 28 MB | 51.4 ms / 46 MB | 89.5 ms / 187 MB | n/a | n/a |
-| users-narrow-100k-all-nonneg | 34.1 ms / 31 MB | 33.5 ms / 31 MB | 60.1 ms / 70 MB | 59.8 ms / 52 MB | 53.4 ms / 62 MB | n/a | n/a | n/a |
-| users-narrow-100k-any-high | 21.5 ms / 31 MB | 19.2 ms / 31 MB | 38.7 ms / 70 MB | 21.0 ms / 52 MB | 30.8 ms / 57 MB | n/a | n/a | n/a |
-| users-narrow-100k-count | 11.7 ms / 18 MB | 10.6 ms / 18 MB | 38.8 ms / 70 MB | 20.1 ms / 50 MB | 29.4 ms / 54 MB | 95.3 ms / 217 MB | n/a | n/a |
-| users-narrow-100k-descent | 24.6 ms / 40 MB | 24.6 ms / 40 MB | 82.9 ms / 89 MB | 35.2 ms / 64 MB | 98.4 ms / 112 MB | 352 ms / 953 MB | n/a | n/a |
-| users-narrow-100k-filter-active | 19.6 ms / 18 MB | 19.6 ms / 18 MB | 61.4 ms / 70 MB | 63.0 ms / 50 MB | 45.7 ms / 62 MB | 166 ms / 347 MB | n/a | n/a |
-| users-narrow-100k-first-id | 12.4 ms / 6.8 MB | 10.7 ms / 6.9 MB | 38.8 ms / 70 MB | 19.9 ms / 50 MB | 29.3 ms / 54 MB | 96.1 ms / 211 MB | n/a | n/a |
-| users-narrow-100k-group-mod | 89.6 ms / 69 MB | 89.0 ms / 69 MB | 159 ms / 79 MB | 57.8 ms / 64 MB | 70.4 ms / 78 MB | 319 ms / 565 MB | n/a | n/a |
-| users-narrow-100k-high-score | 32.8 ms / 46 MB | 32.9 ms / 46 MB | 65.3 ms / 70 MB | 47.9 ms / 53 MB | 51.0 ms / 72 MB | 242 ms / 470 MB | n/a | n/a |
-| users-narrow-100k-identity | 11.8 ms / 6.7 MB | 7.47 ms / 6.7 MB | 85.3 ms / 76 MB | 36.8 ms / 50 MB | 42.7 ms / 70 MB | 223 ms / 312 MB | n/a | n/a |
-| users-narrow-100k-ids | 14.5 ms / 17 MB | 12.7 ms / 17 MB | 57.2 ms / 72 MB | 28.6 ms / 53 MB | 38.5 ms / 71 MB | 183 ms / 377 MB | n/a | n/a |
-| users-narrow-100k-keys-len | 12.3 ms / 7.0 MB | 11.8 ms / 7.0 MB | 38.9 ms / 70 MB | 20.2 ms / 50 MB | 29.4 ms / 54 MB | 95.8 ms / 218 MB | n/a | n/a |
-| users-narrow-100k-keys-publish | 13.1 ms / 7.0 MB | 10.9 ms / 7.0 MB | 38.7 ms / 70 MB | 20.4 ms / 50 MB | 29.5 ms / 54 MB | 95.4 ms / 214 MB | n/a | n/a |
-| users-narrow-100k-max-score | 27.4 ms / 37 MB | 26.8 ms / 37 MB | 54.9 ms / 72 MB | 39.6 ms / 53 MB | 40.7 ms / 73 MB | 174 ms / 374 MB | n/a | n/a |
-| users-narrow-100k-nested-dept | 12.5 ms / 6.9 MB | 11.1 ms / 6.9 MB | 38.5 ms / 70 MB | 19.9 ms / 50 MB | 29.3 ms / 54 MB | 96.3 ms / 220 MB | n/a | n/a |
-| users-narrow-100k-project-names | 13.8 ms / 17 MB | 12.1 ms / 17 MB | 54.7 ms / 72 MB | 39.8 ms / 53 MB | 38.8 ms / 72 MB | 197 ms / 420 MB | n/a | n/a |
-| users-narrow-100k-project-pair | 26.8 ms / 41 MB | 27.9 ms / 41 MB | 117 ms / 115 MB | 90.8 ms / 52 MB | 65.0 ms / 116 MB | 1280 ms / 1260 MB | n/a | n/a |
-| users-narrow-100k-reduce-score | 29.4 ms / 30 MB | 29.0 ms / 30 MB | 57.8 ms / 70 MB | 42.7 ms / 51 MB | 43.7 ms / 64 MB | n/a | n/a | n/a |
-| users-narrow-100k-reverse-id | 28.8 ms / 61 MB | 28.6 ms / 61 MB | 62.9 ms / 72 MB | 20.2 ms / 50 MB | 30.1 ms / 56 MB | 146 ms / 378 MB | n/a | n/a |
-| users-narrow-100k-select-id-stream | 12.6 ms / 6.9 MB | 10.4 ms / 6.9 MB | 59.8 ms / 70 MB | 65.8 ms / 50 MB | 43.5 ms / 61 MB | n/a | n/a | n/a |
-| users-narrow-100k-slice-length | 10.1 ms / 18 MB | 10.2 ms / 18 MB | 38.6 ms / 70 MB | 19.7 ms / 50 MB | 29.0 ms / 54 MB | 101 ms / 230 MB | n/a | n/a |
-| users-narrow-100k-sort-last | 41.2 ms / 74 MB | 42.2 ms / 74 MB | 164 ms / 79 MB | 55.3 ms / 59 MB | 113 ms / 88 MB | 376 ms / 437 MB | n/a | n/a |
-| users-narrow-100k-sum-score | 29.5 ms / 30 MB | 29.1 ms / 30 MB | 64.5 ms / 72 MB | 36.0 ms / 53 MB | 42.0 ms / 71 MB | n/a | n/a | n/a |
-| users-narrow-100k-type-path | 12.8 ms / 6.9 MB | 10.8 ms / 6.9 MB | 39.4 ms / 70 MB | 20.1 ms / 50 MB | 29.6 ms / 54 MB | disagreed | n/a | n/a |
-| users-narrow-100k-unique-scores | 34.3 ms / 45 MB | 33.3 ms / 45 MB | 97.2 ms / 73 MB | 34.0 ms / 54 MB | 95.5 ms / 79 MB | 169 ms / 349 MB | n/a | n/a |
-| users-narrow-200k-all-nonneg | 63.0 ms / 57 MB | 62.5 ms / 57 MB | 120 ms / 137 MB | 112 ms / 98 MB | 97.8 ms / 117 MB | n/a | n/a | n/a |
-| users-narrow-200k-any-high | 34.6 ms / 57 MB | 34.2 ms / 57 MB | 74.1 ms / 137 MB | 38.9 ms / 98 MB | 55.0 ms / 108 MB | n/a | n/a | n/a |
-| users-narrow-200k-count | 16.8 ms / 30 MB | 14.9 ms / 30 MB | 73.8 ms / 137 MB | 36.2 ms / 94 MB | 52.9 ms / 100 MB | 190 ms / 401 MB | n/a | n/a |
-| users-narrow-200k-descent | 45.6 ms / 78 MB | 45.3 ms / 78 MB | 163 ms / 182 MB | 66.1 ms / 122 MB | 193 ms / 221 MB | 729 ms / 1694 MB | n/a | n/a |
-| users-narrow-200k-filter-active | 36.8 ms / 30 MB | 35.5 ms / 30 MB | 118 ms / 137 MB | 124 ms / 94 MB | 84.3 ms / 116 MB | 314 ms / 628 MB | n/a | n/a |
-| users-narrow-200k-first-id | 18.4 ms / 9.3 MB | 18.1 ms / 9.3 MB | 72.3 ms / 137 MB | 36.3 ms / 94 MB | 53.9 ms / 100 MB | 185 ms / 404 MB | n/a | n/a |
-| users-narrow-200k-group-mod | 176 ms / 117 MB | 179 ms / 117 MB | 325 ms / 154 MB | 114 ms / 130 MB | 149 ms / 149 MB | 628 ms / 1046 MB | n/a | n/a |
-| users-narrow-200k-high-score | 60.8 ms / 81 MB | 61.1 ms / 82 MB | 126 ms / 139 MB | 88.5 ms / 100 MB | 95.6 ms / 134 MB | 479 ms / 848 MB | n/a | n/a |
-| users-narrow-200k-identity | 10.8 ms / 9.2 MB | 10.6 ms / 9.2 MB | 167 ms / 149 MB | 70.1 ms / 94 MB | 77.4 ms / 134 MB | 431 ms / 685 MB | n/a | n/a |
-| users-narrow-200k-ids | 24.5 ms / 37 MB | 24.3 ms / 37 MB | 111 ms / 140 MB | 51.9 ms / 98 MB | 70.5 ms / 136 MB | 346 ms / 670 MB | n/a | n/a |
-| users-narrow-200k-keys-len | 19.8 ms / 9.5 MB | 18.5 ms / 9.5 MB | 74.3 ms / 137 MB | 36.7 ms / 94 MB | 53.4 ms / 100 MB | 185 ms / 423 MB | n/a | n/a |
-| users-narrow-200k-keys-publish | 19.2 ms / 9.4 MB | 18.8 ms / 9.5 MB | 73.6 ms / 137 MB | 36.1 ms / 94 MB | 53.4 ms / 100 MB | 185 ms / 425 MB | n/a | n/a |
-| users-narrow-200k-max-score | 48.2 ms / 63 MB | 48.0 ms / 63 MB | 104 ms / 140 MB | 76.1 ms / 98 MB | 76.7 ms / 138 MB | 357 ms / 739 MB | n/a | n/a |
-| users-narrow-200k-nested-dept | 18.6 ms / 9.3 MB | 18.4 ms / 9.3 MB | 80.9 ms / 136 MB | 39.1 ms / 94 MB | 54.9 ms / 100 MB | 187 ms / 425 MB | n/a | n/a |
-| users-narrow-200k-project-names | 22.1 ms / 37 MB | 22.0 ms / 37 MB | 104 ms / 140 MB | 74.9 ms / 98 MB | 72.7 ms / 136 MB | 395 ms / 806 MB | n/a | n/a |
-| users-narrow-200k-project-pair | 50.5 ms / 80 MB | 50.1 ms / 80 MB | 233 ms / 227 MB | 177 ms / 99 MB | 122 ms / 227 MB | 2601 ms / 2348 MB | n/a | n/a |
-| users-narrow-200k-reduce-score | 50.7 ms / 53 MB | 51.1 ms / 53 MB | 110 ms / 137 MB | 82.0 ms / 97 MB | 81.0 ms / 118 MB | n/a | n/a | n/a |
-| users-narrow-200k-reverse-id | 55.7 ms / 116 MB | 54.5 ms / 116 MB | 129 ms / 140 MB | 38.0 ms / 94 MB | 55.7 ms / 103 MB | 294 ms / 777 MB | n/a | n/a |
-| users-narrow-200k-select-id-stream | 17.2 ms / 9.3 MB | 16.8 ms / 9.3 MB | 114 ms / 137 MB | 126 ms / 94 MB | 83.2 ms / 116 MB | n/a | n/a | n/a |
-| users-narrow-200k-slice-length | 15.6 ms / 30 MB | 15.2 ms / 30 MB | 75.0 ms / 137 MB | 36.5 ms / 95 MB | 53.4 ms / 100 MB | 190 ms / 446 MB | n/a | n/a |
-| users-narrow-200k-sort-last | 82.4 ms / 131 MB | 82.5 ms / 131 MB | 356 ms / 153 MB | 114 ms / 113 MB | 254 ms / 174 MB | 766 ms / 827 MB | n/a | n/a |
-| users-narrow-200k-sum-score | 51.2 ms / 53 MB | 51.2 ms / 53 MB | 121 ms / 140 MB | 64.5 ms / 98 MB | 73.9 ms / 136 MB | n/a | n/a | n/a |
-| users-narrow-200k-type-path | 19.6 ms / 9.4 MB | 17.9 ms / 9.4 MB | 74.4 ms / 137 MB | 36.9 ms / 94 MB | 54.8 ms / 100 MB | disagreed | n/a | n/a |
-| users-narrow-200k-unique-scores | 63.9 ms / 78 MB | 63.7 ms / 78 MB | 190 ms / 140 MB | 66.6 ms / 98 MB | 189 ms / 158 MB | 319 ms / 627 MB | n/a | n/a |
-| yaml-broad-100-count | 9.39 ms / 5.9 MB | 8.99 ms / 5.9 MB | n/a | 9.62 ms / 5.6 MB | 13.1 ms / 10 MB | 15.6 ms / 22 MB | 15.6 ms / 16 MB | n/a |
-| yaml-broad-100-descent | 10.2 ms / 7.8 MB | 9.52 ms / 7.8 MB | n/a | 11.1 ms / 5.9 MB | 15.5 ms / 13 MB | 22.3 ms / 38 MB | n/a | n/a |
-| yaml-broad-100-exact-name | 9.50 ms / 5.6 MB | 8.79 ms / 5.7 MB | n/a | 9.62 ms / 5.5 MB | 13.9 ms / 11 MB | 15.2 ms / 22 MB | 15.9 ms / 16 MB | n/a |
-| yaml-broad-100-first-id | 9.48 ms / 5.6 MB | 9.59 ms / 5.7 MB | n/a | 9.47 ms / 5.6 MB | 12.8 ms / 10 MB | 15.6 ms / 22 MB | 14.9 ms / 16 MB | n/a |
-| yaml-broad-100-identity | 10.4 ms / 7.6 MB | 10.0 ms / 7.6 MB | n/a | 10.7 ms / 5.5 MB | 13.4 ms / 11 MB | 19.5 ms / 34 MB | 18.2 ms / 17 MB | n/a |
-| yaml-broad-100-ids | 9.55 ms / 6.1 MB | 9.38 ms / 6.1 MB | n/a | 10.4 ms / 5.6 MB | 13.6 ms / 10 MB | 15.9 ms / 24 MB | n/a | n/a |
-| yaml-broad-100-keys-publish | 9.49 ms / 5.8 MB | 8.76 ms / 5.8 MB | n/a | 9.50 ms / 5.7 MB | 13.6 ms / 10 MB | disagreed | n/a | n/a |
-| yaml-broad-100-nested-dept | 9.26 ms / 5.7 MB | 9.07 ms / 5.7 MB | n/a | 10.2 ms / 5.5 MB | 14.6 ms / 10 MB | 17.3 ms / 24 MB | 17.4 ms / 16 MB | n/a |
-| yaml-broad-100-type-path | 8.73 ms / 5.7 MB | 9.04 ms / 5.7 MB | n/a | 9.64 ms / 5.5 MB | 15.2 ms / 10 MB | disagreed | n/a | n/a |
-| yaml-broad-1k-count | 21.7 ms / 14 MB | 21.6 ms / 14 MB | n/a | 28.0 ms / 22 MB | 55.2 ms / 36 MB | 47.9 ms / 66 MB | 62.6 ms / 59 MB | n/a |
-| yaml-broad-1k-descent | 30.8 ms / 28 MB | 32.0 ms / 29 MB | n/a | 29.7 ms / 24 MB | 75.3 ms / 50 MB | 100 ms / 209 MB | n/a | n/a |
-| yaml-broad-1k-exact-name | 22.4 ms / 12 MB | 21.4 ms / 12 MB | n/a | 27.9 ms / 22 MB | 57.5 ms / 36 MB | 50.2 ms / 66 MB | 60.6 ms / 57 MB | n/a |
-| yaml-broad-1k-first-id | 25.0 ms / 12 MB | 21.1 ms / 12 MB | n/a | 26.9 ms / 22 MB | 54.9 ms / 36 MB | 49.3 ms / 66 MB | 62.3 ms / 58 MB | n/a |
-| yaml-broad-1k-identity | 29.7 ms / 27 MB | 28.2 ms / 29 MB | n/a | 31.1 ms / 22 MB | disagreed | 80.5 ms / 110 MB | 80.7 ms / 69 MB | n/a |
-| yaml-broad-1k-ids | 21.7 ms / 14 MB | 20.8 ms / 14 MB | n/a | 26.3 ms / 22 MB | 57.3 ms / 35 MB | 51.5 ms / 68 MB | n/a | n/a |
-| yaml-broad-1k-keys-publish | 22.3 ms / 12 MB | 21.8 ms / 12 MB | n/a | 28.5 ms / 22 MB | 56.3 ms / 35 MB | disagreed | n/a | n/a |
-| yaml-broad-1k-nested-dept | 22.4 ms / 12 MB | 20.3 ms / 12 MB | n/a | 26.5 ms / 22 MB | 57.4 ms / 36 MB | 49.8 ms / 66 MB | 63.1 ms / 59 MB | n/a |
-| yaml-broad-1k-type-path | 21.8 ms / 12 MB | 20.6 ms / 12 MB | n/a | 28.9 ms / 22 MB | 57.0 ms / 36 MB | disagreed | n/a | n/a |
-| yaml-broad-5k-count | 71.2 ms / 48 MB | 71.3 ms / 48 MB | n/a | 100 ms / 96 MB | 256 ms / 147 MB | 185 ms / 259 MB | 249 ms / 237 MB | n/a |
-| yaml-broad-5k-descent | 111 ms / 110 MB | 114 ms / 110 MB | n/a | 114 ms / 109 MB | 326 ms / 214 MB | 428 ms / 940 MB | n/a | n/a |
-| yaml-broad-5k-exact-name | 73.6 ms / 41 MB | 74.0 ms / 41 MB | n/a | 99.3 ms / 96 MB | 240 ms / 152 MB | 187 ms / 259 MB | 251 ms / 237 MB | n/a |
-| yaml-broad-5k-first-id | 71.6 ms / 41 MB | 74.0 ms / 41 MB | n/a | 97.9 ms / 96 MB | 235 ms / 151 MB | 191 ms / 259 MB | 257 ms / 233 MB | n/a |
-| yaml-broad-5k-identity | 106 ms / 110 MB | 109 ms / 110 MB | n/a | 120 ms / 96 MB | disagreed | 349 ms / 418 MB | 352 ms / 279 MB | n/a |
-| yaml-broad-5k-ids | 71.8 ms / 50 MB | 71.0 ms / 50 MB | n/a | 99.4 ms / 96 MB | 237 ms / 144 MB | 192 ms / 269 MB | n/a | n/a |
-| yaml-broad-5k-keys-publish | 74.1 ms / 41 MB | 74.0 ms / 41 MB | n/a | 98.5 ms / 96 MB | 234 ms / 153 MB | disagreed | n/a | n/a |
-| yaml-broad-5k-nested-dept | 71.2 ms / 41 MB | 72.3 ms / 41 MB | n/a | 97.9 ms / 96 MB | 238 ms / 151 MB | 191 ms / 258 MB | 252 ms / 237 MB | n/a |
-| yaml-broad-5k-type-path | 74.3 ms / 41 MB | 74.4 ms / 41 MB | n/a | 101 ms / 96 MB | 240 ms / 142 MB | disagreed | n/a | n/a |
-| yaml-broad-25k-count | 310 ms / 229 MB | 312 ms / 229 MB | n/a | 454 ms / 464 MB | 1149 ms / 691 MB | 873 ms / 1224 MB | 1188 ms / 1111 MB | n/a |
-| yaml-broad-25k-descent | 519 ms / 536 MB | 516 ms / 536 MB | n/a | 539 ms / 521 MB | 1544 ms / 1052 MB | 2082 ms / 4729 MB | n/a | n/a |
-| yaml-broad-25k-exact-name | 319 ms / 226 MB | 320 ms / 226 MB | n/a | 452 ms / 464 MB | 1112 ms / 719 MB | 882 ms / 1222 MB | 1184 ms / 1111 MB | n/a |
-| yaml-broad-25k-first-id | 330 ms / 226 MB | 324 ms / 226 MB | n/a | 454 ms / 464 MB | 1135 ms / 727 MB | 878 ms / 1222 MB | 1203 ms / 1107 MB | n/a |
-| yaml-broad-25k-identity | 491 ms / 536 MB | 490 ms / 536 MB | n/a | 556 ms / 464 MB | disagreed | 1643 ms / 2157 MB | 1714 ms / 1321 MB | n/a |
-| yaml-broad-25k-ids | 330 ms / 236 MB | 328 ms / 234 MB | n/a | 464 ms / 464 MB | 1137 ms / 728 MB | 917 ms / 1270 MB | n/a | n/a |
-| yaml-broad-25k-keys-publish | 323 ms / 226 MB | 328 ms / 226 MB | n/a | 473 ms / 464 MB | 1148 ms / 708 MB | disagreed | n/a | n/a |
-| yaml-broad-25k-nested-dept | 321 ms / 226 MB | 328 ms / 226 MB | n/a | 466 ms / 464 MB | 1130 ms / 718 MB | 865 ms / 1221 MB | 1193 ms / 1111 MB | n/a |
-| yaml-broad-25k-type-path | 323 ms / 226 MB | 324 ms / 226 MB | n/a | 451 ms / 464 MB | 1122 ms / 698 MB | disagreed | n/a | n/a |
-| yaml-broad-50k-count | 623 ms / 455 MB | 613 ms / 454 MB | n/a | 907 ms / 924 MB | 2250 ms / 1475 MB | 1715 ms / 2425 MB | 2440 ms / 2210 MB | n/a |
-| yaml-broad-50k-descent | 1018 ms / 975 MB | 1016 ms / 977 MB | n/a | 1061 ms / 1030 MB | 3073 ms / 2131 MB | 4048 ms / 9448 MB | n/a | n/a |
-| yaml-broad-50k-exact-name | 645 ms / 447 MB | 646 ms / 446 MB | n/a | 909 ms / 924 MB | 2277 ms / 1476 MB | 1718 ms / 2418 MB | 2414 ms / 2254 MB | n/a |
-| yaml-broad-50k-first-id | 646 ms / 446 MB | 645 ms / 447 MB | n/a | 896 ms / 924 MB | 2252 ms / 1477 MB | 1693 ms / 2426 MB | 2401 ms / 2305 MB | n/a |
-| yaml-broad-50k-identity | 984 ms / 975 MB | 985 ms / 977 MB | n/a | 1085 ms / 924 MB | disagreed | 3324 ms / 4367 MB | 3382 ms / 2827 MB | n/a |
-| yaml-broad-50k-ids | 655 ms / 455 MB | 653 ms / 448 MB | n/a | 903 ms / 924 MB | 2237 ms / 1489 MB | 1833 ms / 2518 MB | n/a | n/a |
-| yaml-broad-50k-keys-publish | 635 ms / 447 MB | 646 ms / 447 MB | n/a | 892 ms / 924 MB | 2238 ms / 1474 MB | disagreed | n/a | n/a |
-| yaml-broad-50k-nested-dept | 635 ms / 447 MB | 642 ms / 447 MB | n/a | 890 ms / 924 MB | 2257 ms / 1470 MB | 1720 ms / 2426 MB | 2408 ms / 2286 MB | n/a |
-| yaml-broad-50k-type-path | 642 ms / 447 MB | 646 ms / 447 MB | n/a | 924 ms / 924 MB | 2285 ms / 1455 MB | disagreed | n/a | n/a |
-| yaml-broad-100k-count | 1219 ms / 890 MB | 1240 ms / 891 MB | n/a | 1804 ms / 1845 MB | 4504 ms / 2998 MB | 3445 ms / 4819 MB | 4803 ms / 4410 MB | n/a |
-| yaml-broad-100k-descent | 2032 ms / 2071 MB | 2047 ms / 2071 MB | n/a | 2129 ms / 2067 MB | 6155 ms / 4659 MB | 7826 ms / 19192 MB | n/a | n/a |
-| yaml-broad-100k-exact-name | 1296 ms / 874 MB | 1289 ms / 874 MB | n/a | 1823 ms / 1845 MB | 4449 ms / 2779 MB | 3434 ms / 4823 MB | 4799 ms / 4436 MB | n/a |
-| yaml-broad-100k-first-id | 1272 ms / 874 MB | 1290 ms / 874 MB | n/a | 1787 ms / 1845 MB | 4517 ms / 2819 MB | 3429 ms / 4803 MB | 4828 ms / 4520 MB | n/a |
-| yaml-broad-100k-identity | 1983 ms / 2070 MB | 1976 ms / 2071 MB | n/a | 2222 ms / 1845 MB | disagreed | 6574 ms / 9067 MB | 6804 ms / 5634 MB | n/a |
-| yaml-broad-100k-ids | 1369 ms / 892 MB | 1365 ms / 891 MB | n/a | 1809 ms / 1845 MB | 4568 ms / 2723 MB | 3601 ms / 4995 MB | n/a | n/a |
-| yaml-broad-100k-keys-publish | 1290 ms / 874 MB | 1279 ms / 874 MB | n/a | 1848 ms / 1845 MB | 4523 ms / 2999 MB | disagreed | n/a | n/a |
-| yaml-broad-100k-nested-dept | 1276 ms / 874 MB | 1275 ms / 874 MB | n/a | 1795 ms / 1845 MB | 4526 ms / 2962 MB | 3421 ms / 4817 MB | 4813 ms / 4593 MB | n/a |
-| yaml-broad-100k-type-path | 1297 ms / 874 MB | 1291 ms / 874 MB | n/a | 1818 ms / 1845 MB | 4512 ms / 2792 MB | disagreed | n/a | n/a |
-| yaml-narrow-100-count | 9.99 ms / 4.9 MB | 6.85 ms / 4.9 MB | n/a | 6.59 ms / 4.1 MB | 7.44 ms / 6.0 MB | 10.6 ms / 17 MB | 7.61 ms / 9.7 MB | n/a |
-| yaml-narrow-100-descent | 6.89 ms / 5.1 MB | 7.13 ms / 5.1 MB | n/a | 6.55 ms / 4.1 MB | 8.08 ms / 6.2 MB | 11.6 ms / 19 MB | n/a | n/a |
-| yaml-narrow-100-exact-name | 6.52 ms / 4.8 MB | 6.69 ms / 4.8 MB | n/a | 6.25 ms / 4.0 MB | 6.81 ms / 5.9 MB | 9.88 ms / 17 MB | error | n/a |
-| yaml-narrow-100-first-id | 6.59 ms / 4.8 MB | 7.03 ms / 4.8 MB | n/a | 7.39 ms / 4.0 MB | 7.46 ms / 6.1 MB | 12.2 ms / 19 MB | 9.36 ms / 9.6 MB | n/a |
-| yaml-narrow-100-identity | 7.02 ms / 4.9 MB | 7.66 ms / 4.9 MB | n/a | 8.11 ms / 4.0 MB | 7.15 ms / 5.9 MB | 11.2 ms / 20 MB | 7.84 ms / 9.8 MB | n/a |
-| yaml-narrow-100-ids | 6.35 ms / 5.1 MB | 6.51 ms / 5.1 MB | n/a | 6.26 ms / 4.0 MB | 6.50 ms / 5.9 MB | 10.7 ms / 22 MB | n/a | n/a |
-| yaml-narrow-100-keys-publish | 6.85 ms / 4.9 MB | 7.07 ms / 4.9 MB | n/a | 6.59 ms / 4.2 MB | 7.82 ms / 6.1 MB | 12.4 ms / 18 MB | n/a | n/a |
-| yaml-narrow-100-nested-dept | 7.16 ms / 4.8 MB | 6.51 ms / 4.9 MB | n/a | 7.31 ms / 4.0 MB | 7.71 ms / 6.1 MB | 10.5 ms / 21 MB | error | n/a |
-| yaml-narrow-100-type-path | 7.59 ms / 4.9 MB | 8.06 ms / 4.9 MB | n/a | 9.54 ms / 4.0 MB | 8.25 ms / 6.3 MB | disagreed | n/a | n/a |
-| yaml-narrow-1k-count | 7.74 ms / 5.4 MB | 7.67 ms / 5.4 MB | n/a | 7.19 ms / 4.6 MB | 8.89 ms / 7.5 MB | 13.8 ms / 20 MB | 11.9 ms / 13 MB | n/a |
-| yaml-narrow-1k-descent | 7.50 ms / 6.2 MB | 7.46 ms / 6.2 MB | n/a | 7.20 ms / 4.7 MB | 10.0 ms / 9.5 MB | 14.1 ms / 30 MB | n/a | n/a |
-| yaml-narrow-1k-exact-name | 7.68 ms / 5.2 MB | 9.37 ms / 5.2 MB | n/a | 7.47 ms / 4.5 MB | 9.17 ms / 7.4 MB | 11.3 ms / 19 MB | error | n/a |
-| yaml-narrow-1k-first-id | 7.42 ms / 5.2 MB | 7.17 ms / 5.2 MB | n/a | 7.92 ms / 4.5 MB | 9.08 ms / 7.8 MB | 11.6 ms / 20 MB | 10.3 ms / 13 MB | n/a |
-| yaml-narrow-1k-identity | 7.35 ms / 6.0 MB | 7.57 ms / 6.0 MB | n/a | 7.92 ms / 4.5 MB | 9.87 ms / 7.7 MB | 15.5 ms / 29 MB | 13.3 ms / 14 MB | n/a |
-| yaml-narrow-1k-ids | 11.6 ms / 5.9 MB | 8.65 ms / 5.9 MB | n/a | 7.94 ms / 4.6 MB | 9.75 ms / 7.7 MB | 13.8 ms / 29 MB | n/a | n/a |
-| yaml-narrow-1k-keys-publish | 7.39 ms / 5.3 MB | 7.03 ms / 5.3 MB | n/a | 7.12 ms / 4.7 MB | 9.10 ms / 7.5 MB | 12.1 ms / 20 MB | n/a | n/a |
-| yaml-narrow-1k-nested-dept | 7.21 ms / 5.2 MB | 6.93 ms / 5.2 MB | n/a | 7.27 ms / 4.5 MB | 9.47 ms / 7.4 MB | 11.4 ms / 20 MB | error | n/a |
-| yaml-narrow-1k-type-path | 7.84 ms / 5.2 MB | 7.61 ms / 5.3 MB | n/a | 7.65 ms / 4.5 MB | 11.3 ms / 7.5 MB | disagreed | n/a | n/a |
-| yaml-narrow-5k-count | 9.83 ms / 8.0 MB | 10.1 ms / 8.0 MB | n/a | 12.4 ms / 7.5 MB | 17.6 ms / 14 MB | 20.4 ms / 32 MB | 21.4 ms / 23 MB | n/a |
-| yaml-narrow-5k-descent | 12.4 ms / 11 MB | 12.0 ms / 11 MB | n/a | 13.8 ms / 8.0 MB | 23.9 ms / 18 MB | 34.2 ms / 66 MB | n/a | n/a |
-| yaml-narrow-5k-exact-name | 10.4 ms / 6.7 MB | 11.7 ms / 6.7 MB | n/a | 11.2 ms / 7.4 MB | 18.4 ms / 14 MB | 20.3 ms / 32 MB | error | n/a |
-| yaml-narrow-5k-first-id | 10.8 ms / 6.6 MB | 11.4 ms / 6.7 MB | n/a | 11.2 ms / 7.4 MB | 17.3 ms / 15 MB | 20.4 ms / 32 MB | 20.1 ms / 23 MB | n/a |
-| yaml-narrow-5k-identity | 12.2 ms / 11 MB | 11.7 ms / 11 MB | n/a | 13.3 ms / 7.4 MB | 19.0 ms / 15 MB | 27.6 ms / 45 MB | 28.6 ms / 24 MB | n/a |
-| yaml-narrow-5k-ids | 12.6 ms / 9.1 MB | 12.6 ms / 9.3 MB | n/a | 12.0 ms / 7.6 MB | 18.0 ms / 15 MB | 25.9 ms / 39 MB | n/a | n/a |
-| yaml-narrow-5k-keys-publish | 10.6 ms / 6.7 MB | 10.9 ms / 6.7 MB | n/a | 12.9 ms / 7.6 MB | 18.3 ms / 15 MB | 20.0 ms / 33 MB | n/a | n/a |
-| yaml-narrow-5k-nested-dept | 10.4 ms / 6.7 MB | 10.1 ms / 6.7 MB | n/a | 13.0 ms / 7.4 MB | 18.2 ms / 15 MB | 20.0 ms / 31 MB | error | n/a |
-| yaml-narrow-5k-type-path | 10.0 ms / 6.7 MB | 10.4 ms / 6.7 MB | n/a | 12.8 ms / 7.4 MB | 19.7 ms / 14 MB | disagreed | n/a | n/a |
-| yaml-narrow-25k-count | 25.1 ms / 18 MB | 24.1 ms / 18 MB | n/a | 28.8 ms / 22 MB | 55.9 ms / 42 MB | 50.6 ms / 79 MB | 63.2 ms / 67 MB | n/a |
-| yaml-narrow-25k-descent | 31.7 ms / 30 MB | 31.3 ms / 30 MB | n/a | 31.4 ms / 26 MB | 74.4 ms / 62 MB | 111 ms / 254 MB | n/a | n/a |
-| yaml-narrow-25k-exact-name | 22.4 ms / 13 MB | 22.9 ms / 13 MB | n/a | 28.7 ms / 22 MB | 56.8 ms / 43 MB | 50.7 ms / 79 MB | error | n/a |
-| yaml-narrow-25k-first-id | 24.2 ms / 13 MB | 22.8 ms / 13 MB | n/a | 28.5 ms / 22 MB | 56.6 ms / 42 MB | 50.6 ms / 79 MB | 64.5 ms / 68 MB | n/a |
-| yaml-narrow-25k-identity | 31.1 ms / 30 MB | 31.0 ms / 30 MB | n/a | 32.5 ms / 22 MB | 57.0 ms / 47 MB | 82.7 ms / 110 MB | 90.4 ms / 88 MB | n/a |
-| yaml-narrow-25k-ids | 37.7 ms / 26 MB | 37.0 ms / 26 MB | n/a | 31.1 ms / 23 MB | 57.1 ms / 46 MB | 70.3 ms / 114 MB | n/a | n/a |
-| yaml-narrow-25k-keys-publish | 23.0 ms / 13 MB | 20.9 ms / 13 MB | n/a | 27.5 ms / 22 MB | 55.6 ms / 42 MB | 50.8 ms / 79 MB | n/a | n/a |
-| yaml-narrow-25k-nested-dept | 23.0 ms / 13 MB | 23.8 ms / 13 MB | n/a | 28.5 ms / 22 MB | 54.3 ms / 42 MB | 49.0 ms / 79 MB | error | n/a |
-| yaml-narrow-25k-type-path | 23.7 ms / 13 MB | 22.9 ms / 13 MB | n/a | 29.1 ms / 22 MB | 54.2 ms / 42 MB | disagreed | n/a | n/a |
-| yaml-narrow-50k-count | 41.6 ms / 33 MB | 39.7 ms / 33 MB | n/a | 46.8 ms / 41 MB | 101 ms / 78 MB | 88.7 ms / 140 MB | 116 ms / 116 MB | n/a |
-| yaml-narrow-50k-descent | 53.9 ms / 48 MB | 56.5 ms / 53 MB | n/a | 58.4 ms / 48 MB | 137 ms / 113 MB | 208 ms / 502 MB | n/a | n/a |
-| yaml-narrow-50k-exact-name | 35.6 ms / 22 MB | 37.6 ms / 22 MB | n/a | 47.7 ms / 41 MB | 97.9 ms / 78 MB | 86.8 ms / 140 MB | error | n/a |
-| yaml-narrow-50k-first-id | 35.9 ms / 22 MB | 36.9 ms / 22 MB | n/a | 48.5 ms / 41 MB | 97.6 ms / 79 MB | 87.7 ms / 141 MB | 115 ms / 116 MB | n/a |
-| yaml-narrow-50k-identity | 52.5 ms / 47 MB | 51.5 ms / 53 MB | n/a | 56.1 ms / 41 MB | 104 ms / 87 MB | 146 ms / 211 MB | 169 ms / 150 MB | n/a |
-| yaml-narrow-50k-ids | 83.7 ms / 43 MB | 83.7 ms / 45 MB | n/a | 53.6 ms / 43 MB | 107 ms / 87 MB | 132 ms / 227 MB | n/a | n/a |
-| yaml-narrow-50k-keys-publish | 37.6 ms / 22 MB | 36.1 ms / 22 MB | n/a | 47.2 ms / 41 MB | 101 ms / 78 MB | 85.4 ms / 140 MB | n/a | n/a |
-| yaml-narrow-50k-nested-dept | 37.8 ms / 22 MB | 37.6 ms / 22 MB | n/a | 48.7 ms / 41 MB | 102 ms / 78 MB | 88.1 ms / 141 MB | error | n/a |
-| yaml-narrow-50k-type-path | 37.7 ms / 22 MB | 37.7 ms / 22 MB | n/a | 47.7 ms / 41 MB | 101 ms / 78 MB | disagreed | n/a | n/a |
-| yaml-narrow-100k-count | 70.2 ms / 55 MB | 69.9 ms / 55 MB | n/a | 88.2 ms / 78 MB | 193 ms / 152 MB | 158 ms / 265 MB | 216 ms / 220 MB | n/a |
-| yaml-narrow-100k-descent | 102 ms / 96 MB | 98.2 ms / 90 MB | n/a | 102 ms / 91 MB | 266 ms / 251 MB | 409 ms / 1046 MB | n/a | n/a |
-| yaml-narrow-100k-exact-name | 62.8 ms / 37 MB | 64.1 ms / 37 MB | n/a | 87.9 ms / 78 MB | 188 ms / 152 MB | 160 ms / 265 MB | error | n/a |
-| yaml-narrow-100k-first-id | 66.0 ms / 37 MB | 62.7 ms / 37 MB | n/a | 88.7 ms / 78 MB | 194 ms / 152 MB | 161 ms / 265 MB | 218 ms / 219 MB | n/a |
-| yaml-narrow-100k-identity | 95.6 ms / 96 MB | 95.8 ms / 89 MB | n/a | 105 ms / 78 MB | 205 ms / 164 MB | 279 ms / 427 MB | 318 ms / 278 MB | n/a |
-| yaml-narrow-100k-ids | 217 ms / 86 MB | 216 ms / 86 MB | n/a | 93.4 ms / 81 MB | 199 ms / 166 MB | 242 ms / 444 MB | n/a | n/a |
-| yaml-narrow-100k-keys-publish | 65.9 ms / 37 MB | 65.6 ms / 37 MB | n/a | 84.8 ms / 78 MB | 186 ms / 152 MB | 155 ms / 265 MB | n/a | n/a |
-| yaml-narrow-100k-nested-dept | 65.6 ms / 37 MB | 65.6 ms / 37 MB | n/a | 85.6 ms / 78 MB | 189 ms / 152 MB | 161 ms / 264 MB | error | n/a |
-| yaml-narrow-100k-type-path | 63.1 ms / 37 MB | 62.9 ms / 37 MB | n/a | 85.1 ms / 78 MB | 191 ms / 151 MB | disagreed | n/a | n/a |
+| csv-broad-100-count | 10.6 ms / 4.9 MB | 13.3 ms / 5.0 MB | n/a | n/a | n/a | 33.6 ms / 32 MB | n/a | 20.3 ms / 33 MB |
+| csv-broad-100-first-id | 14.0 ms / 4.8 MB | 16.5 ms / 4.8 MB | n/a | n/a | n/a | 29.7 ms / 25 MB | n/a | 20.3 ms / 33 MB |
+| csv-broad-100-high-count | 11.2 ms / 5.0 MB | 11.6 ms / 5.0 MB | n/a | n/a | n/a | 36.4 ms / 26 MB | n/a | 19.6 ms / 33 MB |
+| csv-broad-100-sum-score | 11.5 ms / 5.0 MB | 12.5 ms / 5.0 MB | n/a | n/a | n/a | n/a | n/a | 21.5 ms / 33 MB |
+| csv-broad-1k-count | 10.9 ms / 5.5 MB | 12.8 ms / 5.6 MB | n/a | n/a | n/a | 127 ms / 67 MB | n/a | 23.2 ms / 41 MB |
+| csv-broad-1k-first-id | 10.4 ms / 5.5 MB | 10.2 ms / 5.5 MB | n/a | n/a | n/a | 127 ms / 63 MB | n/a | 21.7 ms / 41 MB |
+| csv-broad-1k-high-count | 12.4 ms / 5.6 MB | 12.9 ms / 5.7 MB | n/a | n/a | n/a | 140 ms / 68 MB | n/a | 22.7 ms / 41 MB |
+| csv-broad-1k-sum-score | 11.7 ms / 5.6 MB | 14.1 ms / 5.6 MB | n/a | n/a | n/a | n/a | n/a | 23.5 ms / 41 MB |
+| csv-broad-5k-count | 19.0 ms / 8.2 MB | 19.8 ms / 8.2 MB | n/a | n/a | n/a | 505 ms / 229 MB | n/a | 31.8 ms / 68 MB |
+| csv-broad-5k-first-id | 11.9 ms / 8.1 MB | 12.1 ms / 8.1 MB | n/a | n/a | n/a | 528 ms / 233 MB | n/a | 25.9 ms / 50 MB |
+| csv-broad-5k-high-count | 19.9 ms / 8.3 MB | 23.2 ms / 8.3 MB | n/a | n/a | n/a | 550 ms / 273 MB | n/a | 31.0 ms / 63 MB |
+| csv-broad-5k-sum-score | 19.4 ms / 8.2 MB | 18.0 ms / 8.3 MB | n/a | n/a | n/a | n/a | n/a | 32.6 ms / 66 MB |
+| csv-broad-25k-count | 40.4 ms / 22 MB | 37.9 ms / 22 MB | n/a | n/a | n/a | excluded | n/a | 71.6 ms / 166 MB |
+| csv-broad-25k-first-id | 12.6 ms / 21 MB | 14.6 ms / 21 MB | n/a | n/a | n/a | excluded | n/a | 23.2 ms / 50 MB |
+| csv-broad-25k-high-count | 51.9 ms / 22 MB | 52.1 ms / 22 MB | n/a | n/a | n/a | excluded | n/a | 74.1 ms / 204 MB |
+| csv-broad-25k-sum-score | 49.9 ms / 22 MB | 50.1 ms / 22 MB | n/a | n/a | n/a | n/a | n/a | 70.0 ms / 162 MB |
+| csv-broad-50k-count | 63.8 ms / 38 MB | 63.5 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 121 ms / 281 MB |
+| csv-broad-50k-first-id | 16.9 ms / 38 MB | 16.2 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 23.5 ms / 50 MB |
+| csv-broad-50k-high-count | 90.3 ms / 38 MB | 92.4 ms / 38 MB | n/a | n/a | n/a | excluded | n/a | 123 ms / 341 MB |
+| csv-broad-50k-sum-score | 87.8 ms / 38 MB | 87.4 ms / 38 MB | n/a | n/a | n/a | n/a | n/a | 121 ms / 299 MB |
+| csv-broad-100k-count | 114 ms / 72 MB | 113 ms / 72 MB | n/a | n/a | n/a | excluded | n/a | 220 ms / 545 MB |
+| csv-broad-100k-first-id | 22.0 ms / 72 MB | 20.8 ms / 72 MB | n/a | n/a | n/a | excluded | n/a | 23.7 ms / 50 MB |
+| csv-broad-100k-high-count | 169 ms / 72 MB | 168 ms / 72 MB | n/a | n/a | n/a | excluded | n/a | 219 ms / 615 MB |
+| csv-broad-100k-sum-score | 162 ms / 72 MB | 162 ms / 72 MB | n/a | n/a | n/a | n/a | n/a | 219 ms / 541 MB |
+| csv-broad-200k-count | 214 ms / 139 MB | 217 ms / 139 MB | n/a | n/a | n/a | excluded | n/a | 412 ms / 1052 MB |
+| csv-broad-200k-first-id | 35.8 ms / 139 MB | 29.3 ms / 139 MB | n/a | n/a | n/a | excluded | n/a | 25.3 ms / 50 MB |
+| csv-broad-200k-high-count | 332 ms / 139 MB | 327 ms / 139 MB | n/a | n/a | n/a | excluded | n/a | 416 ms / 1094 MB |
+| csv-broad-200k-sum-score | 312 ms / 139 MB | 313 ms / 139 MB | n/a | n/a | n/a | n/a | n/a | 424 ms / 1051 MB |
+| csv-narrow-100-count | 8.56 ms / 4.8 MB | 8.09 ms / 4.8 MB | n/a | n/a | n/a | 13.3 ms / 19 MB | n/a | 19.6 ms / 32 MB |
+| csv-narrow-100-first-id | 9.20 ms / 4.7 MB | 8.97 ms / 4.7 MB | n/a | n/a | n/a | 15.0 ms / 19 MB | n/a | 17.6 ms / 32 MB |
+| csv-narrow-100-high-count | 9.50 ms / 4.9 MB | 16.3 ms / 4.9 MB | n/a | n/a | n/a | 17.7 ms / 20 MB | n/a | 17.8 ms / 32 MB |
+| csv-narrow-100-sum-score | 8.50 ms / 4.9 MB | 9.18 ms / 4.9 MB | n/a | n/a | n/a | n/a | n/a | 21.4 ms / 32 MB |
+| csv-narrow-1k-count | 11.1 ms / 4.8 MB | 9.66 ms / 4.9 MB | n/a | n/a | n/a | 21.8 ms / 30 MB | n/a | 16.9 ms / 33 MB |
+| csv-narrow-1k-first-id | 10.8 ms / 4.8 MB | 9.14 ms / 4.8 MB | n/a | n/a | n/a | 22.7 ms / 24 MB | n/a | 19.2 ms / 33 MB |
+| csv-narrow-1k-high-count | 9.42 ms / 4.9 MB | 10.3 ms / 5.0 MB | n/a | n/a | n/a | 26.8 ms / 25 MB | n/a | 17.5 ms / 33 MB |
+| csv-narrow-1k-sum-score | 9.70 ms / 4.9 MB | 10.2 ms / 4.9 MB | n/a | n/a | n/a | n/a | n/a | 20.0 ms / 33 MB |
+| csv-narrow-5k-count | 10.9 ms / 4.9 MB | 12.1 ms / 4.9 MB | n/a | n/a | n/a | 42.5 ms / 39 MB | n/a | 17.7 ms / 34 MB |
+| csv-narrow-5k-first-id | 8.54 ms / 4.8 MB | 8.76 ms / 4.8 MB | n/a | n/a | n/a | 43.4 ms / 40 MB | n/a | 18.5 ms / 33 MB |
+| csv-narrow-5k-high-count | 13.5 ms / 5.0 MB | 15.3 ms / 5.0 MB | n/a | n/a | n/a | 50.4 ms / 44 MB | n/a | 18.7 ms / 35 MB |
+| csv-narrow-5k-sum-score | 12.3 ms / 4.9 MB | 12.5 ms / 5.0 MB | n/a | n/a | n/a | n/a | n/a | 25.1 ms / 35 MB |
+| csv-narrow-25k-count | 24.9 ms / 5.1 MB | 22.7 ms / 5.1 MB | n/a | n/a | n/a | 146 ms / 93 MB | n/a | 19.2 ms / 43 MB |
+| csv-narrow-25k-first-id | 8.41 ms / 5.0 MB | 8.66 ms / 5.0 MB | n/a | n/a | n/a | 144 ms / 90 MB | n/a | 17.3 ms / 33 MB |
+| csv-narrow-25k-high-count | 31.5 ms / 5.2 MB | 33.2 ms / 5.2 MB | n/a | n/a | n/a | 194 ms / 118 MB | n/a | 19.4 ms / 46 MB |
+| csv-narrow-25k-sum-score | 38.2 ms / 5.1 MB | 30.3 ms / 5.2 MB | n/a | n/a | n/a | n/a | n/a | 19.8 ms / 45 MB |
+| csv-narrow-50k-count | 38.3 ms / 5.3 MB | 36.9 ms / 5.4 MB | n/a | n/a | n/a | 270 ms / 164 MB | n/a | 21.2 ms / 52 MB |
+| csv-narrow-50k-first-id | 8.58 ms / 5.2 MB | 8.81 ms / 5.3 MB | n/a | n/a | n/a | 288 ms / 158 MB | n/a | 18.2 ms / 33 MB |
+| csv-narrow-50k-high-count | 55.9 ms / 5.5 MB | 53.9 ms / 5.5 MB | n/a | n/a | n/a | 380 ms / 219 MB | n/a | 26.4 ms / 60 MB |
+| csv-narrow-50k-sum-score | 53.9 ms / 5.4 MB | 53.4 ms / 5.4 MB | n/a | n/a | n/a | n/a | n/a | 25.2 ms / 56 MB |
+| csv-narrow-100k-count | 64.0 ms / 5.9 MB | 62.2 ms / 5.9 MB | n/a | n/a | n/a | 542 ms / 286 MB | n/a | 27.4 ms / 66 MB |
+| csv-narrow-100k-first-id | 12.3 ms / 5.8 MB | 17.8 ms / 5.8 MB | n/a | n/a | n/a | 547 ms / 299 MB | n/a | 21.2 ms / 33 MB |
+| csv-narrow-100k-high-count | 101 ms / 6.0 MB | 101 ms / 6.0 MB | n/a | n/a | n/a | 720 ms / 424 MB | n/a | 29.0 ms / 87 MB |
+| csv-narrow-100k-sum-score | 91.6 ms / 5.9 MB | 91.2 ms / 5.9 MB | n/a | n/a | n/a | n/a | n/a | 29.5 ms / 67 MB |
+| csv-narrow-200k-count | 111 ms / 7.0 MB | 113 ms / 7.0 MB | n/a | n/a | n/a | 1088 ms / 561 MB | n/a | 33.3 ms / 84 MB |
+| csv-narrow-200k-first-id | 9.22 ms / 6.9 MB | 13.0 ms / 6.9 MB | n/a | n/a | n/a | 1033 ms / 573 MB | n/a | 21.7 ms / 33 MB |
+| csv-narrow-200k-high-count | 193 ms / 7.1 MB | 198 ms / 7.1 MB | n/a | n/a | n/a | 1434 ms / 799 MB | n/a | 43.8 ms / 113 MB |
+| csv-narrow-200k-sum-score | 182 ms / 7.1 MB | 175 ms / 7.1 MB | n/a | n/a | n/a | n/a | n/a | 42.5 ms / 99 MB |
+| ndjson-broad-100-first-id | 6.41 ms / 4.8 MB | 6.44 ms / 4.9 MB | 7.84 ms / 2.7 MB | 7.16 ms / 4.0 MB | 7.29 ms / 6.9 MB | n/a | n/a | n/a |
+| ndjson-broad-100-identity | 6.68 ms / 4.8 MB | 7.16 ms / 4.8 MB | 9.42 ms / 2.7 MB | 7.07 ms / 4.0 MB | 8.71 ms / 7.3 MB | n/a | n/a | n/a |
+| ndjson-broad-100-score | 6.25 ms / 4.9 MB | 6.14 ms / 4.9 MB | 7.20 ms / 2.7 MB | 6.20 ms / 4.0 MB | 8.32 ms / 6.8 MB | n/a | n/a | n/a |
+| ndjson-broad-100-select-id | 6.51 ms / 5.0 MB | 6.66 ms / 5.0 MB | 7.65 ms / 2.7 MB | 6.53 ms / 4.0 MB | 8.40 ms / 7.1 MB | n/a | n/a | n/a |
+| ndjson-broad-100-select-score | 7.18 ms / 5.0 MB | 7.00 ms / 5.0 MB | 9.36 ms / 2.7 MB | 8.06 ms / 4.0 MB | 12.3 ms / 7.3 MB | n/a | n/a | n/a |
+| ndjson-broad-1k-first-id | 7.85 ms / 9.5 MB | 8.99 ms / 5.8 MB | 16.4 ms / 2.7 MB | 10.3 ms / 4.9 MB | 17.0 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-broad-1k-identity | 9.30 ms / 12 MB | 10.7 ms / 5.8 MB | 36.9 ms / 2.8 MB | 14.7 ms / 4.9 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-1k-score | 7.54 ms / 9.6 MB | 10.4 ms / 5.8 MB | 16.5 ms / 2.7 MB | 10.2 ms / 4.9 MB | 16.0 ms / 12 MB | n/a | n/a | n/a |
+| ndjson-broad-1k-select-id | 8.07 ms / 10 MB | 10.4 ms / 5.9 MB | 15.9 ms / 2.8 MB | 10.0 ms / 5.0 MB | 14.8 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-broad-1k-select-score | 9.74 ms / 12 MB | 14.4 ms / 6.0 MB | 36.1 ms / 2.8 MB | 13.4 ms / 5.0 MB | 20.5 ms / 12 MB | n/a | n/a | n/a |
+| ndjson-broad-5k-first-id | 11.5 ms / 18 MB | 20.5 ms / 10 MB | 50.2 ms / 2.7 MB | 26.4 ms / 9.2 MB | 49.8 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-5k-identity | 13.7 ms / 24 MB | 30.9 ms / 10 MB | 146 ms / 2.8 MB | 45.5 ms / 9.2 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-5k-score | 11.2 ms / 17 MB | 20.3 ms / 10 MB | 50.3 ms / 2.7 MB | 26.5 ms / 9.2 MB | 49.8 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-5k-select-id | 13.3 ms / 19 MB | 23.9 ms / 10 MB | 51.9 ms / 2.7 MB | 26.1 ms / 9.3 MB | 47.6 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-5k-select-score | 15.8 ms / 23 MB | 47.7 ms / 10 MB | 134 ms / 2.8 MB | 44.9 ms / 9.3 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-25k-first-id | 20.7 ms / 40 MB | 68.6 ms / 32 MB | 215 ms / 2.8 MB | 100 ms / 31 MB | 219 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-25k-identity | 26.1 ms / 61 MB | 113 ms / 32 MB | 653 ms / 2.8 MB | 186 ms / 31 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-25k-score | 20.7 ms / 40 MB | 67.8 ms / 32 MB | 212 ms / 2.8 MB | 99.4 ms / 31 MB | 208 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-25k-select-id | 22.2 ms / 41 MB | 81.7 ms / 32 MB | 212 ms / 2.7 MB | 94.2 ms / 31 MB | 193 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-25k-select-score | 39.6 ms / 61 MB | 200 ms / 32 MB | 606 ms / 2.8 MB | 181 ms / 31 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-50k-first-id | 29.3 ms / 66 MB | 125 ms / 59 MB | 412 ms / 2.8 MB | 191 ms / 58 MB | 407 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-50k-identity | 45.9 ms / 110 MB | 229 ms / 59 MB | 1284 ms / 2.8 MB | 367 ms / 58 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-50k-score | 29.7 ms / 66 MB | 125 ms / 59 MB | 413 ms / 2.8 MB | 189 ms / 58 MB | 415 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-50k-select-id | 35.6 ms / 66 MB | 165 ms / 59 MB | 416 ms / 2.7 MB | 187 ms / 58 MB | 411 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-50k-select-score | 72.1 ms / 106 MB | 393 ms / 59 MB | 1217 ms / 2.8 MB | 364 ms / 58 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-100k-first-id | 50.8 ms / 121 MB | 244 ms / 113 MB | 873 ms / 2.7 MB | 383 ms / 112 MB | 878 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-100k-identity | 74.1 ms / 184 MB | 422 ms / 113 MB | 2515 ms / 2.8 MB | 717 ms / 112 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-100k-score | 49.9 ms / 120 MB | 248 ms / 113 MB | 816 ms / 2.8 MB | 369 ms / 112 MB | 847 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-100k-select-id | 57.5 ms / 122 MB | 310 ms / 113 MB | 832 ms / 2.7 MB | 359 ms / 112 MB | 753 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-100k-select-score | 122 ms / 187 MB | 771 ms / 113 MB | 2369 ms / 2.8 MB | 721 ms / 112 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-200k-first-id | 90.1 ms / 230 MB | 511 ms / 221 MB | 1623 ms / 2.7 MB | 736 ms / 220 MB | 1636 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-broad-200k-identity | 136 ms / 317 MB | 839 ms / 221 MB | 4990 ms / 2.8 MB | 1427 ms / 220 MB | disagreed | n/a | n/a | n/a |
+| ndjson-broad-200k-score | 90.0 ms / 228 MB | 512 ms / 221 MB | 1699 ms / 2.8 MB | 763 ms / 220 MB | 1663 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-200k-select-id | 106 ms / 230 MB | 602 ms / 221 MB | 1624 ms / 2.7 MB | 698 ms / 220 MB | 1468 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-broad-200k-select-score | 243 ms / 357 MB | 1566 ms / 221 MB | 4703 ms / 2.8 MB | 1389 ms / 220 MB | disagreed | n/a | n/a | n/a |
+| ndjson-narrow-100-first-id | 6.00 ms / 4.8 MB | 6.30 ms / 4.7 MB | 6.88 ms / 2.6 MB | 7.74 ms / 3.8 MB | 6.37 ms / 6.3 MB | n/a | n/a | n/a |
+| ndjson-narrow-100-identity | 6.04 ms / 4.5 MB | 6.20 ms / 4.5 MB | 6.25 ms / 2.6 MB | 6.00 ms / 3.8 MB | 6.60 ms / 6.2 MB | n/a | n/a | n/a |
+| ndjson-narrow-100-score | 6.33 ms / 4.8 MB | 5.96 ms / 4.8 MB | 5.82 ms / 2.6 MB | 5.65 ms / 3.8 MB | 6.38 ms / 6.1 MB | n/a | n/a | n/a |
+| ndjson-narrow-100-select-id | 6.33 ms / 4.8 MB | 6.62 ms / 4.8 MB | 6.32 ms / 2.6 MB | 6.01 ms / 3.9 MB | 6.24 ms / 6.4 MB | n/a | n/a | n/a |
+| ndjson-narrow-100-select-score | 7.16 ms / 4.8 MB | 6.28 ms / 4.8 MB | 6.20 ms / 2.6 MB | 5.99 ms / 3.9 MB | 7.86 ms / 6.2 MB | n/a | n/a | n/a |
+| ndjson-narrow-1k-first-id | 7.03 ms / 4.8 MB | 6.54 ms / 4.8 MB | 6.52 ms / 2.6 MB | 6.55 ms / 3.8 MB | 8.98 ms / 7.8 MB | n/a | n/a | n/a |
+| ndjson-narrow-1k-identity | 8.55 ms / 4.6 MB | 7.48 ms / 4.6 MB | 7.50 ms / 2.6 MB | 7.02 ms / 3.8 MB | 8.07 ms / 7.8 MB | n/a | n/a | n/a |
+| ndjson-narrow-1k-score | 6.93 ms / 4.8 MB | 6.91 ms / 4.8 MB | 6.64 ms / 2.6 MB | 6.29 ms / 3.8 MB | 7.43 ms / 7.6 MB | n/a | n/a | n/a |
+| ndjson-narrow-1k-select-id | 7.31 ms / 4.8 MB | 7.55 ms / 4.8 MB | 7.18 ms / 2.6 MB | 6.64 ms / 3.9 MB | 9.36 ms / 8.4 MB | n/a | n/a | n/a |
+| ndjson-narrow-1k-select-score | 6.69 ms / 4.8 MB | 6.51 ms / 4.8 MB | 7.27 ms / 2.6 MB | 6.70 ms / 3.9 MB | 9.26 ms / 8.6 MB | n/a | n/a | n/a |
+| ndjson-narrow-5k-first-id | 9.91 ms / 4.9 MB | 10.0 ms / 4.9 MB | 9.62 ms / 2.6 MB | 15.1 ms / 3.9 MB | 13.6 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-narrow-5k-identity | 8.35 ms / 4.8 MB | 8.38 ms / 4.8 MB | 11.2 ms / 2.7 MB | 9.91 ms / 3.9 MB | 14.1 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-narrow-5k-score | 10.1 ms / 4.9 MB | 11.2 ms / 4.9 MB | 10.1 ms / 2.6 MB | 9.55 ms / 3.9 MB | 14.2 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-narrow-5k-select-id | 9.81 ms / 4.9 MB | 9.94 ms / 4.9 MB | 9.08 ms / 2.6 MB | 9.17 ms / 4.0 MB | 11.1 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-narrow-5k-select-score | 11.7 ms / 5.0 MB | 10.2 ms / 5.0 MB | 12.6 ms / 2.7 MB | 10.4 ms / 4.0 MB | 15.8 ms / 11 MB | n/a | n/a | n/a |
+| ndjson-narrow-25k-first-id | 11.7 ms / 7.6 MB | 27.6 ms / 5.4 MB | 22.2 ms / 2.7 MB | 24.0 ms / 4.4 MB | 41.3 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-25k-identity | 9.79 ms / 8.1 MB | 20.6 ms / 5.2 MB | 30.2 ms / 2.7 MB | 24.4 ms / 4.4 MB | 44.3 ms / 12 MB | n/a | n/a | n/a |
+| ndjson-narrow-25k-score | 11.4 ms / 7.6 MB | 26.4 ms / 5.4 MB | 22.7 ms / 2.7 MB | 24.3 ms / 4.4 MB | 40.9 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-25k-select-id | 11.4 ms / 7.3 MB | 26.6 ms / 5.4 MB | 23.6 ms / 2.6 MB | 18.9 ms / 4.5 MB | 25.6 ms / 14 MB | n/a | n/a | n/a |
+| ndjson-narrow-25k-select-score | 12.4 ms / 8.4 MB | 29.2 ms / 5.4 MB | 35.0 ms / 2.7 MB | 29.4 ms / 4.5 MB | 47.7 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-50k-first-id | 14.1 ms / 10 MB | 44.3 ms / 6.0 MB | 37.7 ms / 2.7 MB | 41.7 ms / 5.0 MB | 73.6 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-50k-identity | 14.8 ms / 11 MB | 31.9 ms / 5.8 MB | 54.7 ms / 2.7 MB | 41.7 ms / 5.0 MB | 83.5 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-50k-score | 15.4 ms / 10 MB | 44.4 ms / 6.0 MB | 38.0 ms / 2.7 MB | 41.5 ms / 5.0 MB | 72.9 ms / 12 MB | n/a | n/a | n/a |
+| ndjson-narrow-50k-select-id | 16.2 ms / 9.4 MB | 44.1 ms / 6.0 MB | 40.8 ms / 2.6 MB | 33.3 ms / 5.0 MB | 43.0 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-50k-select-score | 17.9 ms / 12 MB | 49.7 ms / 6.0 MB | 61.1 ms / 2.7 MB | 52.8 ms / 5.0 MB | 86.0 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-100k-first-id | 27.7 ms / 14 MB | 80.2 ms / 7.1 MB | 67.9 ms / 2.7 MB | 76.0 ms / 6.2 MB | 139 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-100k-identity | 18.4 ms / 16 MB | 55.6 ms / 7.0 MB | 94.2 ms / 2.7 MB | 75.7 ms / 6.2 MB | 147 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-100k-score | 22.1 ms / 14 MB | 81.3 ms / 7.1 MB | 68.2 ms / 2.7 MB | 78.4 ms / 6.2 MB | 140 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-100k-select-id | 23.6 ms / 13 MB | 79.9 ms / 7.1 MB | 70.7 ms / 2.7 MB | 58.3 ms / 6.2 MB | 77.0 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-100k-select-score | 24.0 ms / 16 MB | 91.5 ms / 7.2 MB | 112 ms / 2.7 MB | 95.9 ms / 6.2 MB | 169 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-200k-first-id | 32.4 ms / 20 MB | 152 ms / 9.6 MB | 127 ms / 2.7 MB | 143 ms / 8.7 MB | 263 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-200k-identity | 27.6 ms / 21 MB | 102 ms / 9.4 MB | 184 ms / 2.7 MB | 142 ms / 8.7 MB | 284 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-200k-score | 32.3 ms / 18 MB | 152 ms / 9.6 MB | 125 ms / 2.7 MB | 143 ms / 8.7 MB | 262 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-200k-select-id | 32.7 ms / 16 MB | 149 ms / 9.6 MB | 132 ms / 2.7 MB | 109 ms / 8.7 MB | 144 ms / 13 MB | n/a | n/a | n/a |
+| ndjson-narrow-200k-select-score | 35.6 ms / 22 MB | 172 ms / 9.6 MB | 209 ms / 2.7 MB | 180 ms / 8.7 MB | 311 ms / 13 MB | n/a | n/a | n/a |
+| toml-broad-100-count | 8.41 ms / 4.9 MB | 10.0 ms / 4.9 MB | n/a | 16.3 ms / 5.3 MB | n/a | 143 ms / 39 MB | 11.4 ms / 14 MB | n/a |
+| toml-broad-100-descent | 8.94 ms / 6.3 MB | 9.40 ms / 6.3 MB | n/a | 10.3 ms / 5.5 MB | n/a | 149 ms / 40 MB | n/a | n/a |
+| toml-broad-100-exact-name | 8.57 ms / 4.8 MB | 9.57 ms / 4.8 MB | n/a | 10.5 ms / 5.2 MB | n/a | 148 ms / 44 MB | 12.1 ms / 13 MB | n/a |
+| toml-broad-100-first-id | 8.32 ms / 4.8 MB | 8.06 ms / 4.8 MB | n/a | 9.78 ms / 5.3 MB | n/a | 144 ms / 39 MB | 11.8 ms / 13 MB | n/a |
+| toml-broad-100-identity | 9.13 ms / 6.1 MB | 9.68 ms / 6.2 MB | n/a | 10.6 ms / 5.2 MB | n/a | 148 ms / 44 MB | 13.9 ms / 15 MB | n/a |
+| toml-broad-100-ids | 8.20 ms / 5.1 MB | 10.1 ms / 5.1 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-broad-100-keys-publish | 8.41 ms / 5.0 MB | 8.40 ms / 5.0 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-broad-100-nested-dept | 8.59 ms / 4.8 MB | 8.87 ms / 4.8 MB | n/a | 9.25 ms / 5.3 MB | n/a | 144 ms / 43 MB | 11.3 ms / 14 MB | n/a |
+| toml-broad-100-type-path | 11.3 ms / 6.9 MB | 9.84 ms / 6.9 MB | n/a | 10.5 ms / 5.2 MB | n/a | disagreed | n/a | n/a |
+| toml-broad-1k-count | 13.1 ms / 7.2 MB | 12.6 ms / 7.3 MB | n/a | 26.9 ms / 15 MB | n/a | excluded | 33.0 ms / 32 MB | n/a |
+| toml-broad-1k-descent | 19.7 ms / 21 MB | 19.0 ms / 21 MB | n/a | 27.7 ms / 17 MB | n/a | excluded | n/a | n/a |
+| toml-broad-1k-exact-name | 14.0 ms / 6.5 MB | 15.0 ms / 6.5 MB | n/a | 24.4 ms / 15 MB | n/a | excluded | 32.0 ms / 32 MB | n/a |
+| toml-broad-1k-first-id | 12.9 ms / 6.5 MB | 12.8 ms / 6.5 MB | n/a | 28.5 ms / 15 MB | n/a | excluded | 35.1 ms / 32 MB | n/a |
+| toml-broad-1k-identity | 21.5 ms / 21 MB | 22.0 ms / 21 MB | n/a | 28.9 ms / 15 MB | n/a | excluded | 53.7 ms / 43 MB | n/a |
+| toml-broad-1k-ids | 14.7 ms / 7.3 MB | 14.8 ms / 7.4 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-1k-keys-publish | 23.0 ms / 6.6 MB | 21.9 ms / 6.6 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-1k-nested-dept | 15.7 ms / 6.5 MB | 15.5 ms / 6.5 MB | n/a | 26.6 ms / 15 MB | n/a | excluded | 32.8 ms / 32 MB | n/a |
+| toml-broad-1k-type-path | 25.2 ms / 26 MB | 29.1 ms / 26 MB | n/a | 25.9 ms / 15 MB | n/a | excluded | n/a | n/a |
+| toml-broad-5k-count | 37.4 ms / 17 MB | 34.7 ms / 17 MB | n/a | 85.4 ms / 70 MB | n/a | excluded | 105 ms / 107 MB | n/a |
+| toml-broad-5k-descent | 61.0 ms / 78 MB | 59.4 ms / 78 MB | n/a | 101 ms / 74 MB | n/a | excluded | n/a | n/a |
+| toml-broad-5k-exact-name | 33.9 ms / 14 MB | 33.9 ms / 14 MB | n/a | 84.5 ms / 70 MB | n/a | excluded | 107 ms / 107 MB | n/a |
+| toml-broad-5k-first-id | 33.1 ms / 14 MB | 34.3 ms / 14 MB | n/a | 87.7 ms / 70 MB | n/a | excluded | 107 ms / 107 MB | n/a |
+| toml-broad-5k-identity | 61.9 ms / 78 MB | 56.2 ms / 78 MB | n/a | 103 ms / 70 MB | n/a | excluded | 206 ms / 157 MB | n/a |
+| toml-broad-5k-ids | 34.6 ms / 17 MB | 34.8 ms / 17 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-5k-keys-publish | 34.9 ms / 14 MB | 32.9 ms / 14 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-5k-nested-dept | 32.8 ms / 14 MB | 35.6 ms / 14 MB | n/a | 85.5 ms / 70 MB | n/a | excluded | 105 ms / 107 MB | n/a |
+| toml-broad-5k-type-path | 79.3 ms / 111 MB | 79.5 ms / 113 MB | n/a | 86.8 ms / 70 MB | n/a | excluded | n/a | n/a |
+| toml-broad-25k-count | 122 ms / 72 MB | 124 ms / 68 MB | n/a | 375 ms / 285 MB | n/a | excluded | 457 ms / 509 MB | n/a |
+| toml-broad-25k-descent | 240 ms / 321 MB | 241 ms / 305 MB | n/a | 442 ms / 332 MB | n/a | excluded | n/a | n/a |
+| toml-broad-25k-exact-name | 116 ms / 50 MB | 118 ms / 49 MB | n/a | 372 ms / 284 MB | n/a | excluded | 480 ms / 509 MB | n/a |
+| toml-broad-25k-first-id | 120 ms / 50 MB | 120 ms / 49 MB | n/a | 374 ms / 284 MB | n/a | excluded | 484 ms / 516 MB | n/a |
+| toml-broad-25k-identity | 230 ms / 321 MB | 230 ms / 304 MB | n/a | 464 ms / 285 MB | n/a | excluded | 978 ms / 810 MB | n/a |
+| toml-broad-25k-ids | 119 ms / 72 MB | 120 ms / 68 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-25k-keys-publish | 133 ms / 51 MB | 138 ms / 49 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-25k-nested-dept | 117 ms / 50 MB | 119 ms / 49 MB | n/a | 373 ms / 284 MB | n/a | excluded | 456 ms / 507 MB | n/a |
+| toml-broad-25k-type-path | 372 ms / 441 MB | 372 ms / 425 MB | n/a | 377 ms / 285 MB | n/a | excluded | n/a | n/a |
+| toml-broad-50k-count | 254 ms / 134 MB | 242 ms / 134 MB | n/a | 786 ms / 545 MB | n/a | excluded | 1003 ms / 961 MB | n/a |
+| toml-broad-50k-descent | 479 ms / 678 MB | 504 ms / 678 MB | n/a | 939 ms / 630 MB | n/a | excluded | n/a | n/a |
+| toml-broad-50k-exact-name | 234 ms / 93 MB | 228 ms / 93 MB | n/a | 751 ms / 545 MB | n/a | excluded | 958 ms / 964 MB | n/a |
+| toml-broad-50k-first-id | 241 ms / 93 MB | 242 ms / 92 MB | n/a | 805 ms / 545 MB | n/a | excluded | 937 ms / 965 MB | n/a |
+| toml-broad-50k-identity | 496 ms / 678 MB | 485 ms / 678 MB | n/a | 956 ms / 545 MB | n/a | excluded | 2031 ms / 1497 MB | n/a |
+| toml-broad-50k-ids | 238 ms / 134 MB | 235 ms / 134 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-50k-keys-publish | 236 ms / 93 MB | 246 ms / 93 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-50k-nested-dept | 229 ms / 93 MB | 227 ms / 93 MB | n/a | 753 ms / 545 MB | n/a | excluded | 919 ms / 964 MB | n/a |
+| toml-broad-50k-type-path | 684 ms / 903 MB | 709 ms / 903 MB | n/a | 776 ms / 545 MB | n/a | excluded | n/a | n/a |
+| toml-broad-100k-count | 478 ms / 254 MB | 468 ms / 254 MB | n/a | 1525 ms / 1087 MB | n/a | excluded | 1887 ms / 1912 MB | n/a |
+| toml-broad-100k-descent | 1002 ms / 1324 MB | 953 ms / 1324 MB | n/a | 1776 ms / 1273 MB | n/a | excluded | n/a | n/a |
+| toml-broad-100k-exact-name | 445 ms / 180 MB | 435 ms / 180 MB | n/a | 1513 ms / 1086 MB | n/a | excluded | 1960 ms / 1919 MB | n/a |
+| toml-broad-100k-first-id | 440 ms / 180 MB | 438 ms / 180 MB | n/a | 1486 ms / 1086 MB | n/a | excluded | 1881 ms / 1914 MB | n/a |
+| toml-broad-100k-identity | 930 ms / 1325 MB | 945 ms / 1325 MB | n/a | 1875 ms / 1086 MB | n/a | excluded | 3970 ms / 3152 MB | n/a |
+| toml-broad-100k-ids | 499 ms / 254 MB | 506 ms / 254 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-100k-keys-publish | 471 ms / 181 MB | 452 ms / 181 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-broad-100k-nested-dept | 472 ms / 180 MB | 468 ms / 180 MB | n/a | 1507 ms / 1086 MB | n/a | excluded | 1916 ms / 1906 MB | n/a |
+| toml-broad-100k-type-path | 1426 ms / 1747 MB | 1391 ms / 1746 MB | n/a | 1463 ms / 1086 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-100-count | 9.72 ms / 4.7 MB | 8.65 ms / 4.7 MB | n/a | 8.31 ms / 4.2 MB | n/a | 28.5 ms / 29 MB | 10.7 ms / 9.7 MB | n/a |
+| toml-narrow-100-descent | 11.9 ms / 5.0 MB | 12.5 ms / 5.0 MB | n/a | 13.5 ms / 4.2 MB | n/a | 25.2 ms / 29 MB | n/a | n/a |
+| toml-narrow-100-exact-name | 9.77 ms / 4.7 MB | 9.85 ms / 4.7 MB | n/a | 11.5 ms / 4.1 MB | n/a | 27.1 ms / 30 MB | error | n/a |
+| toml-narrow-100-first-id | 9.15 ms / 4.7 MB | 9.34 ms / 4.7 MB | n/a | 9.52 ms / 4.1 MB | n/a | 23.5 ms / 29 MB | 11.4 ms / 9.8 MB | n/a |
+| toml-narrow-100-identity | 11.3 ms / 4.8 MB | 11.5 ms / 4.8 MB | n/a | 13.3 ms / 4.1 MB | n/a | 26.5 ms / 29 MB | 14.8 ms / 10 MB | n/a |
+| toml-narrow-100-ids | 11.3 ms / 4.8 MB | 9.79 ms / 4.8 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-narrow-100-keys-publish | 9.53 ms / 4.9 MB | 9.72 ms / 4.9 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-narrow-100-nested-dept | 9.61 ms / 4.7 MB | 8.57 ms / 4.7 MB | n/a | 8.99 ms / 4.1 MB | n/a | 25.5 ms / 29 MB | error | n/a |
+| toml-narrow-100-type-path | 9.73 ms / 4.8 MB | 9.57 ms / 4.8 MB | n/a | 9.97 ms / 4.1 MB | n/a | disagreed | n/a | n/a |
+| toml-narrow-1k-count | 11.3 ms / 5.0 MB | 15.3 ms / 5.1 MB | n/a | 13.3 ms / 5.8 MB | n/a | 802 ms / 37 MB | 14.8 ms / 13 MB | n/a |
+| toml-narrow-1k-descent | 11.5 ms / 5.8 MB | 12.4 ms / 5.8 MB | n/a | 13.0 ms / 5.8 MB | n/a | 732 ms / 37 MB | n/a | n/a |
+| toml-narrow-1k-exact-name | 10.2 ms / 5.0 MB | 9.28 ms / 5.0 MB | n/a | 10.4 ms / 5.6 MB | n/a | 729 ms / 36 MB | error | n/a |
+| toml-narrow-1k-first-id | 9.53 ms / 5.0 MB | 9.32 ms / 5.0 MB | n/a | 9.78 ms / 5.7 MB | n/a | 823 ms / 38 MB | 14.9 ms / 13 MB | n/a |
+| toml-narrow-1k-identity | 10.9 ms / 5.6 MB | 11.2 ms / 5.6 MB | n/a | 16.0 ms / 5.7 MB | n/a | 725 ms / 36 MB | 13.5 ms / 14 MB | n/a |
+| toml-narrow-1k-ids | 12.9 ms / 5.2 MB | 14.8 ms / 5.2 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-narrow-1k-keys-publish | 10.4 ms / 5.2 MB | 11.4 ms / 5.2 MB | n/a | disagreed | n/a | disagreed | n/a | n/a |
+| toml-narrow-1k-nested-dept | 9.51 ms / 5.0 MB | 8.46 ms / 5.0 MB | n/a | 9.79 ms / 5.5 MB | n/a | 707 ms / 37 MB | error | n/a |
+| toml-narrow-1k-type-path | 11.2 ms / 5.7 MB | 12.3 ms / 5.7 MB | n/a | 11.3 ms / 5.7 MB | n/a | disagreed | n/a | n/a |
+| toml-narrow-5k-count | 12.2 ms / 6.7 MB | 11.5 ms / 6.7 MB | n/a | 15.6 ms / 11 MB | n/a | excluded | 21.2 ms / 19 MB | n/a |
+| toml-narrow-5k-descent | 13.6 ms / 9.9 MB | 13.8 ms / 9.9 MB | n/a | 15.9 ms / 11 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-5k-exact-name | 11.2 ms / 6.6 MB | 10.4 ms / 6.6 MB | n/a | 14.5 ms / 11 MB | n/a | excluded | error | n/a |
+| toml-narrow-5k-first-id | 12.3 ms / 6.6 MB | 10.3 ms / 6.6 MB | n/a | 15.9 ms / 11 MB | n/a | excluded | 18.9 ms / 19 MB | n/a |
+| toml-narrow-5k-identity | 12.3 ms / 9.8 MB | 13.3 ms / 9.7 MB | n/a | 15.8 ms / 11 MB | n/a | excluded | 26.7 ms / 23 MB | n/a |
+| toml-narrow-5k-ids | 13.5 ms / 6.9 MB | 13.3 ms / 6.9 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-5k-keys-publish | 10.1 ms / 6.8 MB | 9.70 ms / 6.8 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-5k-nested-dept | 15.3 ms / 6.6 MB | 13.5 ms / 6.6 MB | n/a | 16.1 ms / 11 MB | n/a | excluded | error | n/a |
+| toml-narrow-5k-type-path | 12.5 ms / 11 MB | 12.0 ms / 11 MB | n/a | 13.1 ms / 11 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-25k-count | 16.8 ms / 14 MB | 16.8 ms / 14 MB | n/a | 34.3 ms / 50 MB | n/a | excluded | 47.8 ms / 46 MB | n/a |
+| toml-narrow-25k-descent | 25.4 ms / 27 MB | 26.7 ms / 27 MB | n/a | 38.0 ms / 51 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-25k-exact-name | 13.4 ms / 14 MB | 15.9 ms / 14 MB | n/a | 31.2 ms / 50 MB | n/a | excluded | error | n/a |
+| toml-narrow-25k-first-id | 15.8 ms / 14 MB | 16.9 ms / 14 MB | n/a | 34.9 ms / 50 MB | n/a | excluded | 50.6 ms / 47 MB | n/a |
+| toml-narrow-25k-identity | 21.8 ms / 26 MB | 24.0 ms / 27 MB | n/a | 37.0 ms / 50 MB | n/a | excluded | 77.3 ms / 68 MB | n/a |
+| toml-narrow-25k-ids | 20.9 ms / 14 MB | 17.6 ms / 14 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-25k-keys-publish | 13.7 ms / 14 MB | 13.4 ms / 14 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-25k-nested-dept | 13.8 ms / 14 MB | 16.7 ms / 14 MB | n/a | 31.9 ms / 50 MB | n/a | excluded | error | n/a |
+| toml-narrow-25k-type-path | 26.7 ms / 32 MB | 30.2 ms / 32 MB | n/a | 33.2 ms / 50 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-50k-count | 22.3 ms / 24 MB | 24.8 ms / 24 MB | n/a | 51.4 ms / 80 MB | n/a | excluded | 79.4 ms / 81 MB | n/a |
+| toml-narrow-50k-descent | 39.2 ms / 55 MB | 37.8 ms / 55 MB | n/a | 59.8 ms / 80 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-50k-exact-name | 29.7 ms / 24 MB | 21.6 ms / 24 MB | n/a | 52.5 ms / 80 MB | n/a | excluded | error | n/a |
+| toml-narrow-50k-first-id | 22.2 ms / 24 MB | 23.8 ms / 24 MB | n/a | 51.5 ms / 80 MB | n/a | excluded | 82.9 ms / 83 MB | n/a |
+| toml-narrow-50k-identity | 35.5 ms / 55 MB | 33.9 ms / 55 MB | n/a | 61.2 ms / 80 MB | n/a | excluded | 139 ms / 121 MB | n/a |
+| toml-narrow-50k-ids | 22.9 ms / 24 MB | 22.5 ms / 24 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-50k-keys-publish | 22.4 ms / 24 MB | 21.7 ms / 24 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-50k-nested-dept | 21.7 ms / 24 MB | 23.5 ms / 24 MB | n/a | 54.0 ms / 80 MB | n/a | excluded | error | n/a |
+| toml-narrow-50k-type-path | 44.7 ms / 64 MB | 43.2 ms / 64 MB | n/a | 52.1 ms / 80 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-100k-count | 33.9 ms / 43 MB | 32.8 ms / 43 MB | n/a | 94.0 ms / 139 MB | n/a | excluded | 143 ms / 160 MB | n/a |
+| toml-narrow-100k-descent | 59.5 ms / 94 MB | 59.8 ms / 94 MB | n/a | 107 ms / 139 MB | n/a | excluded | n/a | n/a |
+| toml-narrow-100k-exact-name | 32.3 ms / 42 MB | 30.0 ms / 42 MB | n/a | 90.3 ms / 139 MB | n/a | excluded | error | n/a |
+| toml-narrow-100k-first-id | 32.1 ms / 42 MB | 31.0 ms / 42 MB | n/a | 93.8 ms / 139 MB | n/a | excluded | 150 ms / 157 MB | n/a |
+| toml-narrow-100k-identity | 55.1 ms / 94 MB | 53.9 ms / 94 MB | n/a | 111 ms / 139 MB | n/a | excluded | 254 ms / 225 MB | n/a |
+| toml-narrow-100k-ids | 32.7 ms / 43 MB | 31.1 ms / 43 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-100k-keys-publish | 31.3 ms / 42 MB | 29.9 ms / 42 MB | n/a | disagreed | n/a | excluded | n/a | n/a |
+| toml-narrow-100k-nested-dept | 30.5 ms / 42 MB | 30.5 ms / 42 MB | n/a | 93.4 ms / 139 MB | n/a | excluded | error | n/a |
+| toml-narrow-100k-type-path | 72.2 ms / 126 MB | 73.4 ms / 126 MB | n/a | 91.3 ms / 139 MB | n/a | excluded | n/a | n/a |
+| users-broad-100-all-nonneg | 4.95 ms / 4.9 MB | 4.95 ms / 4.9 MB | 5.54 ms / 3.6 MB | 4.64 ms / 5.0 MB | 5.30 ms / 7.1 MB | n/a | n/a | n/a |
+| users-broad-100-any-high | 4.57 ms / 4.9 MB | 4.74 ms / 4.9 MB | 5.37 ms / 3.6 MB | 4.68 ms / 5.0 MB | 5.35 ms / 7.2 MB | n/a | n/a | n/a |
+| users-broad-100-count | 4.82 ms / 4.6 MB | 4.74 ms / 4.6 MB | 5.39 ms / 3.6 MB | 4.70 ms / 4.8 MB | 5.24 ms / 7.1 MB | 11.3 ms / 23 MB | n/a | n/a |
+| users-broad-100-descent | 5.22 ms / 6.0 MB | 5.23 ms / 6.0 MB | 6.17 ms / 4.1 MB | 5.06 ms / 5.0 MB | 7.96 ms / 10 MB | 16.1 ms / 53 MB | n/a | n/a |
+| users-broad-100-filter-active | 5.04 ms / 4.8 MB | 5.52 ms / 4.8 MB | 5.89 ms / 3.6 MB | 4.78 ms / 4.8 MB | 5.53 ms / 7.0 MB | 12.0 ms / 40 MB | n/a | n/a |
+| users-broad-100-first-id | 4.71 ms / 4.7 MB | 4.45 ms / 4.7 MB | 5.22 ms / 3.6 MB | 6.16 ms / 4.7 MB | 6.75 ms / 7.0 MB | 10.2 ms / 37 MB | n/a | n/a |
+| users-broad-100-group-mod | 5.35 ms / 6.4 MB | 5.18 ms / 6.4 MB | 5.47 ms / 3.7 MB | 4.61 ms / 5.0 MB | 5.48 ms / 7.1 MB | 12.9 ms / 53 MB | n/a | n/a |
+| users-broad-100-high-score | 4.74 ms / 4.8 MB | 4.58 ms / 4.8 MB | 5.46 ms / 3.6 MB | 4.91 ms / 4.8 MB | 5.28 ms / 7.1 MB | 13.2 ms / 41 MB | n/a | n/a |
+| users-broad-100-identity | 5.56 ms / 6.5 MB | 5.51 ms / 6.4 MB | 7.76 ms / 3.7 MB | 5.11 ms / 4.7 MB | 7.07 ms / 7.2 MB | 14.0 ms / 42 MB | n/a | n/a |
+| users-broad-100-ids | 5.42 ms / 4.8 MB | 4.90 ms / 4.8 MB | 5.84 ms / 3.6 MB | 4.67 ms / 4.7 MB | 5.43 ms / 7.1 MB | 11.1 ms / 37 MB | n/a | n/a |
+| users-broad-100-keys-len | 5.08 ms / 4.9 MB | 4.81 ms / 4.9 MB | 5.50 ms / 3.6 MB | 4.91 ms / 4.8 MB | 5.71 ms / 7.1 MB | 11.5 ms / 37 MB | n/a | n/a |
+| users-broad-100-keys-publish | 5.14 ms / 4.8 MB | 5.12 ms / 4.8 MB | 5.48 ms / 3.6 MB | 4.85 ms / 4.8 MB | 5.62 ms / 7.1 MB | disagreed | n/a | n/a |
+| users-broad-100-max-score | 5.07 ms / 5.1 MB | 4.99 ms / 5.1 MB | 6.20 ms / 3.6 MB | 4.96 ms / 4.9 MB | 5.29 ms / 7.1 MB | 11.3 ms / 37 MB | n/a | n/a |
+| users-broad-100-nested-dept | 4.66 ms / 4.7 MB | 4.49 ms / 4.7 MB | 5.58 ms / 3.6 MB | 4.66 ms / 4.7 MB | 5.18 ms / 7.1 MB | 10.4 ms / 37 MB | n/a | n/a |
+| users-broad-100-project-names | 4.72 ms / 4.8 MB | 5.23 ms / 4.8 MB | 6.10 ms / 3.6 MB | 4.97 ms / 4.7 MB | 5.10 ms / 7.2 MB | 10.6 ms / 37 MB | n/a | n/a |
+| users-broad-100-project-pair | 5.84 ms / 4.9 MB | 5.58 ms / 4.9 MB | 5.50 ms / 3.6 MB | 4.69 ms / 4.7 MB | 5.60 ms / 7.1 MB | 12.0 ms / 28 MB | n/a | n/a |
+| users-broad-100-reduce-score | 5.07 ms / 5.0 MB | 4.94 ms / 5.0 MB | 5.76 ms / 3.6 MB | 4.87 ms / 4.8 MB | 5.18 ms / 7.2 MB | n/a | n/a | n/a |
+| users-broad-100-reverse-id | 5.25 ms / 6.3 MB | 5.06 ms / 6.3 MB | 5.44 ms / 3.6 MB | 5.44 ms / 4.8 MB | 5.48 ms / 7.0 MB | 12.5 ms / 41 MB | n/a | n/a |
+| users-broad-100-select-id-stream | 5.03 ms / 4.8 MB | 4.86 ms / 4.8 MB | 5.89 ms / 3.6 MB | 5.01 ms / 4.7 MB | 5.22 ms / 7.1 MB | n/a | n/a | n/a |
+| users-broad-100-slice-length | 4.82 ms / 4.7 MB | 4.38 ms / 4.7 MB | 5.39 ms / 3.6 MB | 4.84 ms / 4.8 MB | 5.48 ms / 7.1 MB | 15.7 ms / 37 MB | n/a | n/a |
+| users-broad-100-sort-last | 5.81 ms / 6.4 MB | 5.18 ms / 6.3 MB | 5.45 ms / 3.7 MB | 4.68 ms / 5.0 MB | 5.42 ms / 7.0 MB | 11.0 ms / 41 MB | n/a | n/a |
+| users-broad-100-sum-score | 4.97 ms / 5.0 MB | 4.97 ms / 5.0 MB | 5.58 ms / 3.6 MB | 4.68 ms / 4.7 MB | 5.25 ms / 7.2 MB | n/a | n/a | n/a |
+| users-broad-100-type-path | 7.70 ms / 4.7 MB | 4.87 ms / 4.7 MB | 5.56 ms / 3.6 MB | 4.76 ms / 4.7 MB | 5.58 ms / 7.0 MB | disagreed | n/a | n/a |
+| users-broad-100-unique-scores | 4.86 ms / 6.1 MB | 5.26 ms / 6.1 MB | 5.50 ms / 3.6 MB | 4.66 ms / 4.9 MB | 5.56 ms / 7.1 MB | 12.0 ms / 37 MB | n/a | n/a |
+| users-broad-1k-all-nonneg | 6.75 ms / 5.8 MB | 6.71 ms / 5.8 MB | 15.5 ms / 12 MB | 9.64 ms / 13 MB | 13.6 ms / 15 MB | n/a | n/a | n/a |
+| users-broad-1k-any-high | 6.82 ms / 5.8 MB | 6.50 ms / 5.8 MB | 14.6 ms / 12 MB | 9.30 ms / 13 MB | 12.9 ms / 15 MB | n/a | n/a | n/a |
+| users-broad-1k-count | 6.03 ms / 5.6 MB | 5.95 ms / 5.6 MB | 14.2 ms / 12 MB | 9.02 ms / 13 MB | 13.4 ms / 15 MB | 28.2 ms / 72 MB | n/a | n/a |
+| users-broad-1k-descent | 10.3 ms / 13 MB | 9.94 ms / 13 MB | 23.0 ms / 16 MB | 12.7 ms / 15 MB | 30.8 ms / 24 MB | 71.8 ms / 220 MB | n/a | n/a |
+| users-broad-1k-filter-active | 6.64 ms / 5.8 MB | 6.18 ms / 5.8 MB | 14.3 ms / 12 MB | 10.2 ms / 13 MB | 13.2 ms / 15 MB | 34.7 ms / 100 MB | n/a | n/a |
+| users-broad-1k-first-id | 5.94 ms / 5.6 MB | 5.86 ms / 5.7 MB | 13.9 ms / 12 MB | 8.86 ms / 13 MB | 13.1 ms / 15 MB | 28.0 ms / 70 MB | n/a | n/a |
+| users-broad-1k-group-mod | 11.9 ms / 16 MB | 11.7 ms / 16 MB | 15.8 ms / 12 MB | 9.56 ms / 13 MB | 13.7 ms / 15 MB | 44.9 ms / 129 MB | n/a | n/a |
+| users-broad-1k-high-score | 6.26 ms / 5.8 MB | 6.14 ms / 5.8 MB | 15.6 ms / 12 MB | 9.21 ms / 13 MB | 13.2 ms / 15 MB | 37.4 ms / 110 MB | n/a | n/a |
+| users-broad-1k-identity | 14.5 ms / 18 MB | 15.0 ms / 18 MB | 34.4 ms / 13 MB | 12.9 ms / 13 MB | disagreed | 59.6 ms / 103 MB | n/a | n/a |
+| users-broad-1k-ids | 6.66 ms / 5.9 MB | 6.43 ms / 5.8 MB | 14.9 ms / 12 MB | 8.92 ms / 13 MB | 13.2 ms / 15 MB | 29.6 ms / 72 MB | n/a | n/a |
+| users-broad-1k-keys-len | 6.36 ms / 5.9 MB | 6.27 ms / 5.9 MB | 14.2 ms / 12 MB | 9.47 ms / 13 MB | 13.2 ms / 15 MB | 28.3 ms / 70 MB | n/a | n/a |
+| users-broad-1k-keys-publish | 6.74 ms / 5.7 MB | 6.40 ms / 5.7 MB | 14.2 ms / 12 MB | 8.94 ms / 13 MB | 12.8 ms / 15 MB | disagreed | n/a | n/a |
+| users-broad-1k-max-score | 7.37 ms / 6.4 MB | 7.54 ms / 6.4 MB | 15.3 ms / 12 MB | 9.24 ms / 13 MB | 13.1 ms / 15 MB | 29.6 ms / 72 MB | n/a | n/a |
+| users-broad-1k-nested-dept | 6.48 ms / 5.6 MB | 6.13 ms / 5.6 MB | 14.3 ms / 12 MB | 9.30 ms / 13 MB | 13.1 ms / 15 MB | 28.2 ms / 70 MB | n/a | n/a |
+| users-broad-1k-project-names | 6.51 ms / 5.9 MB | 6.85 ms / 5.9 MB | 14.9 ms / 12 MB | 9.79 ms / 13 MB | 13.2 ms / 15 MB | 29.7 ms / 72 MB | n/a | n/a |
+| users-broad-1k-project-pair | 6.88 ms / 6.1 MB | 6.86 ms / 6.1 MB | 16.1 ms / 13 MB | 10.1 ms / 13 MB | 13.1 ms / 15 MB | 42.3 ms / 109 MB | n/a | n/a |
+| users-broad-1k-reduce-score | 5.92 ms / 6.3 MB | 6.03 ms / 6.3 MB | 14.4 ms / 12 MB | 9.38 ms / 13 MB | 13.3 ms / 15 MB | n/a | n/a | n/a |
+| users-broad-1k-reverse-id | 11.3 ms / 16 MB | 11.7 ms / 16 MB | 15.5 ms / 12 MB | 9.34 ms / 13 MB | 12.8 ms / 15 MB | 36.8 ms / 101 MB | n/a | n/a |
+| users-broad-1k-select-id-stream | 7.58 ms / 5.9 MB | 7.94 ms / 5.9 MB | 15.7 ms / 12 MB | 10.1 ms / 13 MB | 14.0 ms / 15 MB | n/a | n/a | n/a |
+| users-broad-1k-slice-length | 6.63 ms / 5.7 MB | 7.45 ms / 5.7 MB | 14.8 ms / 12 MB | 8.88 ms / 13 MB | 12.7 ms / 15 MB | 28.7 ms / 74 MB | n/a | n/a |
+| users-broad-1k-sort-last | 11.7 ms / 16 MB | 11.1 ms / 15 MB | 21.2 ms / 12 MB | 9.32 ms / 13 MB | 13.7 ms / 15 MB | 37.3 ms / 112 MB | n/a | n/a |
+| users-broad-1k-sum-score | 5.94 ms / 6.3 MB | 6.20 ms / 6.3 MB | 14.7 ms / 12 MB | 9.24 ms / 13 MB | 13.3 ms / 15 MB | n/a | n/a | n/a |
+| users-broad-1k-type-path | 6.39 ms / 5.6 MB | 6.29 ms / 5.6 MB | 14.3 ms / 12 MB | 9.11 ms / 13 MB | 13.1 ms / 15 MB | disagreed | n/a | n/a |
+| users-broad-1k-unique-scores | 9.76 ms / 14 MB | 9.82 ms / 14 MB | 17.0 ms / 12 MB | 9.07 ms / 13 MB | 13.2 ms / 15 MB | 29.6 ms / 73 MB | n/a | n/a |
+| users-broad-5k-all-nonneg | 15.2 ms / 10 MB | 14.0 ms / 10 MB | 54.3 ms / 50 MB | 29.5 ms / 51 MB | 43.7 ms / 42 MB | n/a | n/a | n/a |
+| users-broad-5k-any-high | 13.9 ms / 10 MB | 13.8 ms / 10 MB | 51.8 ms / 50 MB | 25.7 ms / 51 MB | 43.1 ms / 41 MB | n/a | n/a | n/a |
+| users-broad-5k-count | 14.7 ms / 10.0 MB | 13.3 ms / 9.9 MB | 52.9 ms / 50 MB | 25.7 ms / 51 MB | 42.6 ms / 41 MB | 98.4 ms / 218 MB | n/a | n/a |
+| users-broad-5k-descent | 30.2 ms / 43 MB | 30.0 ms / 43 MB | 90.2 ms / 74 MB | 41.0 ms / 63 MB | 122 ms / 78 MB | 327 ms / 914 MB | n/a | n/a |
+| users-broad-5k-filter-active | 15.6 ms / 10 MB | 13.9 ms / 10 MB | 54.4 ms / 50 MB | 29.5 ms / 51 MB | 44.4 ms / 42 MB | 133 ms / 334 MB | n/a | n/a |
+| users-broad-5k-first-id | 14.0 ms / 9.9 MB | 12.8 ms / 10.0 MB | 51.6 ms / 50 MB | 25.7 ms / 50 MB | 42.2 ms / 41 MB | 96.4 ms / 217 MB | n/a | n/a |
+| users-broad-5k-group-mod | 40.3 ms / 64 MB | 40.0 ms / 64 MB | 57.6 ms / 50 MB | 32.0 ms / 52 MB | 45.1 ms / 42 MB | 185 ms / 488 MB | n/a | n/a |
+| users-broad-5k-high-score | 14.7 ms / 10 MB | 14.0 ms / 10 MB | 55.7 ms / 50 MB | 28.4 ms / 51 MB | 44.6 ms / 41 MB | 139 ms / 377 MB | n/a | n/a |
+| users-broad-5k-identity | 49.3 ms / 66 MB | 48.3 ms / 66 MB | 152 ms / 55 MB | 45.6 ms / 50 MB | disagreed | 248 ms / 374 MB | n/a | n/a |
+| users-broad-5k-ids | 16.8 ms / 11 MB | 15.7 ms / 11 MB | 52.9 ms / 50 MB | 26.2 ms / 51 MB | 43.6 ms / 41 MB | 106 ms / 228 MB | n/a | n/a |
+| users-broad-5k-keys-len | 14.0 ms / 10 MB | 13.1 ms / 10 MB | 51.5 ms / 50 MB | 25.9 ms / 51 MB | 42.5 ms / 42 MB | 97.2 ms / 218 MB | n/a | n/a |
+| users-broad-5k-keys-publish | 14.5 ms / 10 MB | 13.3 ms / 10 MB | 51.8 ms / 50 MB | 25.8 ms / 51 MB | 43.2 ms / 41 MB | disagreed | n/a | n/a |
+| users-broad-5k-max-score | 19.8 ms / 12 MB | 18.6 ms / 13 MB | 54.1 ms / 50 MB | 26.9 ms / 51 MB | 44.1 ms / 42 MB | 104 ms / 233 MB | n/a | n/a |
+| users-broad-5k-nested-dept | 13.9 ms / 10.0 MB | 13.4 ms / 10.0 MB | 51.6 ms / 50 MB | 25.9 ms / 50 MB | 42.8 ms / 41 MB | 95.3 ms / 222 MB | n/a | n/a |
+| users-broad-5k-project-names | 16.1 ms / 11 MB | 15.1 ms / 11 MB | 54.7 ms / 50 MB | 27.3 ms / 51 MB | 45.2 ms / 42 MB | 107 ms / 229 MB | n/a | n/a |
+| users-broad-5k-project-pair | 16.9 ms / 12 MB | 16.5 ms / 12 MB | 59.1 ms / 52 MB | 30.0 ms / 51 MB | 44.7 ms / 43 MB | 164 ms / 338 MB | n/a | n/a |
+| users-broad-5k-reduce-score | 13.0 ms / 12 MB | 13.0 ms / 12 MB | 53.8 ms / 50 MB | 27.6 ms / 51 MB | 45.2 ms / 41 MB | n/a | n/a | n/a |
+| users-broad-5k-reverse-id | 37.4 ms / 63 MB | 35.3 ms / 63 MB | 52.9 ms / 50 MB | 26.6 ms / 51 MB | 42.3 ms / 42 MB | 136 ms / 393 MB | n/a | n/a |
+| users-broad-5k-select-id-stream | 19.5 ms / 10 MB | 17.9 ms / 10 MB | 53.8 ms / 50 MB | 30.3 ms / 51 MB | 47.0 ms / 42 MB | n/a | n/a | n/a |
+| users-broad-5k-slice-length | 14.2 ms / 10.0 MB | 13.0 ms / 10.0 MB | 52.0 ms / 50 MB | 25.5 ms / 51 MB | 41.6 ms / 41 MB | 102 ms / 242 MB | n/a | n/a |
+| users-broad-5k-sort-last | 37.1 ms / 63 MB | 37.0 ms / 63 MB | 59.1 ms / 50 MB | 30.1 ms / 51 MB | 47.2 ms / 42 MB | 148 ms / 379 MB | n/a | n/a |
+| users-broad-5k-sum-score | 13.4 ms / 12 MB | 12.5 ms / 12 MB | 54.3 ms / 50 MB | 26.7 ms / 51 MB | 43.3 ms / 42 MB | n/a | n/a | n/a |
+| users-broad-5k-type-path | 13.6 ms / 9.9 MB | 13.2 ms / 10.0 MB | 51.9 ms / 50 MB | 26.1 ms / 51 MB | 43.0 ms / 41 MB | disagreed | n/a | n/a |
+| users-broad-5k-unique-scores | 30.5 ms / 46 MB | 29.5 ms / 46 MB | 54.8 ms / 50 MB | 27.1 ms / 51 MB | 46.4 ms / 42 MB | 106 ms / 229 MB | n/a | n/a |
+| users-broad-25k-all-nonneg | 45.7 ms / 32 MB | 45.4 ms / 32 MB | 239 ms / 237 MB | 121 ms / 239 MB | 185 ms / 181 MB | n/a | n/a | n/a |
+| users-broad-25k-any-high | 46.4 ms / 32 MB | 46.3 ms / 32 MB | 229 ms / 237 MB | 104 ms / 239 MB | 176 ms / 180 MB | n/a | n/a | n/a |
+| users-broad-25k-count | 43.6 ms / 31 MB | 43.2 ms / 31 MB | 228 ms / 237 MB | 102 ms / 239 MB | 180 ms / 179 MB | 437 ms / 946 MB | n/a | n/a |
+| users-broad-25k-descent | 121 ms / 191 MB | 123 ms / 189 MB | 422 ms / 371 MB | 177 ms / 299 MB | 577 ms / 387 MB | excluded | n/a | n/a |
+| users-broad-25k-filter-active | 45.3 ms / 32 MB | 45.0 ms / 32 MB | 244 ms / 237 MB | 120 ms / 239 MB | 182 ms / 182 MB | excluded | n/a | n/a |
+| users-broad-25k-first-id | 43.0 ms / 32 MB | 42.9 ms / 32 MB | 227 ms / 237 MB | 102 ms / 238 MB | 178 ms / 179 MB | 447 ms / 941 MB | n/a | n/a |
+| users-broad-25k-group-mod | 177 ms / 268 MB | 176 ms / 237 MB | 262 ms / 239 MB | 133 ms / 243 MB | 193 ms / 187 MB | 838 ms / 2193 MB | n/a | n/a |
+| users-broad-25k-high-score | 45.6 ms / 32 MB | 45.3 ms / 32 MB | 242 ms / 237 MB | 119 ms / 239 MB | 189 ms / 183 MB | excluded | n/a | n/a |
+| users-broad-25k-identity | 212 ms / 284 MB | 210 ms / 257 MB | 672 ms / 266 MB | 196 ms / 238 MB | disagreed | excluded | n/a | n/a |
+| users-broad-25k-ids | 48.1 ms / 34 MB | 48.0 ms / 34 MB | 235 ms / 237 MB | 105 ms / 239 MB | 182 ms / 183 MB | 474 ms / 990 MB | n/a | n/a |
+| users-broad-25k-keys-len | 43.5 ms / 32 MB | 43.2 ms / 32 MB | 229 ms / 237 MB | 106 ms / 239 MB | 177 ms / 179 MB | 437 ms / 942 MB | n/a | n/a |
+| users-broad-25k-keys-publish | 44.0 ms / 32 MB | 44.1 ms / 32 MB | 227 ms / 237 MB | 104 ms / 239 MB | 175 ms / 179 MB | disagreed | n/a | n/a |
+| users-broad-25k-max-score | 68.5 ms / 41 MB | 68.3 ms / 41 MB | 235 ms / 237 MB | 108 ms / 239 MB | 183 ms / 183 MB | 469 ms / 1011 MB | n/a | n/a |
+| users-broad-25k-nested-dept | 43.2 ms / 32 MB | 43.2 ms / 32 MB | 228 ms / 237 MB | 104 ms / 238 MB | 180 ms / 179 MB | 444 ms / 948 MB | n/a | n/a |
+| users-broad-25k-project-names | 48.4 ms / 35 MB | 48.6 ms / 35 MB | 240 ms / 237 MB | 109 ms / 239 MB | 184 ms / 183 MB | 479 ms / 997 MB | n/a | n/a |
+| users-broad-25k-project-pair | 58.0 ms / 39 MB | 57.9 ms / 39 MB | 268 ms / 248 MB | 123 ms / 239 MB | 189 ms / 196 MB | 758 ms / 1376 MB | n/a | n/a |
+| users-broad-25k-reduce-score | 38.1 ms / 37 MB | 37.5 ms / 38 MB | 235 ms / 237 MB | 109 ms / 239 MB | 185 ms / 181 MB | n/a | n/a | n/a |
+| users-broad-25k-reverse-id | 147 ms / 264 MB | 147 ms / 250 MB | 232 ms / 238 MB | 107 ms / 239 MB | 176 ms / 179 MB | 620 ms / 1831 MB | n/a | n/a |
+| users-broad-25k-select-id-stream | 66.6 ms / 34 MB | 66.5 ms / 34 MB | 240 ms / 238 MB | 125 ms / 239 MB | 205 ms / 181 MB | n/a | n/a | n/a |
+| users-broad-25k-slice-length | 44.2 ms / 32 MB | 44.0 ms / 32 MB | 230 ms / 237 MB | 103 ms / 239 MB | 177 ms / 179 MB | 456 ms / 1042 MB | n/a | n/a |
+| users-broad-25k-sort-last | 167 ms / 265 MB | 165 ms / 238 MB | 266 ms / 239 MB | 133 ms / 241 MB | 206 ms / 190 MB | 714 ms / 1792 MB | n/a | n/a |
+| users-broad-25k-sum-score | 38.0 ms / 38 MB | 37.5 ms / 38 MB | 237 ms / 237 MB | 106 ms / 239 MB | 183 ms / 183 MB | n/a | n/a | n/a |
+| users-broad-25k-type-path | 43.2 ms / 32 MB | 43.2 ms / 32 MB | 224 ms / 237 MB | 101 ms / 238 MB | 174 ms / 179 MB | disagreed | n/a | n/a |
+| users-broad-25k-unique-scores | 122 ms / 192 MB | 121 ms / 191 MB | 245 ms / 238 MB | 106 ms / 239 MB | 198 ms / 188 MB | 474 ms / 987 MB | n/a | n/a |
+| users-broad-50k-all-nonneg | 83.6 ms / 59 MB | 83.7 ms / 59 MB | 478 ms / 472 MB | 236 ms / 475 MB | 367 ms / 354 MB | n/a | n/a | n/a |
+| users-broad-50k-any-high | 84.2 ms / 59 MB | 83.7 ms / 59 MB | 443 ms / 472 MB | 200 ms / 474 MB | 343 ms / 351 MB | n/a | n/a | n/a |
+| users-broad-50k-count | 78.9 ms / 58 MB | 79.4 ms / 58 MB | 445 ms / 472 MB | 199 ms / 473 MB | 347 ms / 349 MB | excluded | n/a | n/a |
+| users-broad-50k-descent | 233 ms / 366 MB | 235 ms / 369 MB | 848 ms / 764 MB | 349 ms / 591 MB | 1140 ms / 723 MB | excluded | n/a | n/a |
+| users-broad-50k-filter-active | 84.1 ms / 59 MB | 83.8 ms / 59 MB | 479 ms / 473 MB | 233 ms / 475 MB | 361 ms / 356 MB | excluded | n/a | n/a |
+| users-broad-50k-first-id | 79.0 ms / 58 MB | 79.1 ms / 58 MB | 453 ms / 472 MB | 197 ms / 473 MB | 343 ms / 349 MB | excluded | n/a | n/a |
+| users-broad-50k-group-mod | 344 ms / 492 MB | 343 ms / 492 MB | 520 ms / 476 MB | 258 ms / 481 MB | 370 ms / 366 MB | 1718 ms / 4106 MB | n/a | n/a |
+| users-broad-50k-high-score | 83.9 ms / 59 MB | 84.6 ms / 59 MB | 476 ms / 473 MB | 230 ms / 475 MB | 359 ms / 358 MB | excluded | n/a | n/a |
+| users-broad-50k-identity | 412 ms / 499 MB | 411 ms / 499 MB | 1322 ms / 529 MB | 398 ms / 473 MB | disagreed | excluded | n/a | n/a |
+| users-broad-50k-ids | 88.0 ms / 64 MB | 88.0 ms / 64 MB | 460 ms / 473 MB | 202 ms / 474 MB | 349 ms / 358 MB | 947 ms / 1924 MB | n/a | n/a |
+| users-broad-50k-keys-len | 79.1 ms / 59 MB | 79.5 ms / 59 MB | 451 ms / 472 MB | 198 ms / 474 MB | 339 ms / 350 MB | 871 ms / 1829 MB | n/a | n/a |
+| users-broad-50k-keys-publish | 79.4 ms / 59 MB | 79.9 ms / 59 MB | 445 ms / 472 MB | 199 ms / 474 MB | 346 ms / 349 MB | disagreed | n/a | n/a |
+| users-broad-50k-max-score | 133 ms / 78 MB | 130 ms / 78 MB | 464 ms / 473 MB | 210 ms / 474 MB | 359 ms / 359 MB | 948 ms / 1988 MB | n/a | n/a |
+| users-broad-50k-nested-dept | 80.1 ms / 58 MB | 80.2 ms / 58 MB | 453 ms / 472 MB | 198 ms / 473 MB | 344 ms / 349 MB | 870 ms / 1831 MB | n/a | n/a |
+| users-broad-50k-project-names | 89.7 ms / 65 MB | 89.6 ms / 65 MB | 474 ms / 473 MB | 209 ms / 474 MB | 358 ms / 358 MB | 935 ms / 1933 MB | n/a | n/a |
+| users-broad-50k-project-pair | 108 ms / 72 MB | 107 ms / 72 MB | 508 ms / 494 MB | 237 ms / 474 MB | 371 ms / 384 MB | 1533 ms / 2720 MB | n/a | n/a |
+| users-broad-50k-reduce-score | 68.2 ms / 70 MB | 68.2 ms / 70 MB | 472 ms / 472 MB | 210 ms / 474 MB | 356 ms / 354 MB | n/a | n/a | n/a |
+| users-broad-50k-reverse-id | 288 ms / 486 MB | 288 ms / 486 MB | 458 ms / 473 MB | 210 ms / 474 MB | 348 ms / 350 MB | 1255 ms / 3462 MB | n/a | n/a |
+| users-broad-50k-select-id-stream | 122 ms / 63 MB | 122 ms / 63 MB | 474 ms / 473 MB | 243 ms / 473 MB | 384 ms / 354 MB | n/a | n/a | n/a |
+| users-broad-50k-slice-length | 78.7 ms / 59 MB | 78.9 ms / 59 MB | 448 ms / 472 MB | 200 ms / 474 MB | 340 ms / 349 MB | excluded | n/a | n/a |
+| users-broad-50k-sort-last | 332 ms / 487 MB | 329 ms / 487 MB | 548 ms / 477 MB | 259 ms / 478 MB | 411 ms / 372 MB | 1404 ms / 3487 MB | n/a | n/a |
+| users-broad-50k-sum-score | 70.1 ms / 70 MB | 71.2 ms / 70 MB | 471 ms / 473 MB | 209 ms / 474 MB | 357 ms / 358 MB | n/a | n/a | n/a |
+| users-broad-50k-type-path | 79.2 ms / 58 MB | 79.0 ms / 58 MB | 450 ms / 472 MB | 196 ms / 473 MB | 337 ms / 349 MB | disagreed | n/a | n/a |
+| users-broad-50k-unique-scores | 235 ms / 379 MB | 234 ms / 379 MB | 486 ms / 473 MB | 205 ms / 474 MB | 398 ms / 369 MB | 950 ms / 1928 MB | n/a | n/a |
+| users-broad-100k-all-nonneg | 159 ms / 113 MB | 158 ms / 113 MB | 935 ms / 943 MB | 466 ms / 945 MB | 699 ms / 697 MB | n/a | n/a | n/a |
+| users-broad-100k-any-high | 160 ms / 113 MB | 159 ms / 113 MB | 903 ms / 943 MB | 392 ms / 945 MB | 673 ms / 693 MB | n/a | n/a | n/a |
+| users-broad-100k-count | 150 ms / 112 MB | 150 ms / 112 MB | 888 ms / 943 MB | 393 ms / 943 MB | 677 ms / 689 MB | excluded | n/a | n/a |
+| users-broad-100k-descent | 459 ms / 699 MB | 456 ms / 699 MB | 1706 ms / 1583 MB | 693 ms / 1180 MB | 2296 ms / 1485 MB | excluded | n/a | n/a |
+| users-broad-100k-filter-active | 160 ms / 113 MB | 158 ms / 113 MB | 950 ms / 943 MB | 461 ms / 946 MB | 694 ms / 704 MB | excluded | n/a | n/a |
+| users-broad-100k-first-id | 150 ms / 112 MB | 150 ms / 112 MB | 883 ms / 943 MB | 385 ms / 943 MB | 667 ms / 689 MB | excluded | n/a | n/a |
+| users-broad-100k-group-mod | 677 ms / 913 MB | 676 ms / 913 MB | 1034 ms / 951 MB | 510 ms / 959 MB | 750 ms / 722 MB | 3452 ms / 8712 MB | n/a | n/a |
+| users-broad-100k-high-score | 159 ms / 113 MB | 159 ms / 113 MB | 936 ms / 943 MB | 453 ms / 946 MB | 717 ms / 707 MB | excluded | n/a | n/a |
+| users-broad-100k-identity | 814 ms / 977 MB | 815 ms / 977 MB | 2596 ms / 1057 MB | 754 ms / 943 MB | disagreed | excluded | n/a | n/a |
+| users-broad-100k-ids | 168 ms / 123 MB | 169 ms / 123 MB | 942 ms / 944 MB | 394 ms / 943 MB | 690 ms / 706 MB | 1898 ms / 3852 MB | n/a | n/a |
+| users-broad-100k-keys-len | 151 ms / 113 MB | 159 ms / 113 MB | 890 ms / 943 MB | 392 ms / 943 MB | 673 ms / 689 MB | 1728 ms / 3653 MB | n/a | n/a |
+| users-broad-100k-keys-publish | 152 ms / 112 MB | 151 ms / 113 MB | 896 ms / 943 MB | 390 ms / 943 MB | 677 ms / 689 MB | disagreed | n/a | n/a |
+| users-broad-100k-max-score | 250 ms / 150 MB | 250 ms / 150 MB | 936 ms / 944 MB | 409 ms / 944 MB | 703 ms / 708 MB | 1895 ms / 3914 MB | n/a | n/a |
+| users-broad-100k-nested-dept | 151 ms / 112 MB | 150 ms / 112 MB | 882 ms / 943 MB | 389 ms / 943 MB | 675 ms / 689 MB | 1704 ms / 3642 MB | n/a | n/a |
+| users-broad-100k-project-names | 171 ms / 123 MB | 170 ms / 123 MB | 949 ms / 944 MB | 413 ms / 943 MB | 694 ms / 706 MB | 1902 ms / 3938 MB | n/a | n/a |
+| users-broad-100k-project-pair | 210 ms / 140 MB | 207 ms / 140 MB | 1015 ms / 988 MB | 465 ms / 944 MB | 735 ms / 758 MB | 3050 ms / 5371 MB | n/a | n/a |
+| users-broad-100k-reduce-score | 129 ms / 136 MB | 130 ms / 136 MB | 952 ms / 943 MB | 418 ms / 945 MB | 721 ms / 698 MB | n/a | n/a | n/a |
+| users-broad-100k-reverse-id | 566 ms / 906 MB | 566 ms / 906 MB | 925 ms / 944 MB | 410 ms / 943 MB | 673 ms / 690 MB | 2428 ms / 6963 MB | n/a | n/a |
+| users-broad-100k-select-id-stream | 236 ms / 121 MB | 236 ms / 121 MB | 937 ms / 945 MB | 480 ms / 943 MB | 761 ms / 697 MB | n/a | n/a | n/a |
+| users-broad-100k-slice-length | 149 ms / 112 MB | 150 ms / 112 MB | 886 ms / 943 MB | 389 ms / 944 MB | 665 ms / 689 MB | excluded | n/a | n/a |
+| users-broad-100k-sort-last | 645 ms / 915 MB | 641 ms / 915 MB | 1102 ms / 951 MB | 512 ms / 953 MB | 829 ms / 734 MB | 2810 ms / 7036 MB | n/a | n/a |
+| users-broad-100k-sum-score | 130 ms / 136 MB | 131 ms / 136 MB | 942 ms / 944 MB | 401 ms / 944 MB | 684 ms / 707 MB | n/a | n/a | n/a |
+| users-broad-100k-type-path | 150 ms / 112 MB | 150 ms / 112 MB | 881 ms / 943 MB | 390 ms / 943 MB | 686 ms / 689 MB | disagreed | n/a | n/a |
+| users-broad-100k-unique-scores | 459 ms / 724 MB | 459 ms / 724 MB | 981 ms / 946 MB | 404 ms / 944 MB | 808 ms / 729 MB | 1868 ms / 3844 MB | n/a | n/a |
+| users-broad-200k-all-nonneg | 308 ms / 221 MB | 307 ms / 221 MB | 1840 ms / 1882 MB | 919 ms / 1887 MB | 1396 ms / 1385 MB | n/a | n/a | n/a |
+| users-broad-200k-any-high | 311 ms / 221 MB | 308 ms / 221 MB | 1779 ms / 1882 MB | 775 ms / 1887 MB | 1344 ms / 1376 MB | n/a | n/a | n/a |
+| users-broad-200k-count | 289 ms / 221 MB | 290 ms / 221 MB | 1783 ms / 1882 MB | 781 ms / 1884 MB | 1342 ms / 1368 MB | excluded | n/a | n/a |
+| users-broad-200k-descent | 902 ms / 1379 MB | 908 ms / 1379 MB | 3368 ms / 2923 MB | 1379 ms / 2357 MB | 4537 ms / 2861 MB | excluded | n/a | n/a |
+| users-broad-200k-filter-active | 304 ms / 221 MB | 303 ms / 221 MB | 1922 ms / 1882 MB | 903 ms / 1889 MB | 1388 ms / 1398 MB | excluded | n/a | n/a |
+| users-broad-200k-first-id | 291 ms / 221 MB | 291 ms / 221 MB | 1761 ms / 1882 MB | 768 ms / 1884 MB | 1334 ms / 1369 MB | excluded | n/a | n/a |
+| users-broad-200k-group-mod | 1344 ms / 1803 MB | 1347 ms / 1803 MB | 2083 ms / 1900 MB | 1019 ms / 1913 MB | 1444 ms / 1440 MB | 6778 ms / 17290 MB | n/a | n/a |
+| users-broad-200k-high-score | 306 ms / 221 MB | 305 ms / 221 MB | 1874 ms / 1884 MB | 903 ms / 1889 MB | 1441 ms / 1403 MB | excluded | n/a | n/a |
+| users-broad-200k-identity | 1637 ms / 1934 MB | 1631 ms / 1934 MB | 5229 ms / 2110 MB | 1501 ms / 1883 MB | disagreed | excluded | n/a | n/a |
+| users-broad-200k-ids | 333 ms / 241 MB | 330 ms / 241 MB | 1863 ms / 1885 MB | 786 ms / 1884 MB | 1374 ms / 1402 MB | 3734 ms / 7670 MB | n/a | n/a |
+| users-broad-200k-keys-len | 295 ms / 221 MB | 292 ms / 221 MB | 1763 ms / 1882 MB | 774 ms / 1884 MB | 1322 ms / 1368 MB | 3408 ms / 7311 MB | n/a | n/a |
+| users-broad-200k-keys-publish | 294 ms / 221 MB | 297 ms / 221 MB | 1789 ms / 1882 MB | 777 ms / 1884 MB | 1328 ms / 1369 MB | disagreed | n/a | n/a |
+| users-broad-200k-max-score | 497 ms / 286 MB | 497 ms / 286 MB | 1831 ms / 1885 MB | 818 ms / 1884 MB | 1384 ms / 1406 MB | 3741 ms / 7806 MB | n/a | n/a |
+| users-broad-200k-nested-dept | 291 ms / 221 MB | 292 ms / 221 MB | 1751 ms / 1882 MB | 769 ms / 1884 MB | 1327 ms / 1369 MB | 3415 ms / 7287 MB | n/a | n/a |
+| users-broad-200k-project-names | 336 ms / 241 MB | 338 ms / 241 MB | 1889 ms / 1885 MB | 809 ms / 1884 MB | 1401 ms / 1402 MB | 3741 ms / 7728 MB | n/a | n/a |
+| users-broad-200k-project-pair | 404 ms / 280 MB | 406 ms / 280 MB | 2050 ms / 1972 MB | 925 ms / 1887 MB | 1425 ms / 1506 MB | 6065 ms / 11217 MB | n/a | n/a |
+| users-broad-200k-reduce-score | 251 ms / 263 MB | 250 ms / 263 MB | 1845 ms / 1882 MB | 820 ms / 1887 MB | 1394 ms / 1387 MB | n/a | n/a | n/a |
+| users-broad-200k-reverse-id | 1129 ms / 1803 MB | 1126 ms / 1803 MB | 1813 ms / 1885 MB | 811 ms / 1884 MB | 1310 ms / 1371 MB | 4856 ms / 13904 MB | n/a | n/a |
+| users-broad-200k-select-id-stream | 463 ms / 244 MB | 466 ms / 244 MB | 1874 ms / 1886 MB | 948 ms / 1884 MB | 1520 ms / 1385 MB | n/a | n/a | n/a |
+| users-broad-200k-slice-length | 293 ms / 221 MB | 293 ms / 221 MB | 1773 ms / 1882 MB | 773 ms / 1884 MB | 1333 ms / 1369 MB | excluded | n/a | n/a |
+| users-broad-200k-sort-last | 1287 ms / 1828 MB | 1282 ms / 1828 MB | 2246 ms / 1899 MB | 1025 ms / 1902 MB | 1763 ms / 1459 MB | 5702 ms / 14107 MB | n/a | n/a |
+| users-broad-200k-sum-score | 253 ms / 263 MB | 254 ms / 263 MB | 1884 ms / 1885 MB | 798 ms / 1884 MB | 1384 ms / 1405 MB | n/a | n/a | n/a |
+| users-broad-200k-type-path | 290 ms / 221 MB | 290 ms / 221 MB | 1776 ms / 1882 MB | 769 ms / 1884 MB | 1343 ms / 1368 MB | disagreed | n/a | n/a |
+| users-broad-200k-unique-scores | 915 ms / 1446 MB | 911 ms / 1446 MB | 1987 ms / 1885 MB | 796 ms / 1884 MB | 1656 ms / 1450 MB | 3693 ms / 7649 MB | n/a | n/a |
+| users-narrow-100-all-nonneg | 3.26 ms / 4.8 MB | 3.44 ms / 4.8 MB | 3.66 ms / 2.7 MB | 3.05 ms / 4.2 MB | 3.44 ms / 6.3 MB | n/a | n/a | n/a |
+| users-narrow-100-any-high | 3.10 ms / 4.8 MB | 3.94 ms / 4.8 MB | 3.42 ms / 2.6 MB | 3.07 ms / 4.2 MB | 3.62 ms / 6.3 MB | n/a | n/a | n/a |
+| users-narrow-100-count | 3.01 ms / 4.5 MB | 3.07 ms / 4.5 MB | 3.21 ms / 2.7 MB | 2.76 ms / 4.0 MB | 3.24 ms / 6.1 MB | 6.34 ms / 24 MB | n/a | n/a |
+| users-narrow-100-descent | 3.44 ms / 4.7 MB | 3.55 ms / 4.8 MB | 3.36 ms / 2.7 MB | 3.05 ms / 4.0 MB | 3.39 ms / 6.4 MB | 7.31 ms / 30 MB | n/a | n/a |
+| users-narrow-100-filter-active | 3.19 ms / 4.7 MB | 3.66 ms / 4.7 MB | 5.31 ms / 2.7 MB | 3.99 ms / 4.0 MB | 3.44 ms / 6.3 MB | 6.96 ms / 27 MB | n/a | n/a |
+| users-narrow-100-first-id | 2.99 ms / 4.5 MB | 2.94 ms / 4.5 MB | 2.87 ms / 2.6 MB | 2.95 ms / 3.9 MB | 3.11 ms / 6.0 MB | 6.54 ms / 27 MB | n/a | n/a |
+| users-narrow-100-group-mod | 3.42 ms / 5.0 MB | 3.80 ms / 5.0 MB | 3.46 ms / 2.7 MB | 2.98 ms / 4.2 MB | 3.55 ms / 6.3 MB | 7.23 ms / 34 MB | n/a | n/a |
+| users-narrow-100-high-score | 3.42 ms / 4.7 MB | 3.31 ms / 4.7 MB | 3.36 ms / 2.7 MB | 2.92 ms / 4.0 MB | 3.29 ms / 6.3 MB | 7.69 ms / 33 MB | n/a | n/a |
+| users-narrow-100-identity | 3.61 ms / 4.4 MB | 3.42 ms / 4.4 MB | 3.69 ms / 2.7 MB | 3.16 ms / 3.9 MB | 3.63 ms / 6.2 MB | 7.01 ms / 29 MB | n/a | n/a |
+| users-narrow-100-ids | 3.15 ms / 4.7 MB | 2.92 ms / 4.7 MB | 3.11 ms / 2.7 MB | 3.36 ms / 3.9 MB | 3.33 ms / 6.0 MB | 6.52 ms / 33 MB | n/a | n/a |
+| users-narrow-100-keys-len | 3.49 ms / 4.8 MB | 3.42 ms / 4.8 MB | 3.45 ms / 2.7 MB | 2.92 ms / 4.0 MB | 3.59 ms / 6.0 MB | 6.68 ms / 26 MB | n/a | n/a |
+| users-narrow-100-keys-publish | 2.95 ms / 4.6 MB | 3.33 ms / 4.6 MB | 3.10 ms / 2.7 MB | 3.17 ms / 4.0 MB | 6.07 ms / 6.3 MB | 7.10 ms / 29 MB | n/a | n/a |
+| users-narrow-100-max-score | 3.55 ms / 5.0 MB | 3.15 ms / 5.0 MB | 3.31 ms / 2.7 MB | 3.24 ms / 4.1 MB | 3.76 ms / 6.2 MB | 6.88 ms / 29 MB | n/a | n/a |
+| users-narrow-100-nested-dept | 3.56 ms / 4.6 MB | 3.68 ms / 4.6 MB | 3.21 ms / 2.6 MB | 3.32 ms / 3.9 MB | 3.14 ms / 6.1 MB | 6.62 ms / 31 MB | n/a | n/a |
+| users-narrow-100-project-names | 3.46 ms / 4.7 MB | 3.32 ms / 4.7 MB | 3.36 ms / 2.7 MB | 2.98 ms / 3.9 MB | 3.16 ms / 6.2 MB | 6.20 ms / 25 MB | n/a | n/a |
+| users-narrow-100-project-pair | 3.14 ms / 4.8 MB | 3.18 ms / 4.8 MB | 3.28 ms / 2.7 MB | 4.05 ms / 3.9 MB | 3.49 ms / 6.1 MB | 8.39 ms / 36 MB | n/a | n/a |
+| users-narrow-100-reduce-score | 3.77 ms / 4.8 MB | 3.65 ms / 4.9 MB | 3.08 ms / 2.6 MB | 3.24 ms / 3.9 MB | 3.08 ms / 6.0 MB | n/a | n/a | n/a |
+| users-narrow-100-reverse-id | 3.14 ms / 4.8 MB | 3.19 ms / 4.9 MB | 3.49 ms / 2.7 MB | 3.40 ms / 4.0 MB | 3.16 ms / 6.1 MB | 6.60 ms / 30 MB | n/a | n/a |
+| users-narrow-100-select-id-stream | 3.45 ms / 4.6 MB | 3.86 ms / 4.6 MB | 3.36 ms / 2.6 MB | 2.88 ms / 3.9 MB | 3.16 ms / 6.1 MB | n/a | n/a | n/a |
+| users-narrow-100-slice-length | 3.30 ms / 4.6 MB | 3.02 ms / 4.6 MB | 2.93 ms / 2.7 MB | 3.00 ms / 4.0 MB | 3.08 ms / 6.2 MB | 6.74 ms / 30 MB | n/a | n/a |
+| users-narrow-100-sort-last | 3.05 ms / 4.9 MB | 3.34 ms / 4.9 MB | 3.62 ms / 2.7 MB | 2.92 ms / 4.2 MB | 3.22 ms / 6.3 MB | 6.76 ms / 32 MB | n/a | n/a |
+| users-narrow-100-sum-score | 3.41 ms / 4.8 MB | 3.18 ms / 4.8 MB | 3.09 ms / 2.7 MB | 2.96 ms / 3.9 MB | 3.25 ms / 6.1 MB | n/a | n/a | n/a |
+| users-narrow-100-type-path | 3.67 ms / 4.6 MB | 3.40 ms / 4.5 MB | 3.12 ms / 2.6 MB | 2.96 ms / 3.9 MB | 3.14 ms / 6.1 MB | disagreed | n/a | n/a |
+| users-narrow-100-unique-scores | 3.13 ms / 5.0 MB | 3.00 ms / 5.0 MB | 2.98 ms / 2.7 MB | 2.88 ms / 4.1 MB | 3.79 ms / 6.2 MB | 7.16 ms / 31 MB | n/a | n/a |
+| users-narrow-1k-all-nonneg | 3.28 ms / 4.8 MB | 3.52 ms / 4.8 MB | 4.00 ms / 3.3 MB | 3.56 ms / 4.5 MB | 4.38 ms / 6.8 MB | n/a | n/a | n/a |
+| users-narrow-1k-any-high | 3.50 ms / 4.8 MB | 3.35 ms / 4.8 MB | 3.59 ms / 3.4 MB | 3.40 ms / 4.5 MB | 3.63 ms / 6.9 MB | n/a | n/a | n/a |
+| users-narrow-1k-count | 3.32 ms / 4.6 MB | 3.55 ms / 4.5 MB | 3.77 ms / 3.3 MB | 3.26 ms / 4.2 MB | 3.79 ms / 6.6 MB | 7.08 ms / 19 MB | n/a | n/a |
+| users-narrow-1k-descent | 3.64 ms / 5.3 MB | 3.93 ms / 5.4 MB | 4.10 ms / 3.5 MB | 3.58 ms / 4.3 MB | 4.39 ms / 7.7 MB | 10.1 ms / 46 MB | n/a | n/a |
+| users-narrow-1k-filter-active | 3.82 ms / 4.7 MB | 3.30 ms / 4.7 MB | 3.95 ms / 3.3 MB | 3.72 ms / 4.3 MB | 3.64 ms / 6.8 MB | 8.31 ms / 37 MB | n/a | n/a |
+| users-narrow-1k-first-id | 3.25 ms / 4.6 MB | 3.48 ms / 4.6 MB | 3.77 ms / 3.3 MB | 3.14 ms / 4.2 MB | 3.56 ms / 6.7 MB | 7.53 ms / 35 MB | n/a | n/a |
+| users-narrow-1k-group-mod | 5.02 ms / 6.0 MB | 4.26 ms / 6.0 MB | 4.61 ms / 3.7 MB | 3.84 ms / 4.7 MB | 4.39 ms / 7.1 MB | 10.2 ms / 43 MB | n/a | n/a |
+| users-narrow-1k-high-score | 3.72 ms / 4.7 MB | 3.41 ms / 4.7 MB | 3.87 ms / 3.4 MB | 3.70 ms / 4.3 MB | 3.69 ms / 6.7 MB | 8.67 ms / 40 MB | n/a | n/a |
+| users-narrow-1k-identity | 3.36 ms / 4.4 MB | 3.39 ms / 4.4 MB | 4.19 ms / 3.4 MB | 3.93 ms / 4.2 MB | 3.88 ms / 6.7 MB | 9.17 ms / 36 MB | n/a | n/a |
+| users-narrow-1k-ids | 3.17 ms / 4.8 MB | 3.45 ms / 4.8 MB | 3.61 ms / 3.3 MB | 5.86 ms / 4.2 MB | 5.55 ms / 6.7 MB | 8.43 ms / 21 MB | n/a | n/a |
+| users-narrow-1k-keys-len | 3.75 ms / 4.8 MB | 3.54 ms / 4.8 MB | 3.62 ms / 3.3 MB | 3.55 ms / 4.3 MB | 3.91 ms / 6.6 MB | 7.99 ms / 35 MB | n/a | n/a |
+| users-narrow-1k-keys-publish | 3.38 ms / 4.6 MB | 3.78 ms / 4.6 MB | 3.66 ms / 3.3 MB | 3.89 ms / 4.3 MB | 3.65 ms / 6.6 MB | 7.52 ms / 35 MB | n/a | n/a |
+| users-narrow-1k-max-score | 3.73 ms / 5.4 MB | 3.42 ms / 5.4 MB | 4.07 ms / 3.4 MB | 3.54 ms / 4.4 MB | 4.24 ms / 6.8 MB | 9.35 ms / 38 MB | n/a | n/a |
+| users-narrow-1k-nested-dept | 3.99 ms / 4.6 MB | 3.48 ms / 4.6 MB | 3.67 ms / 3.3 MB | 3.80 ms / 4.2 MB | 3.67 ms / 6.7 MB | 7.45 ms / 35 MB | n/a | n/a |
+| users-narrow-1k-project-names | 3.49 ms / 4.8 MB | 3.49 ms / 4.8 MB | 3.57 ms / 3.4 MB | 3.96 ms / 4.2 MB | 3.61 ms / 6.8 MB | 8.55 ms / 38 MB | n/a | n/a |
+| users-narrow-1k-project-pair | 3.68 ms / 5.1 MB | 3.51 ms / 5.1 MB | 4.74 ms / 3.8 MB | 4.54 ms / 4.3 MB | 4.03 ms / 7.5 MB | 20.5 ms / 64 MB | n/a | n/a |
+| users-narrow-1k-reduce-score | 3.90 ms / 5.2 MB | 3.73 ms / 5.2 MB | 3.95 ms / 3.3 MB | 3.46 ms / 4.2 MB | 3.83 ms / 6.9 MB | n/a | n/a | n/a |
+| users-narrow-1k-reverse-id | 3.99 ms / 5.8 MB | 3.80 ms / 5.8 MB | 4.36 ms / 3.4 MB | 3.39 ms / 4.3 MB | 3.77 ms / 6.5 MB | 8.45 ms / 37 MB | n/a | n/a |
+| users-narrow-1k-select-id-stream | 3.36 ms / 4.7 MB | 3.70 ms / 4.7 MB | 3.69 ms / 3.3 MB | 3.87 ms / 4.2 MB | 3.73 ms / 6.7 MB | n/a | n/a | n/a |
+| users-narrow-1k-slice-length | 3.51 ms / 4.6 MB | 3.96 ms / 4.6 MB | 3.66 ms / 3.3 MB | 3.30 ms / 4.3 MB | 3.67 ms / 6.7 MB | 7.50 ms / 35 MB | n/a | n/a |
+| users-narrow-1k-sort-last | 3.95 ms / 5.9 MB | 4.01 ms / 5.9 MB | 4.32 ms / 3.5 MB | 3.36 ms / 4.5 MB | 4.20 ms / 6.9 MB | 9.22 ms / 38 MB | n/a | n/a |
+| users-narrow-1k-sum-score | 3.70 ms / 5.2 MB | 3.77 ms / 5.2 MB | 3.86 ms / 3.4 MB | 3.64 ms / 4.2 MB | 3.66 ms / 6.6 MB | n/a | n/a | n/a |
+| users-narrow-1k-type-path | 4.51 ms / 4.6 MB | 3.41 ms / 4.6 MB | 3.71 ms / 3.3 MB | 3.24 ms / 4.2 MB | 3.77 ms / 6.6 MB | disagreed | n/a | n/a |
+| users-narrow-1k-unique-scores | 3.46 ms / 5.8 MB | 3.86 ms / 5.8 MB | 3.90 ms / 3.4 MB | 3.90 ms / 4.5 MB | 3.91 ms / 7.1 MB | 8.40 ms / 38 MB | n/a | n/a |
+| users-narrow-5k-all-nonneg | 3.99 ms / 4.9 MB | 3.92 ms / 4.9 MB | 6.71 ms / 6.0 MB | 6.45 ms / 6.3 MB | 6.64 ms / 10 MB | n/a | n/a | n/a |
+| users-narrow-5k-any-high | 3.94 ms / 4.9 MB | 4.08 ms / 4.9 MB | 5.28 ms / 6.0 MB | 4.13 ms / 6.3 MB | 4.92 ms / 9.6 MB | n/a | n/a | n/a |
+| users-narrow-5k-count | 3.72 ms / 4.7 MB | 4.01 ms / 4.6 MB | 5.71 ms / 6.0 MB | 4.06 ms / 5.9 MB | 4.89 ms / 8.7 MB | 12.7 ms / 53 MB | n/a | n/a |
+| users-narrow-5k-descent | 5.03 ms / 7.2 MB | 4.75 ms / 7.2 MB | 7.42 ms / 6.9 MB | 5.03 ms / 6.5 MB | 10.2 ms / 14 MB | 25.1 ms / 80 MB | n/a | n/a |
+| users-narrow-5k-filter-active | 3.95 ms / 4.8 MB | 3.69 ms / 4.8 MB | 6.21 ms / 6.0 MB | 6.29 ms / 6.0 MB | 6.20 ms / 10 MB | 15.4 ms / 59 MB | n/a | n/a |
+| users-narrow-5k-first-id | 4.78 ms / 4.7 MB | 3.97 ms / 4.7 MB | 5.07 ms / 6.0 MB | 4.24 ms / 5.8 MB | 4.58 ms / 8.5 MB | 12.5 ms / 46 MB | n/a | n/a |
+| users-narrow-5k-group-mod | 8.14 ms / 9.9 MB | 8.05 ms / 9.8 MB | 10.1 ms / 6.6 MB | 5.94 ms / 7.3 MB | 7.39 ms / 11 MB | 21.7 ms / 65 MB | n/a | n/a |
+| users-narrow-5k-high-score | 4.08 ms / 4.8 MB | 3.78 ms / 4.8 MB | 6.44 ms / 6.1 MB | 5.74 ms / 6.1 MB | 6.52 ms / 11 MB | 19.3 ms / 65 MB | n/a | n/a |
+| users-narrow-5k-identity | 3.97 ms / 4.5 MB | 3.65 ms / 4.5 MB | 10.8 ms / 6.4 MB | 5.41 ms / 5.8 MB | 6.95 ms / 10 MB | 19.2 ms / 57 MB | n/a | n/a |
+| users-narrow-5k-ids | 4.18 ms / 5.4 MB | 3.91 ms / 5.4 MB | 5.82 ms / 6.1 MB | 4.70 ms / 6.0 MB | 5.70 ms / 11 MB | 16.6 ms / 52 MB | n/a | n/a |
+| users-narrow-5k-keys-len | 3.98 ms / 4.9 MB | 4.04 ms / 4.9 MB | 5.09 ms / 6.0 MB | 4.15 ms / 6.0 MB | 4.80 ms / 8.5 MB | 12.4 ms / 54 MB | n/a | n/a |
+| users-narrow-5k-keys-publish | 4.10 ms / 4.7 MB | 4.03 ms / 4.7 MB | 5.10 ms / 6.0 MB | 4.01 ms / 6.0 MB | 4.83 ms / 8.6 MB | 12.4 ms / 54 MB | n/a | n/a |
+| users-narrow-5k-max-score | 5.13 ms / 7.2 MB | 4.99 ms / 7.2 MB | 5.83 ms / 6.0 MB | 5.31 ms / 6.2 MB | 6.02 ms / 10 MB | 15.9 ms / 52 MB | n/a | n/a |
+| users-narrow-5k-nested-dept | 4.29 ms / 4.7 MB | 4.00 ms / 4.7 MB | 5.19 ms / 6.0 MB | 4.35 ms / 5.8 MB | 4.93 ms / 8.5 MB | 12.9 ms / 54 MB | n/a | n/a |
+| users-narrow-5k-project-names | 4.11 ms / 5.4 MB | 3.87 ms / 5.4 MB | 5.76 ms / 6.1 MB | 5.19 ms / 6.0 MB | 5.74 ms / 10 MB | 16.9 ms / 53 MB | n/a | n/a |
+| users-narrow-5k-project-pair | 5.04 ms / 6.5 MB | 4.86 ms / 6.5 MB | 9.25 ms / 8.2 MB | 7.63 ms / 6.0 MB | 7.32 ms / 13 MB | 69.7 ms / 108 MB | n/a | n/a |
+| users-narrow-5k-reduce-score | 4.78 ms / 7.0 MB | 4.83 ms / 7.0 MB | 6.33 ms / 6.0 MB | 5.36 ms / 6.0 MB | 5.93 ms / 10 MB | n/a | n/a | n/a |
+| users-narrow-5k-reverse-id | 4.99 ms / 9.0 MB | 5.02 ms / 8.9 MB | 6.07 ms / 6.1 MB | 4.04 ms / 6.0 MB | 5.05 ms / 8.8 MB | 15.4 ms / 52 MB | n/a | n/a |
+| users-narrow-5k-select-id-stream | 4.23 ms / 4.8 MB | 3.96 ms / 4.8 MB | 6.14 ms / 6.0 MB | 6.64 ms / 5.8 MB | 6.06 ms / 10 MB | n/a | n/a | n/a |
+| users-narrow-5k-slice-length | 3.83 ms / 4.7 MB | 4.05 ms / 4.7 MB | 4.92 ms / 6.0 MB | 4.04 ms / 5.9 MB | 4.89 ms / 8.5 MB | 12.4 ms / 50 MB | n/a | n/a |
+| users-narrow-5k-sort-last | 5.80 ms / 10.0 MB | 5.82 ms / 10 MB | 10.00 ms / 6.5 MB | 5.33 ms / 6.6 MB | 8.41 ms / 11 MB | 19.3 ms / 57 MB | n/a | n/a |
+| users-narrow-5k-sum-score | 4.67 ms / 7.0 MB | 4.87 ms / 7.0 MB | 6.43 ms / 6.1 MB | 4.92 ms / 6.0 MB | 5.48 ms / 11 MB | n/a | n/a | n/a |
+| users-narrow-5k-type-path | 4.14 ms / 4.7 MB | 3.86 ms / 4.7 MB | 5.14 ms / 6.0 MB | 3.96 ms / 5.8 MB | 4.71 ms / 8.5 MB | disagreed | n/a | n/a |
+| users-narrow-5k-unique-scores | 5.28 ms / 8.8 MB | 5.27 ms / 8.8 MB | 7.24 ms / 6.1 MB | 4.85 ms / 6.8 MB | 8.22 ms / 11 MB | 15.3 ms / 52 MB | n/a | n/a |
+| users-narrow-25k-all-nonneg | 5.85 ms / 5.4 MB | 5.79 ms / 5.3 MB | 17.7 ms / 19 MB | 17.9 ms / 16 MB | 17.0 ms / 21 MB | n/a | n/a | n/a |
+| users-narrow-25k-any-high | 6.16 ms / 5.4 MB | 6.02 ms / 5.4 MB | 12.2 ms / 19 MB | 7.72 ms / 16 MB | 11.0 ms / 20 MB | n/a | n/a | n/a |
+| users-narrow-25k-count | 5.57 ms / 5.1 MB | 5.25 ms / 5.1 MB | 11.2 ms / 19 MB | 7.92 ms / 15 MB | 11.1 ms / 19 MB | 31.1 ms / 82 MB | n/a | n/a |
+| users-narrow-25k-descent | 9.92 ms / 20 MB | 9.79 ms / 20 MB | 23.8 ms / 24 MB | 11.7 ms / 18 MB | 29.2 ms / 34 MB | 93.6 ms / 254 MB | n/a | n/a |
+| users-narrow-25k-filter-active | 5.79 ms / 5.3 MB | 5.66 ms / 5.3 MB | 17.9 ms / 19 MB | 18.8 ms / 15 MB | 14.8 ms / 21 MB | 45.6 ms / 119 MB | n/a | n/a |
+| users-narrow-25k-first-id | 5.31 ms / 5.1 MB | 5.48 ms / 5.1 MB | 10.9 ms / 19 MB | 8.11 ms / 15 MB | 11.3 ms / 19 MB | 29.9 ms / 83 MB | n/a | n/a |
+| users-narrow-25k-group-mod | 26.7 ms / 27 MB | 25.7 ms / 27 MB | 38.4 ms / 21 MB | 15.0 ms / 20 MB | 21.2 ms / 27 MB | 82.3 ms / 184 MB | n/a | n/a |
+| users-narrow-25k-high-score | 6.05 ms / 5.3 MB | 5.70 ms / 5.3 MB | 18.8 ms / 19 MB | 16.0 ms / 16 MB | 16.8 ms / 24 MB | 69.1 ms / 146 MB | n/a | n/a |
+| users-narrow-25k-identity | 4.83 ms / 5.0 MB | 4.75 ms / 5.0 MB | 24.4 ms / 20 MB | 12.0 ms / 15 MB | 14.5 ms / 23 MB | 62.1 ms / 115 MB | n/a | n/a |
+| users-narrow-25k-ids | 7.09 ms / 7.8 MB | 6.80 ms / 7.9 MB | 17.0 ms / 19 MB | 10.1 ms / 16 MB | 13.3 ms / 23 MB | 50.6 ms / 121 MB | n/a | n/a |
+| users-narrow-25k-keys-len | 6.07 ms / 5.3 MB | 5.42 ms / 5.3 MB | 11.5 ms / 19 MB | 8.45 ms / 15 MB | 11.2 ms / 19 MB | 30.5 ms / 85 MB | n/a | n/a |
+| users-narrow-25k-keys-publish | 5.94 ms / 5.2 MB | 5.45 ms / 5.2 MB | 11.6 ms / 19 MB | 8.36 ms / 15 MB | 10.9 ms / 19 MB | 31.1 ms / 82 MB | n/a | n/a |
+| users-narrow-25k-max-score | 10.1 ms / 16 MB | 9.87 ms / 16 MB | 16.1 ms / 19 MB | 12.9 ms / 16 MB | 14.2 ms / 24 MB | 51.1 ms / 131 MB | n/a | n/a |
+| users-narrow-25k-nested-dept | 5.83 ms / 5.2 MB | 5.37 ms / 5.2 MB | 12.2 ms / 19 MB | 7.58 ms / 15 MB | 10.9 ms / 19 MB | 30.9 ms / 82 MB | n/a | n/a |
+| users-narrow-25k-project-names | 6.44 ms / 7.8 MB | 5.98 ms / 7.9 MB | 15.6 ms / 19 MB | 12.9 ms / 16 MB | 13.7 ms / 24 MB | 55.0 ms / 122 MB | n/a | n/a |
+| users-narrow-25k-project-pair | 9.72 ms / 13 MB | 9.86 ms / 13 MB | 32.0 ms / 30 MB | 26.0 ms / 16 MB | 19.6 ms / 35 MB | 321 ms / 339 MB | n/a | n/a |
+| users-narrow-25k-reduce-score | 10.4 ms / 15 MB | 10.8 ms / 15 MB | 16.8 ms / 19 MB | 13.9 ms / 15 MB | 14.7 ms / 21 MB | n/a | n/a | n/a |
+| users-narrow-25k-reverse-id | 11.1 ms / 25 MB | 10.5 ms / 25 MB | 16.7 ms / 19 MB | 7.95 ms / 15 MB | 10.7 ms / 19 MB | 43.3 ms / 129 MB | n/a | n/a |
+| users-narrow-25k-select-id-stream | 6.48 ms / 5.2 MB | 6.16 ms / 5.2 MB | 17.7 ms / 19 MB | 19.6 ms / 15 MB | 14.6 ms / 21 MB | n/a | n/a | n/a |
+| users-narrow-25k-slice-length | 5.51 ms / 5.2 MB | 5.76 ms / 5.2 MB | 12.1 ms / 19 MB | 8.03 ms / 15 MB | 10.7 ms / 19 MB | 31.7 ms / 89 MB | n/a | n/a |
+| users-narrow-25k-sort-last | 13.9 ms / 26 MB | 13.1 ms / 26 MB | 38.4 ms / 21 MB | 14.1 ms / 17 MB | 29.7 ms / 28 MB | 81.9 ms / 135 MB | n/a | n/a |
+| users-narrow-25k-sum-score | 10.7 ms / 15 MB | 14.2 ms / 15 MB | 18.1 ms / 19 MB | 11.2 ms / 16 MB | 13.3 ms / 24 MB | n/a | n/a | n/a |
+| users-narrow-25k-type-path | 5.63 ms / 5.1 MB | 5.69 ms / 5.1 MB | 11.3 ms / 19 MB | 8.70 ms / 15 MB | 10.8 ms / 19 MB | disagreed | n/a | n/a |
+| users-narrow-25k-unique-scores | 11.9 ms / 21 MB | 11.3 ms / 21 MB | 24.1 ms / 20 MB | 11.1 ms / 16 MB | 26.2 ms / 26 MB | 47.8 ms / 114 MB | n/a | n/a |
+| users-narrow-50k-all-nonneg | 8.58 ms / 5.9 MB | 8.78 ms / 6.0 MB | 32.0 ms / 35 MB | 31.8 ms / 27 MB | 29.5 ms / 34 MB | n/a | n/a | n/a |
+| users-narrow-50k-any-high | 10.3 ms / 5.9 MB | 10.5 ms / 5.9 MB | 20.7 ms / 35 MB | 12.6 ms / 27 MB | 17.7 ms / 32 MB | n/a | n/a | n/a |
+| users-narrow-50k-count | 7.68 ms / 5.7 MB | 7.10 ms / 5.7 MB | 20.4 ms / 35 MB | 12.0 ms / 26 MB | 17.6 ms / 30 MB | 52.3 ms / 134 MB | n/a | n/a |
+| users-narrow-50k-descent | 15.6 ms / 23 MB | 14.6 ms / 23 MB | 42.9 ms / 47 MB | 19.8 ms / 33 MB | 51.7 ms / 59 MB | 183 ms / 480 MB | n/a | n/a |
+| users-narrow-50k-filter-active | 7.57 ms / 5.9 MB | 8.56 ms / 5.9 MB | 32.6 ms / 35 MB | 34.4 ms / 26 MB | 26.3 ms / 34 MB | 88.3 ms / 212 MB | n/a | n/a |
+| users-narrow-50k-first-id | 7.45 ms / 5.7 MB | 6.95 ms / 5.8 MB | 20.3 ms / 35 MB | 11.9 ms / 26 MB | 17.4 ms / 31 MB | 51.4 ms / 136 MB | n/a | n/a |
+| users-narrow-50k-group-mod | 46.8 ms / 32 MB | 46.7 ms / 32 MB | 76.6 ms / 39 MB | 30.2 ms / 34 MB | 38.3 ms / 47 MB | 160 ms / 305 MB | n/a | n/a |
+| users-narrow-50k-high-score | 8.45 ms / 5.9 MB | 9.56 ms / 5.9 MB | 33.8 ms / 36 MB | 26.3 ms / 28 MB | 27.9 ms / 39 MB | 125 ms / 242 MB | n/a | n/a |
+| users-narrow-50k-identity | 5.86 ms / 5.6 MB | 6.32 ms / 5.6 MB | 44.9 ms / 38 MB | 21.1 ms / 26 MB | 24.8 ms / 39 MB | 114 ms / 203 MB | n/a | n/a |
+| users-narrow-50k-ids | 10.9 ms / 11 MB | 10.9 ms / 11 MB | 29.8 ms / 36 MB | 16.4 ms / 27 MB | 22.3 ms / 39 MB | 94.8 ms / 209 MB | n/a | n/a |
+| users-narrow-50k-keys-len | 7.75 ms / 5.9 MB | 8.02 ms / 5.9 MB | 20.5 ms / 35 MB | 12.0 ms / 26 MB | 17.7 ms / 31 MB | 51.0 ms / 135 MB | n/a | n/a |
+| users-narrow-50k-keys-publish | 7.47 ms / 5.8 MB | 7.39 ms / 5.8 MB | 20.7 ms / 35 MB | 12.4 ms / 26 MB | 17.8 ms / 30 MB | 53.5 ms / 135 MB | n/a | n/a |
+| users-narrow-50k-max-score | 15.4 ms / 19 MB | 15.3 ms / 19 MB | 28.6 ms / 36 MB | 24.0 ms / 27 MB | 23.3 ms / 40 MB | 89.1 ms / 217 MB | n/a | n/a |
+| users-narrow-50k-nested-dept | 7.44 ms / 5.8 MB | 9.24 ms / 5.8 MB | 20.4 ms / 35 MB | 12.1 ms / 26 MB | 17.9 ms / 31 MB | 51.3 ms / 135 MB | n/a | n/a |
+| users-narrow-50k-project-names | 9.74 ms / 11 MB | 9.87 ms / 11 MB | 29.3 ms / 36 MB | 22.9 ms / 27 MB | 23.3 ms / 39 MB | 104 ms / 218 MB | n/a | n/a |
+| users-narrow-50k-project-pair | 16.6 ms / 20 MB | 16.2 ms / 20 MB | 66.4 ms / 58 MB | 48.3 ms / 28 MB | 35.4 ms / 61 MB | 631 ms / 619 MB | n/a | n/a |
+| users-narrow-50k-reduce-score | 17.5 ms / 18 MB | 17.2 ms / 18 MB | 31.9 ms / 35 MB | 24.6 ms / 27 MB | 25.2 ms / 35 MB | n/a | n/a | n/a |
+| users-narrow-50k-reverse-id | 16.2 ms / 28 MB | 16.4 ms / 28 MB | 30.0 ms / 36 MB | 12.0 ms / 26 MB | 17.8 ms / 32 MB | 77.1 ms / 216 MB | n/a | n/a |
+| users-narrow-50k-select-id-stream | 9.10 ms / 5.8 MB | 9.76 ms / 5.8 MB | 31.3 ms / 35 MB | 34.8 ms / 26 MB | 25.3 ms / 34 MB | n/a | n/a | n/a |
+| users-narrow-50k-slice-length | 7.33 ms / 5.8 MB | 7.44 ms / 5.8 MB | 20.3 ms / 35 MB | 11.9 ms / 26 MB | 17.8 ms / 30 MB | 55.7 ms / 131 MB | n/a | n/a |
+| users-narrow-50k-sort-last | 22.6 ms / 33 MB | 22.5 ms / 33 MB | 80.5 ms / 40 MB | 28.6 ms / 31 MB | 58.4 ms / 48 MB | 178 ms / 230 MB | n/a | n/a |
+| users-narrow-50k-sum-score | 17.6 ms / 18 MB | 16.7 ms / 18 MB | 32.5 ms / 36 MB | 19.3 ms / 27 MB | 22.3 ms / 40 MB | n/a | n/a | n/a |
+| users-narrow-50k-type-path | 7.34 ms / 5.7 MB | 7.40 ms / 5.7 MB | 20.1 ms / 35 MB | 12.5 ms / 26 MB | 17.8 ms / 31 MB | disagreed | n/a | n/a |
+| users-narrow-50k-unique-scores | 22.2 ms / 24 MB | 19.1 ms / 24 MB | 47.2 ms / 36 MB | 18.8 ms / 27 MB | 49.5 ms / 46 MB | 87.3 ms / 208 MB | n/a | n/a |
+| users-narrow-100k-all-nonneg | 18.4 ms / 7.1 MB | 13.1 ms / 7.1 MB | 58.8 ms / 70 MB | 59.8 ms / 52 MB | 52.3 ms / 61 MB | n/a | n/a | n/a |
+| users-narrow-100k-any-high | 13.7 ms / 7.2 MB | 13.5 ms / 7.1 MB | 38.4 ms / 70 MB | 22.3 ms / 52 MB | 31.2 ms / 57 MB | n/a | n/a | n/a |
+| users-narrow-100k-count | 11.1 ms / 6.9 MB | 11.4 ms / 6.9 MB | 36.8 ms / 70 MB | 20.5 ms / 50 MB | 29.9 ms / 55 MB | 94.4 ms / 217 MB | n/a | n/a |
+| users-narrow-100k-descent | 26.0 ms / 39 MB | 25.5 ms / 39 MB | 80.6 ms / 89 MB | 35.3 ms / 62 MB | 98.1 ms / 114 MB | 341 ms / 967 MB | n/a | n/a |
+| users-narrow-100k-filter-active | 12.8 ms / 7.1 MB | 11.8 ms / 7.1 MB | 60.0 ms / 70 MB | 63.9 ms / 50 MB | 45.3 ms / 62 MB | 159 ms / 342 MB | n/a | n/a |
+| users-narrow-100k-first-id | 11.0 ms / 6.9 MB | 10.9 ms / 6.9 MB | 37.1 ms / 70 MB | 20.2 ms / 50 MB | 29.7 ms / 53 MB | 95.4 ms / 218 MB | n/a | n/a |
+| users-narrow-100k-group-mod | 91.4 ms / 69 MB | 89.8 ms / 69 MB | 156 ms / 79 MB | 60.0 ms / 64 MB | 70.2 ms / 78 MB | 313 ms / 554 MB | n/a | n/a |
+| users-narrow-100k-high-score | 13.8 ms / 7.1 MB | 13.0 ms / 7.1 MB | 63.7 ms / 70 MB | 48.1 ms / 52 MB | 50.8 ms / 72 MB | 240 ms / 454 MB | n/a | n/a |
+| users-narrow-100k-identity | 8.77 ms / 6.8 MB | 7.74 ms / 6.8 MB | 80.8 ms / 76 MB | 36.8 ms / 50 MB | 43.2 ms / 71 MB | 217 ms / 369 MB | n/a | n/a |
+| users-narrow-100k-ids | 21.6 ms / 17 MB | 16.5 ms / 17 MB | 55.6 ms / 72 MB | 28.8 ms / 53 MB | 38.0 ms / 72 MB | 174 ms / 342 MB | n/a | n/a |
+| users-narrow-100k-keys-len | 11.4 ms / 7.1 MB | 11.4 ms / 7.1 MB | 37.4 ms / 70 MB | 20.6 ms / 50 MB | 29.9 ms / 54 MB | 95.5 ms / 221 MB | n/a | n/a |
+| users-narrow-100k-keys-publish | 11.6 ms / 7.0 MB | 11.3 ms / 7.0 MB | 37.2 ms / 70 MB | 20.7 ms / 50 MB | 30.1 ms / 54 MB | 95.0 ms / 218 MB | n/a | n/a |
+| users-narrow-100k-max-score | 27.0 ms / 37 MB | 26.7 ms / 37 MB | 53.6 ms / 72 MB | 41.3 ms / 53 MB | 40.5 ms / 73 MB | 171 ms / 373 MB | n/a | n/a |
+| users-narrow-100k-nested-dept | 11.2 ms / 7.0 MB | 12.0 ms / 7.0 MB | 38.0 ms / 70 MB | 20.6 ms / 50 MB | 29.7 ms / 54 MB | 94.8 ms / 211 MB | n/a | n/a |
+| users-narrow-100k-project-names | 16.0 ms / 17 MB | 14.5 ms / 17 MB | 53.3 ms / 72 MB | 43.9 ms / 52 MB | 39.0 ms / 71 MB | 194 ms / 392 MB | n/a | n/a |
+| users-narrow-100k-project-pair | 29.0 ms / 35 MB | 28.9 ms / 35 MB | 115 ms / 115 MB | 92.8 ms / 52 MB | 65.4 ms / 116 MB | 1271 ms / 1248 MB | n/a | n/a |
+| users-narrow-100k-reduce-score | 29.1 ms / 30 MB | 28.4 ms / 30 MB | 56.2 ms / 70 MB | 44.6 ms / 51 MB | 42.9 ms / 64 MB | n/a | n/a | n/a |
+| users-narrow-100k-reverse-id | 28.6 ms / 62 MB | 28.3 ms / 62 MB | 65.4 ms / 72 MB | 20.7 ms / 50 MB | 30.2 ms / 56 MB | 142 ms / 402 MB | n/a | n/a |
+| users-narrow-100k-select-id-stream | 15.6 ms / 7.0 MB | 14.1 ms / 7.0 MB | 58.5 ms / 70 MB | 66.0 ms / 50 MB | 44.5 ms / 63 MB | n/a | n/a | n/a |
+| users-narrow-100k-slice-length | 11.2 ms / 7.0 MB | 11.7 ms / 7.0 MB | 37.2 ms / 70 MB | 20.5 ms / 50 MB | 29.7 ms / 53 MB | 100 ms / 236 MB | n/a | n/a |
+| users-narrow-100k-sort-last | 40.7 ms / 74 MB | 41.0 ms / 74 MB | 165 ms / 79 MB | 58.2 ms / 59 MB | 115 ms / 88 MB | 377 ms / 426 MB | n/a | n/a |
+| users-narrow-100k-sum-score | 29.5 ms / 30 MB | 29.0 ms / 30 MB | 61.2 ms / 72 MB | 34.9 ms / 53 MB | 39.5 ms / 73 MB | n/a | n/a | n/a |
+| users-narrow-100k-type-path | 12.0 ms / 6.9 MB | 11.0 ms / 6.9 MB | 37.6 ms / 70 MB | 20.8 ms / 50 MB | 30.2 ms / 54 MB | disagreed | n/a | n/a |
+| users-narrow-100k-unique-scores | 33.5 ms / 45 MB | 33.3 ms / 45 MB | 92.6 ms / 73 MB | 33.4 ms / 53 MB | 94.5 ms / 77 MB | 161 ms / 325 MB | n/a | n/a |
+| users-narrow-200k-all-nonneg | 22.8 ms / 9.6 MB | 23.3 ms / 9.6 MB | 113 ms / 137 MB | 113 ms / 98 MB | 99.7 ms / 117 MB | n/a | n/a | n/a |
+| users-narrow-200k-any-high | 23.4 ms / 9.6 MB | 22.2 ms / 9.6 MB | 69.1 ms / 137 MB | 38.3 ms / 98 MB | 55.0 ms / 108 MB | n/a | n/a | n/a |
+| users-narrow-200k-count | 19.3 ms / 9.4 MB | 18.9 ms / 9.4 MB | 69.2 ms / 137 MB | 36.4 ms / 94 MB | 52.5 ms / 100 MB | 179 ms / 398 MB | n/a | n/a |
+| users-narrow-200k-descent | 46.8 ms / 78 MB | 46.8 ms / 78 MB | 158 ms / 182 MB | 66.3 ms / 121 MB | 190 ms / 212 MB | 713 ms / 1796 MB | n/a | n/a |
+| users-narrow-200k-filter-active | 20.5 ms / 9.5 MB | 20.2 ms / 9.5 MB | 112 ms / 137 MB | 121 ms / 94 MB | 85.1 ms / 116 MB | 307 ms / 640 MB | n/a | n/a |
+| users-narrow-200k-first-id | 19.0 ms / 9.4 MB | 18.1 ms / 9.4 MB | 69.2 ms / 137 MB | 36.3 ms / 94 MB | 54.3 ms / 100 MB | 179 ms / 401 MB | n/a | n/a |
+| users-narrow-200k-group-mod | 178 ms / 117 MB | 176 ms / 117 MB | 320 ms / 154 MB | 112 ms / 130 MB | 140 ms / 149 MB | 621 ms / 1083 MB | n/a | n/a |
+| users-narrow-200k-high-score | 22.4 ms / 9.5 MB | 22.5 ms / 9.5 MB | 120 ms / 139 MB | 88.5 ms / 100 MB | 94.8 ms / 136 MB | 471 ms / 839 MB | n/a | n/a |
+| users-narrow-200k-identity | 11.9 ms / 9.2 MB | 12.0 ms / 9.2 MB | 157 ms / 149 MB | 68.4 ms / 94 MB | 78.6 ms / 134 MB | 430 ms / 596 MB | n/a | n/a |
+| users-narrow-200k-ids | 29.1 ms / 30 MB | 29.1 ms / 30 MB | 103 ms / 140 MB | 51.4 ms / 98 MB | 69.4 ms / 136 MB | 337 ms / 712 MB | n/a | n/a |
+| users-narrow-200k-keys-len | 20.9 ms / 9.6 MB | 19.1 ms / 9.6 MB | 72.5 ms / 137 MB | 37.6 ms / 94 MB | 54.4 ms / 100 MB | 183 ms / 405 MB | n/a | n/a |
+| users-narrow-200k-keys-publish | 20.6 ms / 9.5 MB | 19.7 ms / 9.5 MB | 70.9 ms / 137 MB | 37.3 ms / 94 MB | 54.3 ms / 100 MB | 181 ms / 408 MB | n/a | n/a |
+| users-narrow-200k-max-score | 48.9 ms / 63 MB | 48.6 ms / 63 MB | 103 ms / 140 MB | 76.2 ms / 98 MB | 77.7 ms / 136 MB | 348 ms / 742 MB | n/a | n/a |
+| users-narrow-200k-nested-dept | 22.0 ms / 9.4 MB | 18.9 ms / 9.4 MB | 70.1 ms / 137 MB | 37.2 ms / 94 MB | 53.6 ms / 100 MB | 179 ms / 419 MB | n/a | n/a |
+| users-narrow-200k-project-names | 24.5 ms / 30 MB | 23.9 ms / 30 MB | 99.9 ms / 140 MB | 73.1 ms / 97 MB | 71.5 ms / 134 MB | 372 ms / 756 MB | n/a | n/a |
+| users-narrow-200k-project-pair | 53.0 ms / 68 MB | 52.8 ms / 68 MB | 218 ms / 227 MB | 176 ms / 99 MB | 120 ms / 227 MB | 2600 ms / 2464 MB | n/a | n/a |
+| users-narrow-200k-reduce-score | 51.7 ms / 53 MB | 51.4 ms / 53 MB | 105 ms / 137 MB | 82.7 ms / 97 MB | 79.6 ms / 119 MB | n/a | n/a | n/a |
+| users-narrow-200k-reverse-id | 52.7 ms / 116 MB | 52.5 ms / 116 MB | 125 ms / 140 MB | 37.9 ms / 94 MB | 54.6 ms / 103 MB | 290 ms / 758 MB | n/a | n/a |
+| users-narrow-200k-select-id-stream | 26.3 ms / 9.5 MB | 25.8 ms / 9.5 MB | 112 ms / 137 MB | 126 ms / 94 MB | 83.1 ms / 116 MB | n/a | n/a | n/a |
+| users-narrow-200k-slice-length | 19.5 ms / 9.4 MB | 19.3 ms / 9.4 MB | 71.0 ms / 137 MB | 36.8 ms / 95 MB | 53.5 ms / 100 MB | 186 ms / 448 MB | n/a | n/a |
+| users-narrow-200k-sort-last | 81.2 ms / 131 MB | 80.5 ms / 131 MB | 352 ms / 153 MB | 113 ms / 113 MB | 237 ms / 175 MB | 769 ms / 819 MB | n/a | n/a |
+| users-narrow-200k-sum-score | 52.5 ms / 53 MB | 52.5 ms / 53 MB | 125 ms / 140 MB | 65.8 ms / 98 MB | 74.7 ms / 136 MB | n/a | n/a | n/a |
+| users-narrow-200k-type-path | 19.5 ms / 9.4 MB | 19.2 ms / 9.4 MB | 72.0 ms / 137 MB | 37.1 ms / 94 MB | 55.2 ms / 100 MB | disagreed | n/a | n/a |
+| users-narrow-200k-unique-scores | 64.4 ms / 78 MB | 64.0 ms / 78 MB | 197 ms / 140 MB | 64.2 ms / 98 MB | 190 ms / 140 MB | 317 ms / 645 MB | n/a | n/a |
+| yaml-broad-100-count | 8.98 ms / 5.8 MB | 8.27 ms / 5.8 MB | n/a | 10.1 ms / 5.6 MB | 14.8 ms / 11 MB | 15.0 ms / 30 MB | 14.4 ms / 16 MB | n/a |
+| yaml-broad-100-descent | 9.07 ms / 7.1 MB | 10.2 ms / 7.1 MB | n/a | 10.0 ms / 5.8 MB | 15.8 ms / 13 MB | 21.1 ms / 43 MB | n/a | n/a |
+| yaml-broad-100-exact-name | 8.35 ms / 5.6 MB | 8.59 ms / 5.6 MB | n/a | 8.69 ms / 5.5 MB | 13.8 ms / 11 MB | 22.4 ms / 24 MB | 14.6 ms / 16 MB | n/a |
+| yaml-broad-100-first-id | 10.1 ms / 5.6 MB | 9.64 ms / 5.6 MB | n/a | 9.73 ms / 5.5 MB | 13.1 ms / 11 MB | 14.1 ms / 22 MB | 13.9 ms / 16 MB | n/a |
+| yaml-broad-100-identity | 9.64 ms / 7.0 MB | 9.19 ms / 6.8 MB | n/a | 9.22 ms / 5.5 MB | 13.4 ms / 10 MB | 18.6 ms / 35 MB | 16.7 ms / 17 MB | n/a |
+| yaml-broad-100-ids | 8.55 ms / 6.0 MB | 8.79 ms / 6.0 MB | n/a | 8.66 ms / 5.5 MB | 14.2 ms / 11 MB | 14.9 ms / 24 MB | n/a | n/a |
+| yaml-broad-100-keys-publish | 9.16 ms / 5.7 MB | 8.61 ms / 5.7 MB | n/a | 8.83 ms / 5.7 MB | 13.5 ms / 11 MB | disagreed | n/a | n/a |
+| yaml-broad-100-nested-dept | 8.40 ms / 5.6 MB | 8.47 ms / 5.6 MB | n/a | 8.75 ms / 5.5 MB | 13.2 ms / 11 MB | 14.5 ms / 24 MB | 14.2 ms / 16 MB | n/a |
+| yaml-broad-100-type-path | 8.58 ms / 5.6 MB | 8.39 ms / 5.6 MB | n/a | 8.64 ms / 5.5 MB | 14.9 ms / 11 MB | disagreed | n/a | n/a |
+| yaml-broad-1k-count | 24.1 ms / 14 MB | 23.0 ms / 14 MB | n/a | 26.3 ms / 22 MB | 55.2 ms / 35 MB | 47.7 ms / 65 MB | 61.2 ms / 60 MB | n/a |
+| yaml-broad-1k-descent | 29.8 ms / 22 MB | 29.0 ms / 21 MB | n/a | 29.2 ms / 24 MB | 75.8 ms / 53 MB | 96.4 ms / 210 MB | n/a | n/a |
+| yaml-broad-1k-exact-name | 23.0 ms / 12 MB | 22.0 ms / 12 MB | n/a | 26.7 ms / 22 MB | 56.2 ms / 36 MB | 48.8 ms / 65 MB | 61.2 ms / 57 MB | n/a |
+| yaml-broad-1k-first-id | 19.9 ms / 12 MB | 22.4 ms / 12 MB | n/a | 26.3 ms / 22 MB | 55.6 ms / 36 MB | 48.3 ms / 66 MB | 61.1 ms / 60 MB | n/a |
+| yaml-broad-1k-identity | 30.1 ms / 22 MB | 29.7 ms / 22 MB | n/a | 30.7 ms / 22 MB | disagreed | 78.7 ms / 108 MB | 80.9 ms / 66 MB | n/a |
+| yaml-broad-1k-ids | 23.0 ms / 14 MB | 21.7 ms / 14 MB | n/a | 27.0 ms / 22 MB | 54.8 ms / 36 MB | 49.8 ms / 68 MB | n/a | n/a |
+| yaml-broad-1k-keys-publish | 22.8 ms / 12 MB | 22.8 ms / 12 MB | n/a | 27.6 ms / 22 MB | 56.5 ms / 35 MB | disagreed | n/a | n/a |
+| yaml-broad-1k-nested-dept | 23.1 ms / 12 MB | 21.1 ms / 12 MB | n/a | 26.1 ms / 22 MB | 55.3 ms / 35 MB | 48.0 ms / 65 MB | 61.0 ms / 60 MB | n/a |
+| yaml-broad-1k-type-path | 22.9 ms / 12 MB | 23.2 ms / 12 MB | n/a | 26.9 ms / 22 MB | 56.1 ms / 36 MB | disagreed | n/a | n/a |
+| yaml-broad-5k-count | 74.2 ms / 49 MB | 74.9 ms / 49 MB | n/a | 97.1 ms / 96 MB | 237 ms / 148 MB | 183 ms / 259 MB | 250 ms / 236 MB | n/a |
+| yaml-broad-5k-descent | 105 ms / 79 MB | 106 ms / 79 MB | n/a | 112 ms / 107 MB | 308 ms / 216 MB | 414 ms / 949 MB | n/a | n/a |
+| yaml-broad-5k-exact-name | 71.2 ms / 41 MB | 70.7 ms / 41 MB | n/a | 96.7 ms / 96 MB | 231 ms / 149 MB | 181 ms / 259 MB | 252 ms / 236 MB | n/a |
+| yaml-broad-5k-first-id | 72.0 ms / 41 MB | 73.3 ms / 41 MB | n/a | 98.9 ms / 96 MB | 231 ms / 153 MB | 183 ms / 259 MB | 245 ms / 236 MB | n/a |
+| yaml-broad-5k-identity | 102 ms / 79 MB | 103 ms / 79 MB | n/a | 117 ms / 96 MB | disagreed | 343 ms / 464 MB | 346 ms / 285 MB | n/a |
+| yaml-broad-5k-ids | 75.9 ms / 49 MB | 75.6 ms / 49 MB | n/a | 97.1 ms / 96 MB | 231 ms / 150 MB | 190 ms / 268 MB | n/a | n/a |
+| yaml-broad-5k-keys-publish | 74.3 ms / 41 MB | 73.4 ms / 41 MB | n/a | 99.4 ms / 96 MB | 234 ms / 145 MB | disagreed | n/a | n/a |
+| yaml-broad-5k-nested-dept | 74.3 ms / 41 MB | 71.8 ms / 41 MB | n/a | 96.8 ms / 96 MB | 230 ms / 148 MB | 187 ms / 259 MB | 245 ms / 236 MB | n/a |
+| yaml-broad-5k-type-path | 72.9 ms / 41 MB | 73.2 ms / 41 MB | n/a | 99.4 ms / 96 MB | 235 ms / 147 MB | disagreed | n/a | n/a |
+| yaml-broad-25k-count | 334 ms / 259 MB | 334 ms / 259 MB | n/a | 448 ms / 464 MB | 1125 ms / 720 MB | 864 ms / 1222 MB | 1174 ms / 1110 MB | n/a |
+| yaml-broad-25k-descent | 486 ms / 380 MB | 484 ms / 380 MB | n/a | 524 ms / 521 MB | 1510 ms / 1055 MB | 1995 ms / 4835 MB | n/a | n/a |
+| yaml-broad-25k-exact-name | 317 ms / 226 MB | 318 ms / 226 MB | n/a | 477 ms / 464 MB | 1103 ms / 704 MB | 865 ms / 1222 MB | 1180 ms / 1107 MB | n/a |
+| yaml-broad-25k-first-id | 317 ms / 226 MB | 317 ms / 226 MB | n/a | 447 ms / 464 MB | 1116 ms / 706 MB | 862 ms / 1221 MB | 1174 ms / 1110 MB | n/a |
+| yaml-broad-25k-identity | 481 ms / 376 MB | 485 ms / 375 MB | n/a | 542 ms / 464 MB | disagreed | 1631 ms / 2272 MB | 1685 ms / 1324 MB | n/a |
+| yaml-broad-25k-ids | 347 ms / 256 MB | 345 ms / 256 MB | n/a | 455 ms / 464 MB | 1112 ms / 723 MB | 903 ms / 1269 MB | n/a | n/a |
+| yaml-broad-25k-keys-publish | 325 ms / 226 MB | 318 ms / 226 MB | n/a | 450 ms / 464 MB | 1115 ms / 729 MB | disagreed | n/a | n/a |
+| yaml-broad-25k-nested-dept | 318 ms / 226 MB | 316 ms / 226 MB | n/a | 446 ms / 464 MB | 1097 ms / 712 MB | 863 ms / 1221 MB | 1176 ms / 1108 MB | n/a |
+| yaml-broad-25k-type-path | 319 ms / 226 MB | 319 ms / 226 MB | n/a | 450 ms / 464 MB | 1108 ms / 718 MB | disagreed | n/a | n/a |
+| yaml-broad-50k-count | 654 ms / 544 MB | 651 ms / 544 MB | n/a | 906 ms / 924 MB | 2229 ms / 1454 MB | 1721 ms / 2422 MB | 2350 ms / 2253 MB | n/a |
+| yaml-broad-50k-descent | 954 ms / 696 MB | 963 ms / 696 MB | n/a | 1030 ms / 1030 MB | 3024 ms / 2155 MB | 4090 ms / 9567 MB | n/a | n/a |
+| yaml-broad-50k-exact-name | 630 ms / 446 MB | 630 ms / 446 MB | n/a | 914 ms / 924 MB | 2460 ms / 1480 MB | 2654 ms / 2428 MB | 3436 ms / 2244 MB | n/a |
+| yaml-broad-50k-first-id | 633 ms / 446 MB | 638 ms / 446 MB | n/a | 878 ms / 924 MB | 2184 ms / 1490 MB | 1693 ms / 2426 MB | 2377 ms / 2296 MB | n/a |
+| yaml-broad-50k-identity | 941 ms / 695 MB | 949 ms / 695 MB | n/a | 1103 ms / 924 MB | disagreed | 3287 ms / 4337 MB | 3372 ms / 2751 MB | n/a |
+| yaml-broad-50k-ids | 690 ms / 546 MB | 691 ms / 546 MB | n/a | 1036 ms / 924 MB | 2759 ms / 1460 MB | 1796 ms / 2509 MB | n/a | n/a |
+| yaml-broad-50k-keys-publish | 1069 ms / 446 MB | 1071 ms / 446 MB | n/a | 1632 ms / 924 MB | 2217 ms / 1482 MB | disagreed | n/a | n/a |
+| yaml-broad-50k-nested-dept | 623 ms / 447 MB | 631 ms / 447 MB | n/a | 886 ms / 924 MB | 2266 ms / 1464 MB | 1707 ms / 2410 MB | 2346 ms / 2295 MB | n/a |
+| yaml-broad-50k-type-path | 621 ms / 446 MB | 624 ms / 446 MB | n/a | 885 ms / 924 MB | 2230 ms / 1480 MB | disagreed | n/a | n/a |
+| yaml-broad-100k-count | 1351 ms / 1020 MB | 1358 ms / 1020 MB | n/a | 1806 ms / 1845 MB | 4529 ms / 2683 MB | 3365 ms / 4833 MB | 4829 ms / 4466 MB | n/a |
+| yaml-broad-100k-descent | 1905 ms / 1357 MB | 2035 ms / 1357 MB | n/a | 2136 ms / 2067 MB | 6142 ms / 4464 MB | 8286 ms / 19138 MB | n/a | n/a |
+| yaml-broad-100k-exact-name | 1302 ms / 874 MB | 1342 ms / 874 MB | n/a | 1821 ms / 1845 MB | 4402 ms / 2812 MB | 4886 ms / 4802 MB | 4807 ms / 4505 MB | n/a |
+| yaml-broad-100k-first-id | 1249 ms / 874 MB | 1239 ms / 874 MB | n/a | 1817 ms / 1845 MB | 4545 ms / 2946 MB | 3479 ms / 4806 MB | 4950 ms / 4594 MB | n/a |
+| yaml-broad-100k-identity | 1868 ms / 1357 MB | 1863 ms / 1357 MB | n/a | 2259 ms / 1845 MB | disagreed | 6758 ms / 9031 MB | 7002 ms / 5498 MB | n/a |
+| yaml-broad-100k-ids | 1432 ms / 1024 MB | 1444 ms / 1024 MB | n/a | 1800 ms / 1845 MB | 4464 ms / 2852 MB | 3511 ms / 5009 MB | n/a | n/a |
+| yaml-broad-100k-keys-publish | 1246 ms / 874 MB | 1289 ms / 874 MB | n/a | 1788 ms / 1845 MB | 4462 ms / 2714 MB | disagreed | n/a | n/a |
+| yaml-broad-100k-nested-dept | 1242 ms / 874 MB | 1245 ms / 874 MB | n/a | 1872 ms / 1845 MB | 4370 ms / 2969 MB | 3332 ms / 4806 MB | 4652 ms / 4455 MB | n/a |
+| yaml-broad-100k-type-path | 1297 ms / 874 MB | 1254 ms / 874 MB | n/a | 1756 ms / 1845 MB | 4419 ms / 2774 MB | disagreed | n/a | n/a |
+| yaml-narrow-100-count | 6.50 ms / 4.8 MB | 6.92 ms / 4.8 MB | n/a | 6.22 ms / 4.1 MB | 6.69 ms / 6.2 MB | 11.1 ms / 18 MB | 7.98 ms / 9.9 MB | n/a |
+| yaml-narrow-100-descent | 6.48 ms / 5.1 MB | 7.02 ms / 5.1 MB | n/a | 6.26 ms / 4.1 MB | 6.54 ms / 6.3 MB | 11.7 ms / 18 MB | n/a | n/a |
+| yaml-narrow-100-exact-name | 6.39 ms / 4.8 MB | 6.20 ms / 4.8 MB | n/a | 6.27 ms / 4.0 MB | 6.77 ms / 6.3 MB | 10.1 ms / 17 MB | error | n/a |
+| yaml-narrow-100-first-id | 6.72 ms / 4.8 MB | 6.60 ms / 4.8 MB | n/a | 6.36 ms / 4.0 MB | 8.61 ms / 6.3 MB | 10.3 ms / 17 MB | 8.08 ms / 9.9 MB | n/a |
+| yaml-narrow-100-identity | 6.66 ms / 4.9 MB | 6.62 ms / 4.9 MB | n/a | 6.17 ms / 4.0 MB | 6.49 ms / 6.2 MB | 12.3 ms / 17 MB | 8.11 ms / 10 MB | n/a |
+| yaml-narrow-100-ids | 6.37 ms / 5.0 MB | 6.70 ms / 5.0 MB | n/a | 6.48 ms / 4.0 MB | 8.14 ms / 6.1 MB | 10.8 ms / 23 MB | n/a | n/a |
+| yaml-narrow-100-keys-publish | 6.69 ms / 4.8 MB | 6.37 ms / 4.8 MB | n/a | 6.38 ms / 4.2 MB | 6.95 ms / 6.4 MB | 11.4 ms / 23 MB | n/a | n/a |
+| yaml-narrow-100-nested-dept | 11.1 ms / 4.8 MB | 8.84 ms / 4.8 MB | n/a | 6.49 ms / 4.0 MB | 8.45 ms / 6.3 MB | 10.2 ms / 17 MB | error | n/a |
+| yaml-narrow-100-type-path | 6.70 ms / 4.8 MB | 6.49 ms / 4.8 MB | n/a | 6.37 ms / 4.0 MB | 7.06 ms / 6.2 MB | disagreed | n/a | n/a |
+| yaml-narrow-1k-count | 7.11 ms / 5.4 MB | 6.93 ms / 5.4 MB | n/a | 7.73 ms / 4.6 MB | 8.89 ms / 7.8 MB | 11.8 ms / 22 MB | 10.1 ms / 14 MB | n/a |
+| yaml-narrow-1k-descent | 7.68 ms / 5.9 MB | 7.30 ms / 5.9 MB | n/a | 7.46 ms / 4.7 MB | 10.1 ms / 8.8 MB | 15.0 ms / 29 MB | n/a | n/a |
+| yaml-narrow-1k-exact-name | 7.12 ms / 5.2 MB | 7.09 ms / 5.2 MB | n/a | 7.18 ms / 4.5 MB | 8.94 ms / 7.7 MB | 12.1 ms / 20 MB | error | n/a |
+| yaml-narrow-1k-first-id | 7.31 ms / 5.2 MB | 7.62 ms / 5.2 MB | n/a | 7.04 ms / 4.5 MB | 9.67 ms / 7.8 MB | 11.3 ms / 20 MB | 10.3 ms / 13 MB | n/a |
+| yaml-narrow-1k-identity | 7.54 ms / 5.7 MB | 7.28 ms / 5.6 MB | n/a | 6.99 ms / 4.5 MB | 10.1 ms / 8.1 MB | 13.4 ms / 29 MB | 12.8 ms / 14 MB | n/a |
+| yaml-narrow-1k-ids | 7.48 ms / 5.6 MB | 8.17 ms / 5.7 MB | n/a | 8.11 ms / 4.5 MB | 9.94 ms / 8.1 MB | 13.3 ms / 28 MB | n/a | n/a |
+| yaml-narrow-1k-keys-publish | 7.30 ms / 5.2 MB | 6.96 ms / 5.2 MB | n/a | 7.00 ms / 4.7 MB | 10.1 ms / 7.8 MB | 12.2 ms / 25 MB | n/a | n/a |
+| yaml-narrow-1k-nested-dept | 7.22 ms / 5.2 MB | 7.27 ms / 5.2 MB | n/a | 7.25 ms / 4.5 MB | 8.90 ms / 7.6 MB | 11.4 ms / 20 MB | error | n/a |
+| yaml-narrow-1k-type-path | 7.35 ms / 5.2 MB | 7.50 ms / 5.2 MB | n/a | 9.08 ms / 4.5 MB | 10.2 ms / 7.6 MB | disagreed | n/a | n/a |
+| yaml-narrow-5k-count | 9.62 ms / 7.5 MB | 9.68 ms / 7.5 MB | n/a | 11.0 ms / 7.4 MB | 16.9 ms / 15 MB | 20.1 ms / 35 MB | 21.6 ms / 24 MB | n/a |
+| yaml-narrow-5k-descent | 12.2 ms / 9.1 MB | 11.6 ms / 9.1 MB | n/a | 14.6 ms / 8.0 MB | 21.8 ms / 18 MB | 33.0 ms / 66 MB | n/a | n/a |
+| yaml-narrow-5k-exact-name | 10.2 ms / 6.6 MB | 10.7 ms / 6.7 MB | n/a | 16.4 ms / 7.3 MB | 18.1 ms / 15 MB | 19.3 ms / 32 MB | error | n/a |
+| yaml-narrow-5k-first-id | 10.4 ms / 6.6 MB | 10.5 ms / 6.6 MB | n/a | 11.3 ms / 7.3 MB | 17.4 ms / 15 MB | 18.2 ms / 32 MB | 20.2 ms / 23 MB | n/a |
+| yaml-narrow-5k-identity | 13.6 ms / 9.0 MB | 11.6 ms / 9.0 MB | n/a | 12.6 ms / 7.3 MB | 18.5 ms / 16 MB | 26.4 ms / 45 MB | 26.8 ms / 28 MB | n/a |
+| yaml-narrow-5k-ids | 11.5 ms / 8.4 MB | 11.0 ms / 8.4 MB | n/a | 12.6 ms / 7.5 MB | 18.0 ms / 16 MB | 24.1 ms / 45 MB | n/a | n/a |
+| yaml-narrow-5k-keys-publish | 10.1 ms / 6.7 MB | 11.3 ms / 6.7 MB | n/a | 13.2 ms / 7.5 MB | 17.3 ms / 15 MB | 19.6 ms / 37 MB | n/a | n/a |
+| yaml-narrow-5k-nested-dept | 9.35 ms / 6.6 MB | 10.6 ms / 6.6 MB | n/a | 12.9 ms / 7.3 MB | 18.0 ms / 15 MB | 18.9 ms / 36 MB | error | n/a |
+| yaml-narrow-5k-type-path | 10.2 ms / 6.6 MB | 10.5 ms / 6.6 MB | n/a | 12.3 ms / 7.4 MB | 17.7 ms / 15 MB | disagreed | n/a | n/a |
+| yaml-narrow-25k-count | 27.0 ms / 16 MB | 24.2 ms / 16 MB | n/a | 28.6 ms / 22 MB | 55.4 ms / 42 MB | 50.7 ms / 79 MB | 64.5 ms / 65 MB | n/a |
+| yaml-narrow-25k-descent | 31.8 ms / 24 MB | 30.4 ms / 24 MB | n/a | 31.6 ms / 26 MB | 72.3 ms / 58 MB | 111 ms / 255 MB | n/a | n/a |
+| yaml-narrow-25k-exact-name | 24.0 ms / 13 MB | 22.3 ms / 13 MB | n/a | 28.1 ms / 22 MB | 57.0 ms / 42 MB | 50.1 ms / 79 MB | error | n/a |
+| yaml-narrow-25k-first-id | 22.2 ms / 13 MB | 24.8 ms / 13 MB | n/a | 28.0 ms / 22 MB | 56.9 ms / 42 MB | 50.6 ms / 79 MB | 64.4 ms / 65 MB | n/a |
+| yaml-narrow-25k-identity | 30.4 ms / 24 MB | 29.2 ms / 24 MB | n/a | 32.0 ms / 22 MB | 57.7 ms / 47 MB | 80.0 ms / 113 MB | 90.4 ms / 87 MB | n/a |
+| yaml-narrow-25k-ids | 36.2 ms / 20 MB | 35.9 ms / 20 MB | n/a | 31.4 ms / 23 MB | 60.4 ms / 47 MB | 72.1 ms / 113 MB | n/a | n/a |
+| yaml-narrow-25k-keys-publish | 23.5 ms / 13 MB | 22.0 ms / 13 MB | n/a | 27.4 ms / 22 MB | 54.1 ms / 42 MB | 49.0 ms / 79 MB | n/a | n/a |
+| yaml-narrow-25k-nested-dept | 23.8 ms / 13 MB | 22.7 ms / 13 MB | n/a | 28.9 ms / 22 MB | 55.3 ms / 42 MB | 49.5 ms / 79 MB | error | n/a |
+| yaml-narrow-25k-type-path | 22.6 ms / 13 MB | 22.1 ms / 13 MB | n/a | 28.2 ms / 22 MB | 54.6 ms / 43 MB | disagreed | n/a | n/a |
+| yaml-narrow-50k-count | 44.0 ms / 29 MB | 39.5 ms / 29 MB | n/a | 48.0 ms / 41 MB | 98.6 ms / 78 MB | 84.1 ms / 140 MB | 111 ms / 115 MB | n/a |
+| yaml-narrow-50k-descent | 53.3 ms / 43 MB | 54.9 ms / 43 MB | n/a | 54.9 ms / 48 MB | 134 ms / 116 MB | 208 ms / 506 MB | n/a | n/a |
+| yaml-narrow-50k-exact-name | 37.0 ms / 21 MB | 35.6 ms / 21 MB | n/a | 47.7 ms / 41 MB | 98.3 ms / 78 MB | 85.2 ms / 140 MB | error | n/a |
+| yaml-narrow-50k-first-id | 38.5 ms / 21 MB | 38.5 ms / 21 MB | n/a | 48.0 ms / 41 MB | 97.9 ms / 79 MB | 84.4 ms / 140 MB | 112 ms / 120 MB | n/a |
+| yaml-narrow-50k-identity | 50.6 ms / 43 MB | 50.2 ms / 43 MB | n/a | 56.2 ms / 41 MB | 106 ms / 87 MB | 145 ms / 193 MB | 167 ms / 151 MB | n/a |
+| yaml-narrow-50k-ids | 69.4 ms / 34 MB | 67.6 ms / 34 MB | n/a | 51.7 ms / 43 MB | 102 ms / 86 MB | 127 ms / 222 MB | n/a | n/a |
+| yaml-narrow-50k-keys-publish | 36.5 ms / 21 MB | 35.8 ms / 21 MB | n/a | 47.6 ms / 41 MB | 97.6 ms / 78 MB | 84.4 ms / 140 MB | n/a | n/a |
+| yaml-narrow-50k-nested-dept | 36.4 ms / 21 MB | 36.3 ms / 21 MB | n/a | 48.0 ms / 41 MB | 97.2 ms / 78 MB | 84.7 ms / 140 MB | error | n/a |
+| yaml-narrow-50k-type-path | 36.4 ms / 21 MB | 35.7 ms / 21 MB | n/a | 47.3 ms / 41 MB | 98.7 ms / 78 MB | disagreed | n/a | n/a |
+| yaml-narrow-100k-count | 69.1 ms / 52 MB | 69.2 ms / 52 MB | n/a | 85.8 ms / 78 MB | 188 ms / 153 MB | 156 ms / 264 MB | 212 ms / 219 MB | n/a |
+| yaml-narrow-100k-descent | 96.6 ms / 78 MB | 97.1 ms / 78 MB | n/a | 101 ms / 90 MB | 253 ms / 248 MB | 390 ms / 1032 MB | n/a | n/a |
+| yaml-narrow-100k-exact-name | 63.4 ms / 39 MB | 63.3 ms / 39 MB | n/a | 85.7 ms / 78 MB | 186 ms / 152 MB | 157 ms / 265 MB | error | n/a |
+| yaml-narrow-100k-first-id | 63.0 ms / 39 MB | 63.0 ms / 39 MB | n/a | 85.3 ms / 78 MB | 185 ms / 151 MB | 164 ms / 264 MB | 210 ms / 220 MB | n/a |
+| yaml-narrow-100k-identity | 91.6 ms / 78 MB | 91.5 ms / 78 MB | n/a | 103 ms / 78 MB | 201 ms / 162 MB | 277 ms / 402 MB | 318 ms / 279 MB | n/a |
+| yaml-narrow-100k-ids | 164 ms / 65 MB | 164 ms / 65 MB | n/a | 95.2 ms / 81 MB | 202 ms / 166 MB | 243 ms / 446 MB | n/a | n/a |
+| yaml-narrow-100k-keys-publish | 63.5 ms / 39 MB | 63.7 ms / 39 MB | n/a | 86.1 ms / 78 MB | 186 ms / 153 MB | 159 ms / 266 MB | n/a | n/a |
+| yaml-narrow-100k-nested-dept | 63.5 ms / 39 MB | 64.3 ms / 39 MB | n/a | 85.4 ms / 78 MB | 186 ms / 152 MB | 154 ms / 264 MB | error | n/a |
+| yaml-narrow-100k-type-path | 63.4 ms / 39 MB | 65.7 ms / 39 MB | n/a | 89.0 ms / 78 MB | 186 ms / 152 MB | disagreed | n/a | n/a |
 
 ## known disagreements
 
@@ -984,12 +984,58 @@ got (203604760 bytes, sha256 c81edec726f79d27…):
 {"active":false,"age":19,"bio":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…
 ```
 
-### toml-broad-100-keys-publish · yq (oracle jqf)
+### toml-broad-100-ids · jaq (oracle jqf)
 
-expected (287 bytes, sha256 942104c6a4296e80…):
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (292 bytes, sha256 9e7ab08959854f8d…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-100-ids · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (292 bytes, sha256 9e7ab08959854f8d…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-100-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
 
 ```
 ["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-broad-100-keys-publish · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
 ```
 
 got (287 bytes, sha256 1e402dc94afcc4ba…):
@@ -1014,6 +1060,218 @@ got (8 bytes, sha256 a2c06cd5295df0ec…):
 
 ```
 
+### toml-broad-1k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (3892 bytes, sha256 3aec7ea7f52bdb6c…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-1k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
+
+```
+["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-broad-5k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (23892 bytes, sha256 ea352c0de4a58f43…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-5k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
+
+```
+["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-broad-25k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (138892 bytes, sha256 69f8df4146980167…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-25k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
+
+```
+["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-broad-50k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (288892 bytes, sha256 518833f24ad54dae…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-50k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
+
+```
+["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-broad-100k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (588892 bytes, sha256 bebb12fcbc88d0fb…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-broad-100k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (287 bytes, sha256 942104c6a4296e80…):
+
+```
+["active","age","bio","country","email","id","k00","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14","k15","k16","k17","k18","k19","k20","k21","k22","k23","k24","k25"…
+```
+
+### toml-narrow-100-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (292 bytes, sha256 9e7ab08959854f8d…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-100-ids · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (292 bytes, sha256 9e7ab08959854f8d…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-100-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
+### toml-narrow-100-keys-publish · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
 ### toml-narrow-100-type-path · yq (oracle jqf)
 
 expected (8 bytes, sha256 474728f5ad5e7f48…):
@@ -1030,6 +1288,68 @@ got (8 bytes, sha256 a2c06cd5295df0ec…):
 
 ```
 
+### toml-narrow-1k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (3892 bytes, sha256 3aec7ea7f52bdb6c…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-1k-ids · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (3892 bytes, sha256 3aec7ea7f52bdb6c…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-1k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
+### toml-narrow-1k-keys-publish · yq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
 ### toml-narrow-1k-type-path · yq (oracle jqf)
 
 expected (8 bytes, sha256 474728f5ad5e7f48…):
@@ -1043,6 +1363,130 @@ got (8 bytes, sha256 a2c06cd5295df0ec…):
 
 ```
 "!!seq"
+
+```
+
+### toml-narrow-5k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (23892 bytes, sha256 ea352c0de4a58f43…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-5k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
+### toml-narrow-25k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (138892 bytes, sha256 69f8df4146980167…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-25k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
+### toml-narrow-50k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (288892 bytes, sha256 518833f24ad54dae…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-50k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
+
+```
+
+### toml-narrow-100k-ids · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (588892 bytes, sha256 bebb12fcbc88d0fb…):
+
+```
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69…
+```
+
+### toml-narrow-100k-keys-publish · jaq (oracle jqf)
+
+expected (3 bytes, sha256 37517e5f3dc66819…):
+
+```
+[]
+
+```
+
+got (15 bytes, sha256 f52b7e1b7c670764…):
+
+```
+["id","score"]
 
 ```
 

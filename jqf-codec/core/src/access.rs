@@ -1979,8 +1979,9 @@ mod tests {
         assert!(!required_builder_coverage(&topology).attached_facts());
     }
 
-    /// Advertised unit demand is only clauses that have a producer: SemanticRoot, ValueShape, IntrinsicTag,
-    /// Topology, and catalogued AttachedFact roles. Source is not stuffed onto every route.
+    /// Advertised unit demand is only clauses that have a producer: `SemanticRoot`, `ValueShape`,
+    /// `IntrinsicTag`, `Topology`, and catalogued `AttachedFact` roles. `Source` is not stuffed onto
+    /// every route.
     #[test]
     fn advertised_unit_demand_has_a_producer() {
         let resources = resources();

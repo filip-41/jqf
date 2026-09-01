@@ -521,7 +521,8 @@ Options:
       cost of a partial write on failure.
   --no-atomic
       Write file destinations directly instead of atomically. A failed run
-      can then leave a partial file; requires --output or --in-place.
+      can then leave a partial file; requires --output, --in-place, or
+      --split-exp.
   --list-builtins
       Print every registered builtin as name/arity, one per line, sorted —
       the same enumeration the builtins builtin answers, so the CLI surface

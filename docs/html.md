@@ -55,8 +55,8 @@ two dials.
 
 ## Scraping
 
-The [`css` and `xpath` builtins](selectors.md) evaluate selectors against the
-recovered document and stream matching elements in document order. Combined with
+The [`css` builtin](selectors.md) evaluates selectors against the recovered
+HTML document and streams matching elements in document order. Combined with
 the fact accessors, that is the scraping surface:
 
 ```console
@@ -77,7 +77,9 @@ curl -s https://example.com | jqf --input-format html -c '[css("h1")]'
 Input `xml.document@1`: non-validating XML 1.0 with the namespace stack: no
 external entities, no DTD fetching. Element names are expanded `(URI, local)`
 pairs, spelled Clark-style `{uri}local` where a name is answered, namespace
-declarations are not ordinary attributes.
+declarations are not ordinary attributes. The [`xpath` builtin](selectors.md)
+evaluates a closed XPath subset against this document; it is XML-only
+(`css` is HTML-only).
 
 ```console
 $ printf '<r a="1"><c>x</c><c>y</c></r>' | jqf --input-format xml -c .

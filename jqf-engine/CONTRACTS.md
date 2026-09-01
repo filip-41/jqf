@@ -39,7 +39,7 @@ evaluators live in `jqf-builtins` and are re-exported here.
 - Finish commits one shortcut (count, element, keys, type, has, any/all,
   min/max, range-locate, identity, or none — the graph). A new fast path
   is a new arm, not another optional field.
-- Join, partial-sort, and count facts change how the executor walks, not
+- Join and partial-sort facts change how the executor walks, not
   what it publishes and not which codec requirement is lowered.
 - Count, element, type, keys, has, any/all, and min/max demands are
   derived once at compile and consulted per record. A per-record
